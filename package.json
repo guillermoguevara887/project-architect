@@ -1,0 +1,27 @@
+{
+  "name": "project-architect",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.13.1",
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=10.0.0"
+  },
+  "scripts": {
+    "dev": "node scripts/turbo.mjs run build --filter=@project-architect/contracts && node scripts/turbo.mjs run dev --parallel",
+    "build": "node scripts/turbo.mjs run build",
+    "typecheck": "node scripts/turbo.mjs run typecheck",
+    "lint": "node scripts/turbo.mjs run lint",
+    "test": "node scripts/turbo.mjs run test",
+    "db:generate": "corepack pnpm --filter @project-architect/api db:generate",
+    "db:migrate": "corepack pnpm --filter @project-architect/api db:migrate"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.29.0",
+    "@next/eslint-plugin-next": "15.3.4",
+    "eslint": "^9.29.0",
+    "turbo": "1.13.4",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.35.1"
+  }
+}
