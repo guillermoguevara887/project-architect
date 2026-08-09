@@ -1,107 +1,55 @@
 # Agent Instructions
 
-Project Architect is a standalone product. Do not import or depend on MemoOS code, database tables, authentication, environment variables, routes, UI internals, deployment configuration, or runtime assumptions.
+Arquitect is a standalone product. Do not import or depend on MemoOS
+code, database tables, authentication, environment variables, routes, UI
+internals, deployment configuration, or runtime assumptions.
 
-## Definitive Architecture
+## Current Baseline
 
-- Monorepo: pnpm workspaces
-- Orchestration: Turborepo
-- Frontend: Next.js App Router, React, TypeScript, Tailwind CSS, shadcn/ui
-- Backend: Fastify with TypeScript
-- Database: PostgreSQL as the single source of truth, intended for Railway
-- ORM: Drizzle ORM
-- Migrations: SQL migrations managed with the repository's Drizzle workflow
-- Validation: Zod
-- Future authentication: Better Auth hosted by the backend
-- Frontend deployment: Vercel
-- API deployment: Railway
+- Monorepo: pnpm workspaces with Turborepo
+- Frontend: minimal Next.js App Router application
+- Backend: minimal Fastify application with TypeScript
+- Database: PostgreSQL as the single source of truth, hosted on Railway
+- Database access: Drizzle ORM with the `postgres` client
+- Existing SQL migrations and the complete historical Drizzle schema are kept
+- Available health routes: `GET /health` and `GET /health/db`
+- `GET /health/db` must remain non-destructive and use only a query equivalent
+  to `SELECT 1`
+- Authentication: username and scrypt password hashes in PostgreSQL
+- Session: signed, expiring, HTTP-only cookie
+- Authentication routes: `POST /auth/login`, `GET /auth/session`, and
+  `POST /auth/logout`
 
-## Package Boundaries
+## Database Safety
 
-`packages/contracts` may contain only:
+- The frontend must never connect directly to PostgreSQL.
+- The frontend consumes Fastify through relative `/api/*` paths.
+- Preserve `DATABASE_URL`, the PostgreSQL client, `schema.ts`, Drizzle
+  configuration, and all existing migrations.
+- Do not remove historical table declarations from `schema.ts` merely because
+  their product functionality is no longer exposed.
+- Do not generate or execute migrations, run `drizzle-kit push`, or issue
+  `DROP`, `DELETE`, `TRUNCATE`, or `ALTER` statements unless the user gives
+  explicit authorization for that exact operation.
+- Do not modify existing PostgreSQL data as part of repository cleanup.
+- Never expose `DATABASE_URL` through a `NEXT_PUBLIC_*` variable.
 
-- Zod schemas
-- Input and output DTOs
-- Enumerations
-- Types derived from Zod
-- Error contracts
+## Current Scope
 
-`packages/contracts` must not contain:
+The repository may contain only the minimal frontend, minimal backend,
+database connection, Drizzle configuration, preserved schema and migrations,
+health endpoints, username/password authentication, login, and the protected
+minimal dashboard.
 
-- React code
-- PostgreSQL access
-- Authentication
-- Environment variables
-- Business logic
-- OpenAI code
+Do not restore or implement Projects, Discovery, research, competition,
+product dashboards, repositories, services, or their former contracts and
+tests unless explicitly requested.
 
-## API Access Rule
+Do not add email, names, avatars, roles, permissions, organizations, profiles,
+public registration, password recovery, OAuth, MFA, or email verification.
 
-The browser must not call the Railway API domain directly. The frontend calls relative `/api/*` paths. Next.js or Vercel rewrites those requests to the backend target configured by environment variables.
+Do not execute `0002_create_users.sql` until the user explicitly authorizes
+that migration. Do not report live credential authentication as verified until
+the migration has been applied and a user has been provisioned.
 
-The frontend must not connect directly to PostgreSQL. All application data access goes through the Fastify API.
-
-## Existing Functionality
-
-The current repository includes:
-
-- PostgreSQL as the canonical source of application data
-- Drizzle ORM and SQL migrations
-- Basic project creation and listing through the Fastify API
-- A dashboard that lists saved projects
-- A Next.js project-creation flow
-- Shared Zod contracts
-- A relative `/api/*` proxy between the Next.js frontend and Fastify
-- `GET /health`
-
-## Authorized Increment: Deterministic Project Discovery
-
-The current increment may implement:
-
-- Project detail pages
-- Discovery sessions associated with projects
-- Deterministic questions selected by project type
-- Questions organized into sections
-- PostgreSQL persistence for questions and answers
-- Progressive answer saving and discovery resumption
-- Backend-calculated progress
-- Answer review
-- Required-question validation
-- Discovery completion
-- Shared Zod contracts
-- Fastify endpoints
-- Drizzle schema changes and SQL migrations
-- Next.js pages and components
-- Real tests for this functionality
-- Updates to outdated documentation
-
-## Discovery Rules
-
-1. PostgreSQL remains the only source of truth.
-2. The frontend must not connect directly to PostgreSQL.
-3. The frontend consumes Fastify only through relative `/api/*` paths.
-4. Internal types may use English, but all visible interface text must be in Spanish.
-5. Deterministic question templates must remain outside visual components.
-6. Starting a discovery session must be idempotent.
-7. Answers must be updatable without creating duplicates.
-8. A discovery session must not be completed while required answers are missing.
-9. Do not report tests or migrations as executed when they could not be verified.
-10. Do not create commits or push changes.
-
-## Out Of Scope
-
-Do not implement yet:
-
-- OpenAI or other AI model integrations
-- Dynamically generated questions from AI
-- Better Auth or any other authentication and authorization
-- Registration or login
-- Final proposal generation
-- Sprints
-- Kanban
-- Cards or task management
-- Direct editing of a master JSON document as a source of truth
-- General architecture changes
-- Unrelated refactors
-- Supabase
-- MemoOS integration
+Do not create commits, push changes, or deploy.

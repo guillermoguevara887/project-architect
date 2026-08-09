@@ -1,68 +1,59 @@
-# Project Architect
+# Arquitect
 
-Project Architect recopila y estructura el contexto de proyectos complejos antes de planificarlos. La aplicación admite inicialmente proyectos de investigación o exploración y concursos o hackathons.
+Base mínima de Arquitect con login mediante username y password, Dashboard
+protegido, una API Fastify y PostgreSQL mediante Drizzle ORM.
 
-El producto es independiente de MemoOS. PostgreSQL es la única fuente de verdad y el navegador nunca accede directamente a la base de datos ni al dominio externo de la API.
+## Aplicaciones
 
-## Stack
+- `apps/web`: login y Dashboard protegido en Next.js.
+- `apps/api`: API Fastify con autenticación y health checks.
 
-- Monorepo con pnpm workspaces y Turborepo
-- Next.js App Router, React, TypeScript y Tailwind CSS
-- Fastify con TypeScript
-- PostgreSQL y Drizzle ORM
-- Contratos compartidos con Zod
-- Rewrites relativos `/api/*` desde Next.js hacia Fastify
-
-## Funcionalidad implementada
-
-- `GET /health`
-- Dashboard con listado de proyectos
-- Creación de proyectos de investigación o concurso
-- Detalle de proyecto
-- Sesión única e idempotente de descubrimiento por proyecto
-- Plantillas deterministas de preguntas según el tipo de proyecto
-- Cinco secciones de preguntas por plantilla
-- Guardado y actualización de respuestas en PostgreSQL
-- Reanudación desde la sección guardada
-- Progreso calculado por el backend
-- Revisión agrupada y detección de respuestas obligatorias faltantes
-- Confirmación del contexto
-- Pruebas reales con el ejecutor nativo de Node y `tsx`
-
-No se han implementado autenticación, OpenAI, preguntas dinámicas, propuestas, sprints, Kanban ni tarjetas.
+El navegador consume la API mediante rutas relativas `/api/*`. Next.js utiliza
+`API_INTERNAL_URL` para reenviar esas solicitudes al backend.
 
 ## Variables de entorno
 
-Copia `.env.example` a `.env` en la raíz o configura las variables equivalentes en cada aplicación.
+El backend carga sus variables desde `apps/api/.env` durante el desarrollo
+local. Usa `apps/api/.env.example` como referencia y no publiques
+`DATABASE_URL` en el frontend.
+
+El frontend puede configurar `API_INTERNAL_URL` siguiendo
+`apps/web/.env.example`.
+
+Variables principales del backend:
 
 ```dotenv
 API_PORT=4000
-DATABASE_URL=postgresql://project_architect:project_architect@localhost:5432/project_architect
-API_INTERNAL_URL=http://localhost:4000
+API_HOST=0.0.0.0
+DATABASE_URL=postgresql://usuario:contraseña@host:5432/base
 APP_ENV=local
 NODE_ENV=development
+AUTH_COOKIE_SECRET=replace-with-a-long-random-secret
 ```
 
-`DATABASE_URL` solo debe estar disponible para `apps/api`. No uses un prefijo `NEXT_PUBLIC_` para esta variable.
+En Railway, la API también acepta la variable `PORT` proporcionada por la
+plataforma.
 
-## Instalación y ejecución local
+## Ejecución
 
 Desde la raíz:
 
 ```powershell
 corepack pnpm install
-corepack pnpm db:migrate
 corepack pnpm dev
 ```
 
-Puertos locales:
+- Frontend: `http://localhost:3000`
+- Backend: `http://localhost:4000`
+- Estado de la API: `GET http://localhost:4000/health`
+- Estado de PostgreSQL: `GET http://localhost:4000/health/db`
+- Login: `POST http://localhost:4000/auth/login`
+- Sesión: `GET http://localhost:4000/auth/session`
+- Logout: `POST http://localhost:4000/auth/logout`
 
-- Web: `http://localhost:3000`
-- API: `http://localhost:4000`
+`GET /health/db` ejecuta únicamente `SELECT 1`.
 
-El navegador consume rutas relativas como `/api/projects`. Next.js las reescribe hacia `API_INTERNAL_URL`.
-
-## Validación
+## Verificación
 
 ```powershell
 corepack pnpm build
@@ -71,21 +62,25 @@ corepack pnpm lint
 corepack pnpm test
 ```
 
-La migración requiere una instancia PostgreSQL accesible:
+## Base de datos
 
-```powershell
-corepack pnpm db:migrate
-```
+PostgreSQL continúa siendo la fuente de verdad. Se conservan sin cambios:
 
-No se debe considerar verificada la persistencia real hasta ejecutar la migración y un recorrido de integración contra una `DATABASE_URL` utilizable.
+- `apps/api/src/db/schema.ts`
+- `apps/api/drizzle.config.ts`
+- `apps/api/drizzle/0000_create_projects.sql`
+- `apps/api/drizzle/0001_project_discovery.sql`
+- `apps/api/drizzle/0002_create_users.sql`
+- `apps/api/src/db/migrate.ts`
 
-## Estructura
+Las tablas y migraciones históricas se mantienen para representar la base de
+datos existente, aunque la API ya no exponga funcionalidad de producto.
 
-```text
-apps/
-  api/       Fastify, Drizzle, migraciones y dominio
-  web/       Next.js y experiencia de usuario
-packages/
-  contracts/ Esquemas Zod y tipos derivados
-docs/        Visión, alcance, flujo y modelo de datos
-```
+No generes ni ejecutes migraciones contra la base existente sin una
+autorización específica y una revisión previa del SQL.
+
+La migración `0002_create_users.sql` crea únicamente la tabla `users` y no se
+ejecuta automáticamente. Después de que su aplicación sea autorizada, el
+primer usuario se puede provisionar sin registro público mediante el script
+`auth:create-user`, usando temporalmente `ARCHITECT_USERNAME` y
+`ARCHITECT_PASSWORD` en el entorno del proceso.

@@ -1,5 +1,5 @@
-import { ProjectsDashboard } from "@/components/projects-dashboard";
+import { LoginScreen } from "@/components/login-screen";
 
 export default function Home() {
-  return <ProjectsDashboard />;
+  return <LoginScreen />;
 }

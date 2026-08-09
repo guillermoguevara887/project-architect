@@ -1,37 +1,49 @@
+import { sql } from "drizzle-orm";
 import Fastify, { type FastifyServerOptions } from "fastify";
-import {
-  HealthResponseSchema,
-  type HealthResponse,
-} from "@project-architect/contracts";
-import { discoveryStore } from "./discovery/repository.js";
-import { registerDiscoveryRoutes } from "./discovery/routes.js";
-import {
-  createDiscoveryService,
-  type DiscoveryService,
-} from "./discovery/service.js";
-import { registerProjectRoutes } from "./projects/routes.js";
+import { authStore, type AuthStore } from "./auth/repository.js";
+import { registerAuthRoutes } from "./auth/routes.js";
+import { assertSessionConfiguration } from "./auth/session.js";
+import { closeDbConnection, getDb } from "./db/client.js";
 
 type ServerDependencies = {
-  discoveryService?: DiscoveryService;
+  authStore?: AuthStore;
 };
 
 export function createServer(
   options: FastifyServerOptions = {},
   dependencies: ServerDependencies = {},
 ) {
+  assertSessionConfiguration();
   const server = Fastify(options);
-  const discoveryService =
-    dependencies.discoveryService ?? createDiscoveryService(discoveryStore);
 
-  server.get("/health", async (): Promise<HealthResponse> => {
-    return HealthResponseSchema.parse({
+  server.get("/health", async () => {
+    return {
       status: "ok",
       service: "project-architect-api",
-    });
+    };
   });
 
-  registerProjectRoutes(server, discoveryService);
-  registerDiscoveryRoutes(server, discoveryService);
+  server.get("/health/db", async (_request, reply) => {
+    try {
+      await getDb().execute(sql`select 1`);
+
+      return {
+        database: "connected",
+      };
+    } catch (error) {
+      server.log.error({ error }, "Database health check failed.");
+
+      return reply.code(503).send({
+        database: "disconnected",
+      });
+    }
+  });
+
+  registerAuthRoutes(server, dependencies.authStore ?? authStore);
+
+  server.addHook("onClose", async () => {
+    await closeDbConnection();
+  });
 
   return server;
 }

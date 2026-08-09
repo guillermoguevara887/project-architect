@@ -2,9 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Project Architect",
-  description:
-    "Recopila y estructura el contexto de proyectos complejos antes de planificarlos.",
+  title: "Arquitect",
+  description: "Login y Dashboard de Arquitect.",
 };
 
 export default function RootLayout({

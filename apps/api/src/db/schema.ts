@@ -13,6 +13,19 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 
+type StoredDiscoveryAnswerValue = string | number | boolean | string[];
+
+type StoredDiscoveryQuestionPriority =
+  | "essential"
+  | "recommended"
+  | "optional";
+
+type StoredDiscoveryQuestionCondition = {
+  dependsOnQuestionKey: string;
+  operator: "equals" | "not_equals" | "includes" | "not_includes";
+  value: string | number | boolean;
+};
+
 export const projectTypeEnum = pgEnum("project_type", [
   "research",
   "competition",
@@ -53,6 +66,26 @@ export const discoveryQuestionTypeEnum = pgEnum("discovery_question_type", [
   "multi_select",
   "yes_no",
 ]);
+
+export type DiscoveryQuestionResponseConfig = {
+  version: 2;
+  options: string[] | null;
+  helpText: string | null;
+  placeholder: string | null;
+  priority: StoredDiscoveryQuestionPriority;
+  condition: StoredDiscoveryQuestionCondition | null;
+  allowOther: boolean;
+  otherOptionLabel: string | null;
+  minValue: number | null;
+  maxValue: number | null;
+};
+
+export type StoredDiscoveryAnswer =
+  | StoredDiscoveryAnswerValue
+  | {
+      value: StoredDiscoveryAnswerValue;
+      otherText: string;
+    };
 
 export const discoverySessions = pgTable(
   "discovery_sessions",
@@ -96,7 +129,9 @@ export const discoveryQuestions = pgTable(
     sectionKey: text("section_key").notNull(),
     sectionTitle: text("section_title").notNull(),
     questionType: discoveryQuestionTypeEnum("question_type").notNull(),
-    options: jsonb("options").$type<string[] | null>(),
+    options: jsonb("options").$type<
+      string[] | DiscoveryQuestionResponseConfig | null
+    >(),
     position: integer("position").notNull(),
     sectionPosition: integer("section_position").notNull(),
     isRequired: boolean("is_required").default(false).notNull(),
@@ -129,7 +164,7 @@ export const discoveryAnswers = pgTable(
     questionId: uuid("question_id")
       .notNull()
       .references(() => discoveryQuestions.id, { onDelete: "cascade" }),
-    answer: jsonb("answer").$type<string | number | boolean | string[]>().notNull(),
+    answer: jsonb("answer").$type<StoredDiscoveryAnswer>().notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -141,5 +176,20 @@ export const discoveryAnswers = pgTable(
     questionUnique: uniqueIndex("discovery_answers_question_id_unique").on(
       table.questionId,
     ),
+  }),
+);
+
+export const users = pgTable(
+  "users",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    username: text("username").notNull(),
+    passwordHash: text("password_hash").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    usernameUnique: uniqueIndex("users_username_unique").on(table.username),
   }),
 );
