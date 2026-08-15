@@ -193,3 +193,111 @@ export const users = pgTable(
     usernameUnique: uniqueIndex("users_username_unique").on(table.username),
   }),
 );
+
+export type ArchitectProjectType = "project" | "competition";
+
+export type ArchitectAnalysisStatus = "pending" | "completed" | "failed";
+
+export const architectProjects = pgTable(
+  "architect_projects",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    projectType: text("project_type").$type<ArchitectProjectType>().notNull(),
+    sourceText: text("source_text"),
+    officialUrl: text("official_url"),
+    analysisStatus: text("analysis_status")
+      .$type<ArchitectAnalysisStatus>()
+      .default("pending")
+      .notNull(),
+    structuredData: jsonb("structured_data").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    userCreatedAtIdx: index("architect_projects_user_created_at_idx").on(
+      table.userId,
+      table.createdAt.desc(),
+    ),
+    projectTypeCheck: check(
+      "architect_projects_project_type_check",
+      sql`${table.projectType} in ('project', 'competition')`,
+    ),
+    analysisStatusCheck: check(
+      "architect_projects_analysis_status_check",
+      sql`${table.analysisStatus} in ('pending', 'completed', 'failed')`,
+    ),
+    completedDataCheck: check(
+      "architect_projects_completed_data_check",
+      sql`${table.analysisStatus} <> 'completed' or ${table.structuredData} is not null`,
+    ),
+  }),
+);
+
+export type JourneySourceType =
+  | "url"
+  | "article"
+  | "paper"
+  | "pdf"
+  | "book"
+  | "video"
+  | "personal_note"
+  | "other";
+
+export const journeyIdeas = pgTable(
+  "journey_ideas",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    title: text("title").notNull(),
+    sourceType: text("source_type").$type<JourneySourceType>().notNull(),
+    sourceReference: text("source_reference").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    userCreatedAtIdx: index("journey_ideas_user_created_at_idx").on(
+      table.userId,
+      table.createdAt.desc(),
+    ),
+    sourceTypeCheck: check(
+      "journey_ideas_source_type_check",
+      sql`${table.sourceType} in ('url', 'article', 'paper', 'pdf', 'book', 'video', 'personal_note', 'other')`,
+    ),
+  }),
+);
+
+export const journeyFeedEntries = pgTable(
+  "journey_feed_entries",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    ideaId: uuid("idea_id")
+      .notNull()
+      .references(() => journeyIdeas.id, { onDelete: "cascade" }),
+    content: text("content").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    ideaCreatedAtIdx: index("journey_feed_entries_idea_created_at_idx").on(
+      table.ideaId,
+      table.createdAt.desc(),
+    ),
+  }),
+);

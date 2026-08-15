@@ -1,24 +1,47 @@
-# Arquitect
+# MemoOS
 
-Base mínima de Arquitect con login mediante username y password, Dashboard
-protegido, una API Fastify y PostgreSQL mediante Drizzle ORM.
+MemoOS es el hub personal que reúne módulos independientes bajo un Dashboard
+protegido. El workspace conserva Project Architect como módulo para proyectos
+generales e incorpora Journey como módulo dedicado al recorrido de ideas para
+videos de YouTube.
 
 ## Aplicaciones
 
-- `apps/web`: login y Dashboard protegido en Next.js.
-- `apps/api`: API Fastify con autenticación y health checks.
+- `apps/web`: login, Dashboard de MemoOS y páginas de los módulos en Next.js.
+- `apps/api`: API Fastify con autenticación, health checks y rutas de módulos.
 
 El navegador consume la API mediante rutas relativas `/api/*`. Next.js utiliza
-`API_INTERNAL_URL` para reenviar esas solicitudes al backend.
+`API_INTERNAL_URL` para reenviar esas solicitudes al backend. El frontend nunca
+se conecta directamente a PostgreSQL.
+
+## Módulos
+
+### Project Architect
+
+Project Architect se conserva como módulo independiente bajo las rutas
+`/projects/*` y los endpoints `/architect/*`.
+
+### Journey
+
+El primer incremento de Journey permite:
+
+- listar y crear ideas de videos de YouTube;
+- registrar el tipo y la referencia de la fuente original;
+- abrir el detalle de una idea;
+- crear, listar, editar y borrar entradas de su diario;
+- mantener el feed ordenado desde la entrada más reciente.
+
+Páginas principales:
+
+- `/journey`
+- `/journey/new`
+- `/journey/:ideaId`
 
 ## Variables de entorno
 
 El backend carga sus variables desde `apps/api/.env` durante el desarrollo
-local. Usa `apps/api/.env.example` como referencia y no publiques
-`DATABASE_URL` en el frontend.
-
-El frontend puede configurar `API_INTERNAL_URL` siguiendo
-`apps/web/.env.example`.
+local. Usa `.env.example` como referencia y no publiques `DATABASE_URL` en el
+frontend.
 
 Variables principales del backend:
 
@@ -64,23 +87,20 @@ corepack pnpm test
 
 ## Base de datos
 
-PostgreSQL continúa siendo la fuente de verdad. Se conservan sin cambios:
+PostgreSQL continúa siendo la única fuente de verdad. Se conservan el esquema
+histórico y todas las migraciones existentes.
 
-- `apps/api/src/db/schema.ts`
-- `apps/api/drizzle.config.ts`
-- `apps/api/drizzle/0000_create_projects.sql`
-- `apps/api/drizzle/0001_project_discovery.sql`
-- `apps/api/drizzle/0002_create_users.sql`
-- `apps/api/src/db/migrate.ts`
+Migraciones de los incrementos actuales:
 
-Las tablas y migraciones históricas se mantienen para representar la base de
-datos existente, aunque la API ya no exponga funcionalidad de producto.
+- `0002_create_users.sql`: autenticación por username y password.
+- `0003_create_architect_projects.sql`: persistencia de Project Architect.
+- `0004_create_journey.sql`: ideas y entradas del diario de Journey.
 
-No generes ni ejecutes migraciones contra la base existente sin una
-autorización específica y una revisión previa del SQL.
+Las migraciones no se ejecutan automáticamente. Antes de aplicarlas contra
+Railway hay que revisar el SQL y autorizar explícitamente la operación. Journey
+depende de que la tabla `users` exista.
 
-La migración `0002_create_users.sql` crea únicamente la tabla `users` y no se
-ejecuta automáticamente. Después de que su aplicación sea autorizada, el
-primer usuario se puede provisionar sin registro público mediante el script
+El primer usuario se provisiona sin registro público mediante
 `auth:create-user`, usando temporalmente `ARCHITECT_USERNAME` y
-`ARCHITECT_PASSWORD` en el entorno del proceso.
+`ARCHITECT_PASSWORD`. Estos nombres se conservan para no romper el mecanismo de
+autenticación existente.

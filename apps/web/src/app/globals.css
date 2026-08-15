@@ -11,6 +11,11 @@
   box-sizing: border-box;
 }
 
+html,
+body {
+  max-width: 100%;
+}
+
 body {
   margin: 0;
   min-height: 100vh;
@@ -21,16 +26,22 @@ body {
 }
 
 .auth-shell,
-.dashboard-shell {
+.dashboard-shell,
+.flow-shell {
   display: grid;
+  width: 100%;
+  min-width: 0;
   min-height: 100vh;
   place-items: center;
   padding: 2rem;
 }
 
 .auth-card,
-.dashboard-card {
+.dashboard-card,
+.flow-card {
   width: min(100%, 30rem);
+  max-width: 100%;
+  min-width: 0;
   padding: clamp(2rem, 6vw, 3rem);
   border: 1px solid var(--border);
   border-radius: 1.25rem;
@@ -40,6 +51,14 @@ body {
 
 .dashboard-card {
   width: min(100%, 48rem);
+}
+
+.flow-card {
+  width: min(100%, 48rem);
+}
+
+.summary-card {
+  width: min(100%, 54rem);
 }
 
 .brand {
@@ -52,10 +71,13 @@ body {
 }
 
 h1 {
+  max-width: 100%;
   margin: 0;
   font-size: clamp(2rem, 6vw, 3rem);
   letter-spacing: -0.04em;
   line-height: 1;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .loading-message {
@@ -64,6 +86,7 @@ h1 {
 
 .auth-form {
   display: grid;
+  min-width: 0;
   gap: 0.75rem;
   margin-top: 2rem;
 }
@@ -77,6 +100,8 @@ h1 {
 
 .auth-form input {
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   min-height: 2.9rem;
   padding: 0.75rem 0.85rem;
   border: 1px solid #c7ced9;
@@ -92,6 +117,7 @@ h1 {
 }
 
 button {
+  max-width: 100%;
   min-height: 2.9rem;
   padding: 0.75rem 1rem;
   border: 0;
@@ -101,6 +127,38 @@ button {
   cursor: pointer;
   font: inherit;
   font-weight: 700;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.primary-link {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 2.9rem;
+  align-items: center;
+  justify-content: center;
+  padding: 0.75rem 1rem;
+  border-radius: 0.65rem;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+
+.back-link {
+  display: inline-block;
+  margin: 0 0 1.5rem;
+  color: #465269;
+  font-size: 0.9rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.back-link:hover {
+  color: var(--accent);
 }
 
 button:disabled {
@@ -119,6 +177,18 @@ button:disabled {
   align-items: flex-start;
   justify-content: space-between;
   gap: 2rem;
+}
+
+.dashboard-header > *,
+.status-list > div > *,
+.module-grid > *,
+.choice-grid > *,
+.journey-heading > *,
+.idea-list-card > *,
+.idea-source > *,
+.composer-actions > *,
+.entry-actions > * {
+  min-width: 0;
 }
 
 .secondary-button {
@@ -143,8 +213,587 @@ button:disabled {
 }
 
 .status-list dd {
+  min-width: 0;
   margin: 0;
   font-weight: 700;
+  overflow-wrap: anywhere;
+  text-align: right;
+  word-break: break-word;
+}
+
+.modules-section {
+  margin-top: 2.5rem;
+}
+
+.modules-section h2,
+.feed-heading h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  letter-spacing: -0.02em;
+}
+
+.module-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.module-card {
+  display: flex;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 11rem;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 1.5rem;
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  background: #f8f9fb;
+  color: var(--foreground);
+  text-decoration: none;
+  transition:
+    border-color 150ms ease,
+    transform 150ms ease;
+}
+
+.module-card:hover,
+.idea-list-card:hover {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+}
+
+.module-card strong {
+  margin-top: 0.5rem;
+  font-size: 1.25rem;
+}
+
+.module-card p {
+  max-width: 100%;
+  margin: 0.5rem 0 0;
+  color: #556176;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.module-label,
+.section-kicker {
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.choice-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin-top: 2.5rem;
+}
+
+.choice-card {
+  display: grid;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 10rem;
+  place-items: center;
+  padding: 1.5rem;
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  background: #f8f9fb;
+  color: var(--foreground);
+  font-size: 1.25rem;
+  text-decoration: none;
+  transition:
+    border-color 150ms ease,
+    transform 150ms ease;
+}
+
+.choice-card:hover {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+}
+
+.architect-projects-section {
+  min-width: 0;
+  margin-top: 3rem;
+}
+
+.architect-projects-section h2 {
+  margin: 0.4rem 0 0;
+  font-size: 1.5rem;
+  letter-spacing: -0.025em;
+}
+
+.architect-projects-message {
+  margin: 1.5rem 0 0;
+}
+
+.architect-project-list {
+  display: grid;
+  min-width: 0;
+  gap: 0.85rem;
+  margin-top: 1.5rem;
+}
+
+.architect-project-card {
+  display: flex;
+  max-width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  padding: 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: 0.9rem;
+  background: #fff;
+  color: var(--foreground);
+  text-decoration: none;
+  transition:
+    border-color 150ms ease,
+    transform 150ms ease;
+}
+
+.architect-project-card:hover {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+}
+
+.architect-project-card > * {
+  min-width: 0;
+}
+
+.architect-project-card strong {
+  display: block;
+  max-width: 100%;
+  font-size: 1.05rem;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.architect-project-meta {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.8rem;
+  margin-top: 0.55rem;
+  color: #687489;
+  font-size: 0.8rem;
+}
+
+.architect-project-meta span:first-child {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.architect-project-open {
+  flex: 0 0 auto;
+  color: var(--accent);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.architect-empty-state {
+  margin-top: 1.5rem;
+}
+
+.architect-empty-state p {
+  margin: 0;
+}
+
+.flow-message {
+  margin: 2rem 0;
+  color: #465269;
+  font-size: 1.1rem;
+}
+
+.competition-form {
+  display: grid;
+  min-width: 0;
+  gap: 0.75rem;
+  margin-top: 2rem;
+}
+
+.competition-form label,
+.saved-information dt {
+  color: #465269;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.competition-form input,
+.competition-form textarea {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid #c7ced9;
+  border-radius: 0.65rem;
+  background: #fff;
+  color: var(--foreground);
+  font: inherit;
+}
+
+.competition-form textarea {
+  min-height: 16rem;
+  resize: vertical;
+  line-height: 1.55;
+}
+
+.competition-form input:focus,
+.competition-form textarea:focus {
+  border-color: var(--accent);
+  outline: 3px solid rgb(49 87 213 / 14%);
+}
+
+.saved-information {
+  display: grid;
+  min-width: 0;
+  gap: 0;
+  margin: 2.5rem 0 0;
+}
+
+.saved-information > div {
+  min-width: 0;
+  padding: 1.4rem 0;
+  border-top: 1px solid var(--border);
+}
+
+.saved-information dd {
+  max-width: 100%;
+  min-width: 0;
+  margin: 0.6rem 0 0;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.source-text {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.content-link {
+  display: inline;
+  max-width: 100%;
+  color: var(--accent);
+  overflow-wrap: anywhere;
+  text-decoration: underline;
+  text-underline-offset: 0.16em;
+  word-break: break-word;
+}
+
+.journey-shell {
+  align-items: start;
+}
+
+.journey-card,
+.journey-detail-card {
+  width: min(100%, 64rem);
+}
+
+.journey-form-card {
+  width: min(100%, 42rem);
+}
+
+.journey-heading {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 2rem;
+}
+
+.journey-heading .primary-link {
+  flex: 0 0 auto;
+}
+
+.journey-intro {
+  max-width: 38rem;
+  margin: 1rem 0 0;
+  color: #556176;
+  font-size: 1.05rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.journey-error {
+  margin-top: 2rem;
+}
+
+.idea-list {
+  display: grid;
+  min-width: 0;
+  gap: 0.85rem;
+  margin-top: 2.5rem;
+}
+
+.idea-list-card {
+  display: flex;
+  max-width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2rem;
+  padding: 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: 0.9rem;
+  background: #fff;
+  color: var(--foreground);
+  text-decoration: none;
+  transition:
+    border-color 150ms ease,
+    transform 150ms ease;
+}
+
+.idea-list-card strong {
+  display: block;
+  max-width: 100%;
+  font-size: 1.1rem;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.idea-list-card p {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 0.45rem 0 0;
+  color: #556176;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.idea-card-meta {
+  display: grid;
+  max-width: 100%;
+  min-width: 0;
+  flex: 0 0 auto;
+  gap: 0.35rem;
+  color: #687489;
+  font-size: 0.8rem;
+  text-align: right;
+}
+
+.idea-card-meta span {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.empty-state {
+  max-width: 100%;
+  min-width: 0;
+  margin-top: 2.5rem;
+  padding: 2.5rem;
+  border: 1px dashed #c7ced9;
+  border-radius: 1rem;
+  color: #556176;
+  text-align: center;
+}
+
+.empty-state h2,
+.empty-state h3 {
+  margin: 0;
+  color: var(--foreground);
+}
+
+.empty-state p {
+  margin: 0.6rem 0 0;
+}
+
+.journey-form {
+  display: grid;
+  min-width: 0;
+  gap: 0.75rem;
+  margin-top: 2rem;
+}
+
+.journey-form label,
+.feed-composer label,
+.idea-source dt {
+  color: #465269;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.journey-form input,
+.journey-form select,
+.journey-form textarea,
+.feed-composer textarea,
+.entry-editor textarea {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  padding: 0.85rem 0.9rem;
+  border: 1px solid #c7ced9;
+  border-radius: 0.65rem;
+  background: #fff;
+  color: var(--foreground);
+  font: inherit;
+}
+
+.journey-form textarea,
+.feed-composer textarea,
+.entry-editor textarea {
+  resize: vertical;
+  line-height: 1.55;
+}
+
+.journey-form input:focus,
+.journey-form select:focus,
+.journey-form textarea:focus,
+.feed-composer textarea:focus,
+.entry-editor textarea:focus {
+  border-color: var(--accent);
+  outline: 3px solid rgb(49 87 213 / 14%);
+}
+
+.idea-detail-heading time {
+  display: block;
+  margin-top: 1rem;
+  color: #687489;
+  font-size: 0.85rem;
+}
+
+.idea-source {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(8rem, 0.3fr) minmax(0, 1fr);
+  margin: 2.5rem 0 0;
+  border-block: 1px solid var(--border);
+}
+
+.idea-source > div {
+  min-width: 0;
+  padding: 1.25rem 0;
+}
+
+.idea-source dd {
+  max-width: 100%;
+  min-width: 0;
+  margin: 0.5rem 0 0;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.feed-section {
+  margin-top: 3rem;
+}
+
+.section-kicker {
+  margin: 0 0 0.4rem;
+}
+
+.feed-composer {
+  max-width: 100%;
+  min-width: 0;
+  margin-top: 1.25rem;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  background: #f8f9fb;
+}
+
+.feed-composer textarea {
+  min-height: 7rem;
+}
+
+.composer-actions,
+.entry-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 0.75rem;
+}
+
+.composer-actions span {
+  color: #7a8495;
+  font-size: 0.75rem;
+}
+
+.feed-error {
+  margin-top: 1rem;
+}
+
+.feed-empty {
+  margin-top: 1rem;
+}
+
+.feed-list {
+  display: grid;
+  min-width: 0;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.feed-entry {
+  max-width: 100%;
+  min-width: 0;
+  padding: 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  background: #fff;
+}
+
+.feed-entry > time {
+  color: #7a8495;
+  font-size: 0.78rem;
+}
+
+.feed-entry > p {
+  max-width: 100%;
+  min-width: 0;
+  margin: 0.75rem 0 0;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.entry-editor {
+  min-width: 0;
+  margin-top: 0.85rem;
+}
+
+.entry-actions {
+  justify-content: flex-end;
+}
+
+.entry-actions-compact {
+  margin-top: 0.85rem;
+}
+
+.text-button {
+  min-height: auto;
+  padding: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 0.84rem;
+}
+
+.danger-button {
+  color: #b42318;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .database-connected {
@@ -161,12 +810,95 @@ button:disabled {
 
 @media (max-width: 36rem) {
   .auth-shell,
-  .dashboard-shell {
+  .dashboard-shell,
+  .flow-shell {
     padding: 1rem;
+  }
+
+  .auth-card,
+  .dashboard-card,
+  .flow-card {
+    padding: 1.5rem;
+  }
+
+  h1 {
+    font-size: 2rem;
+    line-height: 1.08;
   }
 
   .dashboard-header {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .secondary-button,
+  .journey-heading .primary-link,
+  .competition-form > button,
+  .journey-form > button {
+    width: 100%;
+  }
+
+  .choice-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .module-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .journey-heading,
+  .idea-list-card,
+  .architect-project-card {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .architect-project-open {
+    align-self: flex-start;
+  }
+
+  .journey-heading .primary-link {
+    align-self: stretch;
+  }
+
+  .idea-card-meta {
+    text-align: left;
+  }
+
+  .idea-source {
+    grid-template-columns: 1fr;
+  }
+
+  .idea-source > div + div {
+    border-top: 1px solid var(--border);
+  }
+
+  .composer-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .empty-state {
+    padding: 1.5rem;
+  }
+
+  .feed-composer,
+  .feed-entry {
+    padding: 1rem;
+  }
+
+  .entry-actions {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 24rem) {
+  .status-list > div {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .status-list dd {
+    text-align: left;
   }
 }

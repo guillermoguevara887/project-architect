@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Arquitect",
-  description: "Login y Dashboard de Arquitect.",
+  title: "MemoOS",
+  description: "Hub personal para Project Architect y Journey.",
 };
 
 export default function RootLayout({

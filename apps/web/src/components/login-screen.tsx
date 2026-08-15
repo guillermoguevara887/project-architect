@@ -88,7 +88,7 @@ export function LoginScreen() {
   return (
     <main className="auth-shell">
       <section className="auth-card" aria-labelledby="login-title">
-        <p className="brand">Arquitect</p>
+        <p className="brand">MemoOS</p>
         <h1 id="login-title">Iniciar sesión</h1>
 
         <form className="auth-form" onSubmit={submit}>

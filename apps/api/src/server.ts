@@ -1,12 +1,21 @@
 import { sql } from "drizzle-orm";
 import Fastify, { type FastifyServerOptions } from "fastify";
+import {
+  architectProjectStore,
+  type ArchitectProjectStore,
+} from "./architect-projects/repository.js";
+import { registerArchitectProjectRoutes } from "./architect-projects/routes.js";
 import { authStore, type AuthStore } from "./auth/repository.js";
 import { registerAuthRoutes } from "./auth/routes.js";
 import { assertSessionConfiguration } from "./auth/session.js";
 import { closeDbConnection, getDb } from "./db/client.js";
+import { journeyStore, type JourneyStore } from "./journey/repository.js";
+import { registerJourneyRoutes } from "./journey/routes.js";
 
 type ServerDependencies = {
   authStore?: AuthStore;
+  architectProjectStore?: ArchitectProjectStore;
+  journeyStore?: JourneyStore;
 };
 
 export function createServer(
@@ -15,11 +24,12 @@ export function createServer(
 ) {
   assertSessionConfiguration();
   const server = Fastify(options);
+  const configuredAuthStore = dependencies.authStore ?? authStore;
 
   server.get("/health", async () => {
     return {
       status: "ok",
-      service: "project-architect-api",
+      service: "memoos-api",
     };
   });
 
@@ -39,7 +49,17 @@ export function createServer(
     }
   });
 
-  registerAuthRoutes(server, dependencies.authStore ?? authStore);
+  registerAuthRoutes(server, configuredAuthStore);
+  registerArchitectProjectRoutes(
+    server,
+    dependencies.architectProjectStore ?? architectProjectStore,
+    configuredAuthStore,
+  );
+  registerJourneyRoutes(
+    server,
+    dependencies.journeyStore ?? journeyStore,
+    configuredAuthStore,
+  );
 
   server.addHook("onClose", async () => {
     await closeDbConnection();

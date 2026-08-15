@@ -1,5 +1,5 @@
 {
-  "name": "@project-architect/web",
+  "name": "@memoos/web",
   "version": "0.1.0",
   "private": true,
   "type": "module",

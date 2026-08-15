@@ -3,7 +3,7 @@ import { delimiter, join } from "node:path";
 import { spawn } from "node:child_process";
 
 const root = process.cwd();
-const shimDir = join(root, "node_modules", ".cache", "project-architect-pnpm-shim");
+const shimDir = join(root, "node_modules", ".cache", "memoos-pnpm-shim");
 mkdirSync(shimDir, { recursive: true });
 
 if (process.platform === "win32") {

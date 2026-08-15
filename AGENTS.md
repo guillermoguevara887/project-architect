@@ -1,14 +1,15 @@
 # Agent Instructions
 
-Arquitect is a standalone product. Do not import or depend on MemoOS
-code, database tables, authentication, environment variables, routes, UI
-internals, deployment configuration, or runtime assumptions.
+MemoOS is the standalone personal hub in this repository. Project Architect
+and Journey are independent modules inside MemoOS. Preserve clear module
+boundaries and do not couple one module's product contracts, routes, UI, or
+storage to another module.
 
 ## Current Baseline
 
 - Monorepo: pnpm workspaces with Turborepo
-- Frontend: minimal Next.js App Router application
-- Backend: minimal Fastify application with TypeScript
+- Frontend: Next.js App Router application
+- Backend: Fastify application with TypeScript
 - Database: PostgreSQL as the single source of truth, hosted on Railway
 - Database access: Drizzle ORM with the `postgres` client
 - Existing SQL migrations and the complete historical Drizzle schema are kept
@@ -19,6 +20,17 @@ internals, deployment configuration, or runtime assumptions.
 - Session: signed, expiring, HTTP-only cookie
 - Authentication routes: `POST /auth/login`, `GET /auth/session`, and
   `POST /auth/logout`
+
+## Module Boundaries
+
+- MemoOS owns login, session handling, the Dashboard, shared infrastructure,
+  and module navigation.
+- Project Architect owns routes under `/projects/*`, API routes under
+  `/architect/*`, and its `architect_projects` data.
+- Journey owns routes under `/journey/*` and the `journey_ideas` and
+  `journey_feed_entries` data.
+- Do not move Journey workflows into Project Architect or use Project
+  Architect records as Journey ideas.
 
 ## Database Safety
 
@@ -34,22 +46,24 @@ internals, deployment configuration, or runtime assumptions.
 - Do not modify existing PostgreSQL data as part of repository cleanup.
 - Never expose `DATABASE_URL` through a `NEXT_PUBLIC_*` variable.
 
-## Current Scope
+## Current Journey Scope
 
-The repository may contain only the minimal frontend, minimal backend,
-database connection, Drizzle configuration, preserved schema and migrations,
-health endpoints, username/password authentication, login, and the protected
-minimal dashboard.
+Journey currently covers only idea creation, source traceability, idea listing
+and detail, and CRUD feed entries ordered newest first.
 
-Do not restore or implement Projects, Discovery, research, competition,
-product dashboards, repositories, services, or their former contracts and
-tests unless explicitly requested.
+Do not implement NotebookLM, understanding checklists, video planning, scripts,
+ElevenLabs, study audio, uploads, AI, publishing, analytics, thumbnails,
+automations, folders, tasks, or kanban unless explicitly requested.
+
+## Authentication Scope
 
 Do not add email, names, avatars, roles, permissions, organizations, profiles,
 public registration, password recovery, OAuth, MFA, or email verification.
 
-Do not execute `0002_create_users.sql` until the user explicitly authorizes
-that migration. Do not report live credential authentication as verified until
-the migration has been applied and a user has been provisioned.
+Do not execute `0002_create_users.sql`, `0003_create_architect_projects.sql`,
+or `0004_create_journey.sql` until the user explicitly authorizes the exact
+migration operation. Do not report live credential authentication or live
+Journey persistence as verified until the required migrations have been
+applied and a user has been provisioned.
 
 Do not create commits, push changes, or deploy.

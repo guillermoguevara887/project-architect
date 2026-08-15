@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -101,7 +102,7 @@ export function DashboardScreen() {
       <section className="dashboard-card" aria-labelledby="dashboard-title">
         <header className="dashboard-header">
           <div>
-            <p className="brand">Arquitect</p>
+            <p className="brand">MemoOS</p>
             <h1 id="dashboard-title">Dashboard</h1>
           </div>
 
@@ -131,6 +132,23 @@ export function DashboardScreen() {
             </dd>
           </div>
         </dl>
+
+        <section className="modules-section" aria-labelledby="modules-title">
+          <h2 id="modules-title">Módulos</h2>
+          <div className="module-grid">
+            <Link className="module-card" href="/projects/new">
+              <span className="module-label">Proyectos generales</span>
+              <strong>Project Architect</strong>
+              <p>Define y organiza proyectos y concursos.</p>
+            </Link>
+
+            <Link className="module-card" href="/journey">
+              <span className="module-label">Videos de YouTube</span>
+              <strong>Journey</strong>
+              <p>Captura ideas y acompaña su recorrido creativo.</p>
+            </Link>
+          </div>
+        </section>
       </section>
     </main>
   );
