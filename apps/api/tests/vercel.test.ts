@@ -75,4 +75,10 @@ test("Vercel uses the explicit API function instead of Fastify auto-detection", 
   assert.deepEqual(config.routes, [
     { src: "/(.*)", dest: "/api/index.ts" },
   ]);
+
+  const turboConfig = JSON.parse(
+    await readFile(new URL("../../../turbo.json", import.meta.url), "utf8"),
+  ) as { globalPassThroughEnv?: string[] };
+
+  assert.ok(turboConfig.globalPassThroughEnv?.includes("COREPACK_HOME"));
 });
