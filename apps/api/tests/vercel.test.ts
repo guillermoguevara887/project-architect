@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { after, test } from "node:test";
 import handler from "../src/vercel.js";
@@ -51,4 +52,18 @@ test("the Vercel handler completes the API root response", async () => {
     status: "ok",
     service: "memoos-api",
   });
+});
+
+test("Vercel uses the explicit API function instead of Fastify auto-detection", async () => {
+  const config = JSON.parse(
+    await readFile(new URL("../vercel.json", import.meta.url), "utf8"),
+  ) as {
+    framework?: string | null;
+    rewrites?: Array<{ source: string; destination: string }>;
+  };
+
+  assert.equal(config.framework, null);
+  assert.deepEqual(config.rewrites, [
+    { source: "/(.*)", destination: "/api" },
+  ]);
 });
