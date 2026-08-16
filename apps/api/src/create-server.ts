@@ -21,6 +21,49 @@ type ServerDependencies = {
   journeyStore?: JourneyStore;
 };
 
+function databaseFailureReason(error: unknown) {
+  if (!(error instanceof Error)) {
+    return "connection_failed";
+  }
+
+  const code =
+    "code" in error && typeof error.code === "string" ? error.code : undefined;
+
+  if (error.message === "DATABASE_URL is not configured.") {
+    return "not_configured";
+  }
+
+  if (code === "ERR_INVALID_URL") {
+    return "invalid_url";
+  }
+
+  if (code === "ENOTFOUND") {
+    return "host_not_found";
+  }
+
+  if (code === "ECONNREFUSED") {
+    return "connection_refused";
+  }
+
+  if (code === "ETIMEDOUT" || code === "CONNECT_TIMEOUT") {
+    return "connection_timeout";
+  }
+
+  if (code === "28P01") {
+    return "authentication_failed";
+  }
+
+  if (code === "3D000") {
+    return "database_not_found";
+  }
+
+  if (code?.startsWith("ERR_TLS") || code?.includes("CERT")) {
+    return "tls_failed";
+  }
+
+  return "connection_failed";
+}
+
 export function configureServer(
   server: FastifyInstance,
   dependencies: ServerDependencies = {},
@@ -47,6 +90,7 @@ export function configureServer(
 
       return reply.code(503).send({
         database: "disconnected",
+        reason: databaseFailureReason(error),
       });
     }
   });
