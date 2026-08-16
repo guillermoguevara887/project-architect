@@ -1,9 +1,8 @@
 import "dotenv/config";
-import { createServer } from "./create-server.js";
+import Fastify from "fastify";
+import { configureServer } from "./create-server.js";
 
-const server = createServer({
-  logger: true,
-});
+const server = configureServer(Fastify({ logger: true }));
 
 const port = Number(process.env.API_PORT ?? process.env.PORT ?? 4000);
 const host = process.env.API_HOST ?? "0.0.0.0";

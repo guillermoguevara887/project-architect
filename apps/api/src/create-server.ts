@@ -1,5 +1,8 @@
 import { sql } from "drizzle-orm";
-import Fastify, { type FastifyServerOptions } from "fastify";
+import Fastify, {
+  type FastifyInstance,
+  type FastifyServerOptions,
+} from "fastify";
 import {
   architectProjectStore,
   type ArchitectProjectStore,
@@ -18,12 +21,11 @@ type ServerDependencies = {
   journeyStore?: JourneyStore;
 };
 
-export function createServer(
-  options: FastifyServerOptions = {},
+export function configureServer(
+  server: FastifyInstance,
   dependencies: ServerDependencies = {},
 ) {
   assertSessionConfiguration();
-  const server = Fastify(options);
   const configuredAuthStore = dependencies.authStore ?? authStore;
 
   server.get("/health", async () => {
@@ -66,4 +68,11 @@ export function createServer(
   });
 
   return server;
+}
+
+export function createServer(
+  options: FastifyServerOptions = {},
+  dependencies: ServerDependencies = {},
+) {
+  return configureServer(Fastify(options), dependencies);
 }
