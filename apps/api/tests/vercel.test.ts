@@ -59,11 +59,16 @@ test("Vercel uses the explicit API function instead of Fastify auto-detection", 
     await readFile(new URL("../vercel.json", import.meta.url), "utf8"),
   ) as {
     framework?: string | null;
+    installCommand?: string;
     builds?: Array<{ src: string; use: string }>;
     routes?: Array<{ src: string; dest: string }>;
   };
 
   assert.equal(config.framework, null);
+  assert.equal(
+    config.installCommand,
+    "corepack pnpm install --frozen-lockfile",
+  );
   assert.deepEqual(config.builds, [
     { src: "api/index.ts", use: "@vercel/node" },
   ]);
