@@ -66,4 +66,5 @@ migration operation. Do not report live credential authentication or live
 Journey persistence as verified until the required migrations have been
 applied and a user has been provisioned.
 
-Do not create commits, push changes, or deploy.
+Create commits, push changes, or deploy only when the user explicitly
+authorizes the exact action.
