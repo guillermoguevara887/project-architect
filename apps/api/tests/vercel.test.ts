@@ -59,11 +59,15 @@ test("Vercel uses the explicit API function instead of Fastify auto-detection", 
     await readFile(new URL("../vercel.json", import.meta.url), "utf8"),
   ) as {
     framework?: string | null;
-    rewrites?: Array<{ source: string; destination: string }>;
+    builds?: Array<{ src: string; use: string }>;
+    routes?: Array<{ src: string; dest: string }>;
   };
 
   assert.equal(config.framework, null);
-  assert.deepEqual(config.rewrites, [
-    { source: "/(.*)", destination: "/api" },
+  assert.deepEqual(config.builds, [
+    { src: "api/index.ts", use: "@vercel/node" },
+  ]);
+  assert.deepEqual(config.routes, [
+    { src: "/(.*)", dest: "/api/index.ts" },
   ]);
 });
