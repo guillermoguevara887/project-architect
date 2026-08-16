@@ -1,69 +1,16 @@
-import { sql } from "drizzle-orm";
-import Fastify, { type FastifyServerOptions } from "fastify";
-import {
-  architectProjectStore,
-  type ArchitectProjectStore,
-} from "./architect-projects/repository.js";
-import { registerArchitectProjectRoutes } from "./architect-projects/routes.js";
-import { authStore, type AuthStore } from "./auth/repository.js";
-import { registerAuthRoutes } from "./auth/routes.js";
-import { assertSessionConfiguration } from "./auth/session.js";
-import { closeDbConnection, getDb } from "./db/client.js";
-import { journeyStore, type JourneyStore } from "./journey/repository.js";
-import { registerJourneyRoutes } from "./journey/routes.js";
+import "dotenv/config";
+import { createServer } from "./create-server.js";
 
-type ServerDependencies = {
-  authStore?: AuthStore;
-  architectProjectStore?: ArchitectProjectStore;
-  journeyStore?: JourneyStore;
-};
+const server = createServer({
+  logger: true,
+});
 
-export function createServer(
-  options: FastifyServerOptions = {},
-  dependencies: ServerDependencies = {},
-) {
-  assertSessionConfiguration();
-  const server = Fastify(options);
-  const configuredAuthStore = dependencies.authStore ?? authStore;
+const port = Number(process.env.API_PORT ?? process.env.PORT ?? 4000);
+const host = process.env.API_HOST ?? "0.0.0.0";
 
-  server.get("/health", async () => {
-    return {
-      status: "ok",
-      service: "memoos-api",
-    };
-  });
-
-  server.get("/health/db", async (_request, reply) => {
-    try {
-      await getDb().execute(sql`select 1`);
-
-      return {
-        database: "connected",
-      };
-    } catch (error) {
-      server.log.error({ error }, "Database health check failed.");
-
-      return reply.code(503).send({
-        database: "disconnected",
-      });
-    }
-  });
-
-  registerAuthRoutes(server, configuredAuthStore);
-  registerArchitectProjectRoutes(
-    server,
-    dependencies.architectProjectStore ?? architectProjectStore,
-    configuredAuthStore,
-  );
-  registerJourneyRoutes(
-    server,
-    dependencies.journeyStore ?? journeyStore,
-    configuredAuthStore,
-  );
-
-  server.addHook("onClose", async () => {
-    await closeDbConnection();
-  });
-
-  return server;
+try {
+  await server.listen({ host, port });
+} catch (error) {
+  server.log.error(error);
+  process.exit(1);
 }

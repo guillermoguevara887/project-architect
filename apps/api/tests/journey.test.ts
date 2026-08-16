@@ -12,7 +12,7 @@ import type {
   JourneyStore,
   UpdateJourneyFeedEntryInput,
 } from "../src/journey/repository.js";
-import { createServer } from "../src/server.js";
+import { createServer } from "../src/create-server.js";
 
 process.env.NODE_ENV = "test";
 process.env.AUTH_COOKIE_SECRET =

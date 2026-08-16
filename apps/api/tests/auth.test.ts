@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { hashPassword, verifyPassword } from "../src/auth/password.js";
 import type { AuthStore, AuthUser } from "../src/auth/repository.js";
-import { createServer } from "../src/server.js";
+import { createServer } from "../src/create-server.js";
 
 process.env.NODE_ENV = "test";
 process.env.AUTH_COOKIE_SECRET =

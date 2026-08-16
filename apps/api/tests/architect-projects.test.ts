@@ -8,7 +8,7 @@ import type {
 } from "../src/architect-projects/repository.js";
 import type { AuthStore, AuthUser } from "../src/auth/repository.js";
 import { createSessionCookie } from "../src/auth/session.js";
-import { createServer } from "../src/server.js";
+import { createServer } from "../src/create-server.js";
 
 process.env.NODE_ENV = "test";
 process.env.AUTH_COOKIE_SECRET =
