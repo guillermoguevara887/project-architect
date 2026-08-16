@@ -10,5 +10,29 @@ export default async function handler(
   response: ServerResponse,
 ) {
   await serverReady;
-  server.server.emit("request", request, response);
+
+  await new Promise<void>((resolve, reject) => {
+    const finish = () => {
+      response.off("finish", finish);
+      response.off("close", finish);
+      response.off("error", fail);
+      resolve();
+    };
+    const fail = (error: Error) => {
+      response.off("finish", finish);
+      response.off("close", finish);
+      response.off("error", fail);
+      reject(error);
+    };
+
+    response.once("finish", finish);
+    response.once("close", finish);
+    response.once("error", fail);
+
+    try {
+      server.server.emit("request", request, response);
+    } catch (error) {
+      fail(error instanceof Error ? error : new Error(String(error)));
+    }
+  });
 }

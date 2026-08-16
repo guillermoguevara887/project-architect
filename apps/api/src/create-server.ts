@@ -71,6 +71,13 @@ export function configureServer(
   assertSessionConfiguration();
   const configuredAuthStore = dependencies.authStore ?? authStore;
 
+  server.get("/", async () => {
+    return {
+      status: "ok",
+      service: "memoos-api",
+    };
+  });
+
   server.get("/health", async () => {
     return {
       status: "ok",

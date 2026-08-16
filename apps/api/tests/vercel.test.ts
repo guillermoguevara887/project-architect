@@ -39,3 +39,16 @@ test("the Vercel handler serves Fastify routes without opening a port", async ()
     service: "memoos-api",
   });
 });
+
+test("the Vercel handler completes the API root response", async () => {
+  const address = proxy.address();
+  assert.ok(address && typeof address !== "string");
+
+  const response = await fetch(`http://127.0.0.1:${address.port}/`);
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    status: "ok",
+    service: "memoos-api",
+  });
+});
