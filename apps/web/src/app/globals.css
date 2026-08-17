@@ -191,6 +191,11 @@ button:disabled {
   min-width: 0;
 }
 
+.language-heading > *,
+.language-list-card > * {
+  min-width: 0;
+}
+
 .secondary-button {
   min-height: auto;
   background: #e8ecf4;
@@ -785,6 +790,145 @@ button:disabled {
   color: #b42318;
 }
 
+.language-shell {
+  align-items: start;
+}
+
+.language-card,
+.language-lesson-card {
+  width: min(100%, 64rem);
+}
+
+.language-form-card {
+  width: min(100%, 42rem);
+}
+
+.language-heading {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 2rem;
+}
+
+.language-heading > button,
+.language-heading .primary-link {
+  flex: 0 0 auto;
+}
+
+.language-error {
+  margin-top: 2rem;
+}
+
+.language-list,
+.lesson-list {
+  display: grid;
+  min-width: 0;
+  gap: 0.85rem;
+  margin-top: 2.5rem;
+}
+
+.language-list-card {
+  display: flex;
+  max-width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2rem;
+  padding: 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: 0.9rem;
+  background: #fff;
+  color: var(--foreground);
+  text-decoration: none;
+  transition:
+    border-color 150ms ease,
+    transform 150ms ease;
+}
+
+.language-list-card:hover {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+}
+
+.language-list-card strong {
+  display: block;
+  font-size: 1.1rem;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.language-list-card p {
+  margin: 0.45rem 0 0;
+  color: #556176;
+}
+
+.language-list-card time {
+  flex: 0 0 auto;
+  color: #687489;
+  font-size: 0.8rem;
+  text-align: right;
+}
+
+.language-form,
+.lesson-form {
+  display: grid;
+  min-width: 0;
+  gap: 0.75rem;
+  margin-top: 2rem;
+}
+
+.language-form label,
+.lesson-form label {
+  color: #465269;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.language-form input,
+.lesson-form textarea {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  padding: 0.85rem 0.9rem;
+  border: 1px solid #c7ced9;
+  border-radius: 0.65rem;
+  background: #fff;
+  color: var(--foreground);
+  font: inherit;
+}
+
+.lesson-form textarea {
+  min-height: 24rem;
+  resize: vertical;
+  line-height: 1.55;
+}
+
+.language-form input:focus,
+.lesson-form textarea:focus {
+  border-color: var(--accent);
+  outline: 3px solid rgb(49 87 213 / 14%);
+}
+
+.language-lessons {
+  margin-top: 3rem;
+}
+
+.language-lessons h2 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.language-lessons .lesson-list {
+  margin-top: 1rem;
+}
+
+.save-confirmation {
+  margin: 0.25rem 0;
+  color: #087443;
+  font-size: 0.9rem;
+}
+
 .visually-hidden {
   position: absolute;
   width: 1px;
@@ -848,9 +992,22 @@ button:disabled {
 
   .journey-heading,
   .idea-list-card,
-  .architect-project-card {
+  .architect-project-card,
+  .language-heading,
+  .language-list-card {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .language-heading > button,
+  .language-heading .primary-link,
+  .language-form > button,
+  .lesson-form > button {
+    width: 100%;
+  }
+
+  .language-list-card time {
+    text-align: left;
   }
 
   .architect-project-open {

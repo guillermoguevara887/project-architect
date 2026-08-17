@@ -301,3 +301,54 @@ export const journeyFeedEntries = pgTable(
     ),
   }),
 );
+
+export const languageProjects = pgTable(
+  "language_projects",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    language: text("language").notNull(),
+    level: text("level").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    userCreatedAtIdx: index("language_projects_user_created_at_idx").on(
+      table.userId,
+      table.createdAt.desc(),
+    ),
+  }),
+);
+
+export const languageLessons = pgTable(
+  "language_lessons",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    languageProjectId: uuid("language_project_id")
+      .notNull()
+      .references(() => languageProjects.id, { onDelete: "cascade" }),
+    lessonNumber: integer("lesson_number").notNull(),
+    sourceContent: text("source_content").default("").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    projectLessonNumberUnique: uniqueIndex(
+      "language_lessons_project_number_unique",
+    ).on(table.languageProjectId, table.lessonNumber),
+    lessonNumberCheck: check(
+      "language_lessons_number_check",
+      sql`${table.lessonNumber} > 0`,
+    ),
+  }),
+);

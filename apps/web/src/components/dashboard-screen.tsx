@@ -147,6 +147,11 @@ export function DashboardScreen() {
               <strong>Journey</strong>
               <p>Captura ideas y acompaña su recorrido creativo.</p>
             </Link>
+            <Link className="module-card" href="/languages">
+              <span className="module-label">Aprendizaje continuo</span>
+              <strong>Idiomas</strong>
+              <p>Organiza idiomas, niveles y lecciones secuenciales.</p>
+            </Link>
           </div>
         </section>
       </section>
