@@ -95,10 +95,24 @@ Migraciones de los incrementos actuales:
 - `0002_create_users.sql`: autenticación por username y password.
 - `0003_create_architect_projects.sql`: persistencia de Project Architect.
 - `0004_create_journey.sql`: ideas y entradas del diario de Journey.
+- `0005_create_languages.sql`: proyectos y lecciones del módulo Idiomas.
 
 Las migraciones no se ejecutan automáticamente. Antes de aplicarlas contra
 Railway hay que revisar el SQL y autorizar explícitamente la operación. Journey
 depende de que la tabla `users` exista.
+
+Comandos de operación:
+
+```powershell
+pnpm db:migrate:status
+pnpm db:migrate
+```
+
+Las bases creadas con el migrador anterior requieren una adopción explícita del
+historial con checksums antes de ejecutar nuevas migraciones. El procedimiento
+completo está en `docs/operations/database-migrations.md`. La auditoría manual
+de backups y restauración de Railway está en
+`docs/operations/railway-backups.md`.
 
 El primer usuario se provisiona sin registro público mediante
 `auth:create-user`, usando temporalmente `ARCHITECT_USERNAME` y
