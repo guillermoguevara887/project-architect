@@ -9,11 +9,14 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src --max-warnings=0",
     "test": "tsx --test tests/*.test.ts",
+    "test:integration:migrations": "tsx --test tests/integration/migrations.postgres.test.ts",
     "dev": "tsx watch src/local-server.ts",
     "start": "node dist/local-server.js",
     "auth:create-user": "tsx src/auth/create-user.ts",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
-    "db:migrate": "tsx src/db/migrate.ts"
+    "db:migrate": "tsx src/db/migrate.ts",
+    "db:migrate:status": "tsx src/db/migration-status.ts",
+    "db:migrate:bootstrap": "tsx src/db/migration-bootstrap.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.7",
