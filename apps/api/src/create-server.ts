@@ -14,11 +14,14 @@ import { assertSessionConfiguration } from "./auth/session.js";
 import { closeDbConnection, getDb } from "./db/client.js";
 import { journeyStore, type JourneyStore } from "./journey/repository.js";
 import { registerJourneyRoutes } from "./journey/routes.js";
+import { languageStore, type LanguageStore } from "./languages/repository.js";
+import { registerLanguageRoutes } from "./languages/routes.js";
 
 type ServerDependencies = {
   authStore?: AuthStore;
   architectProjectStore?: ArchitectProjectStore;
   journeyStore?: JourneyStore;
+  languageStore?: LanguageStore;
 };
 
 function databaseFailureReason(error: unknown) {
@@ -111,6 +114,11 @@ export function configureServer(
   registerJourneyRoutes(
     server,
     dependencies.journeyStore ?? journeyStore,
+    configuredAuthStore,
+  );
+  registerLanguageRoutes(
+    server,
+    dependencies.languageStore ?? languageStore,
     configuredAuthStore,
   );
 
