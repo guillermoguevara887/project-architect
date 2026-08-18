@@ -14,6 +14,10 @@ import { assertSessionConfiguration } from "./auth/session.js";
 import { closeDbConnection, getDb } from "./db/client.js";
 import { journeyStore, type JourneyStore } from "./journey/repository.js";
 import { registerJourneyRoutes } from "./journey/routes.js";
+import {
+  languageLessonProcessor,
+  type LanguageLessonProcessor,
+} from "./languages/lesson-processor.js";
 import { languageStore, type LanguageStore } from "./languages/repository.js";
 import { registerLanguageRoutes } from "./languages/routes.js";
 
@@ -22,6 +26,7 @@ type ServerDependencies = {
   architectProjectStore?: ArchitectProjectStore;
   journeyStore?: JourneyStore;
   languageStore?: LanguageStore;
+  languageLessonProcessor?: LanguageLessonProcessor;
 };
 
 function databaseFailureReason(error: unknown) {
@@ -120,6 +125,7 @@ export function configureServer(
     server,
     dependencies.languageStore ?? languageStore,
     configuredAuthStore,
+    dependencies.languageLessonProcessor ?? languageLessonProcessor,
   );
 
   server.addHook("onClose", async () => {

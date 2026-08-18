@@ -37,6 +37,13 @@ Páginas principales:
 - `/journey/new`
 - `/journey/:ideaId`
 
+### Idiomas
+
+Idiomas organiza proyectos por idioma y nivel. Cada lección recibe material
+fuente y lo transforma desde el backend en ocho secciones estructuradas:
+vocabulario, frases, patrones, mini historia, pensamientos automáticos, diálogo,
+puente al siguiente nivel y repaso.
+
 ## Variables de entorno
 
 El backend carga sus variables desde `apps/api/.env` durante el desarrollo
@@ -52,10 +59,14 @@ DATABASE_URL=postgresql://usuario:contraseña@host:5432/base
 APP_ENV=local
 NODE_ENV=development
 AUTH_COOKIE_SECRET=replace-with-a-long-random-secret
+OPENAI_API_KEY=replace-with-a-server-side-api-key
+OPENAI_LANGUAGE_MODEL=gpt-5.4-mini
 ```
 
 En Railway, la API también acepta la variable `PORT` proporcionada por la
-plataforma.
+plataforma. `OPENAI_API_KEY` y `OPENAI_LANGUAGE_MODEL` pertenecen únicamente al
+entorno del backend; nunca deben exponerse mediante variables `NEXT_PUBLIC_*`.
+El modelo es configurable y usa `gpt-5.4-mini` por defecto.
 
 ## Ejecución
 
@@ -96,6 +107,8 @@ Migraciones de los incrementos actuales:
 - `0003_create_architect_projects.sql`: persistencia de Project Architect.
 - `0004_create_journey.sql`: ideas y entradas del diario de Journey.
 - `0005_create_languages.sql`: proyectos y lecciones del módulo Idiomas.
+- `0006_structure_language_lessons.sql`: estado y contenido JSON estructurado de
+  las lecciones de Idiomas.
 
 Las migraciones no se ejecutan automáticamente. Antes de aplicarlas contra
 Railway hay que revisar el SQL y autorizar explícitamente la operación. Journey
@@ -113,6 +126,9 @@ historial con checksums antes de ejecutar nuevas migraciones. El procedimiento
 completo está en `docs/operations/database-migrations.md`. La auditoría manual
 de backups y restauración de Railway está en
 `docs/operations/railway-backups.md`.
+
+La configuración y el flujo operativo de las lecciones estructuradas se
+documentan en `docs/operations/language-lessons-openai.md`.
 
 El primer usuario se provisiona sin registro público mediante
 `auth:create-user`, usando temporalmente `ARCHITECT_USERNAME` y

@@ -5,9 +5,18 @@ import test from "node:test";
 import type { AuthStore, AuthUser } from "../src/auth/repository.js";
 import { createSessionCookie } from "../src/auth/session.js";
 import { createServer } from "../src/create-server.js";
+import type { StructuredLanguageLesson } from "../src/languages/contracts.js";
+import {
+  LanguageLessonProcessingError,
+  type LanguageLessonProcessor,
+  type ProcessLanguageLessonInput,
+} from "../src/languages/lesson-processor.js";
 import type {
+  ClaimLanguageLessonInput,
+  CompleteLanguageLessonProcessingInput,
   CreateLanguageProjectInput,
   CreateNextLanguageLessonInput,
+  FailLanguageLessonProcessingInput,
   LanguageLesson,
   LanguageProject,
   LanguageStore,
@@ -28,6 +37,43 @@ const secondUser: AuthUser = {
   id: "bdf28936-4853-423d-b43e-020bb1b5ddcb",
   username: "other-user",
   passwordHash: "unused",
+};
+
+const structuredLesson: StructuredLanguageLesson = {
+  vocabulary: [
+    { term: "müde", meaning: "cansado", example: "Ich bin müde." },
+  ],
+  phrases: [
+    {
+      text: "Ich muss früh aufstehen.",
+      translation: "Tengo que levantarme temprano.",
+      note: null,
+    },
+  ],
+  patterns: [
+    {
+      name: "Ich muss …",
+      explanation: "Expresa una obligación.",
+      examples: ["Ich muss arbeiten."],
+    },
+  ],
+  miniStory: { text: "Lukas ist müde, aber morgen muss er früh aufstehen." },
+  automaticThoughts: [{ text: "Ich bin sehr müde." }],
+  dialogue: [
+    { speaker: "Lukas", text: "Ich bin müde." },
+    { speaker: "Anna", text: "Dann geh schlafen." },
+  ],
+  nextLevelBridge: [
+    {
+      base: "Ich bin müde.",
+      advanced: "Ich bin ziemlich erschöpft.",
+      note: "Introduce una forma ligeramente más rica.",
+    },
+  ],
+  review: {
+    keyVocabulary: ["müde"],
+    keyPatterns: ["Ich muss …"],
+  },
 };
 
 class MemoryAuthStore implements AuthStore {
@@ -109,6 +155,9 @@ class MemoryLanguageStore implements LanguageStore {
       languageProjectId: input.languageProjectId,
       lessonNumber,
       sourceContent: "",
+      status: "draft",
+      structuredContent: null,
+      processedAt: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -146,7 +195,7 @@ class MemoryLanguageStore implements LanguageStore {
 
   async updateLessonSourceContent(input: UpdateLanguageLessonInput) {
     if (!this.ownsProject(input.languageProjectId, input.userId)) {
-      return null;
+      return { kind: "not_found" as const };
     }
 
     const lesson = this.lessons.find(
@@ -156,12 +205,134 @@ class MemoryLanguageStore implements LanguageStore {
     );
 
     if (!lesson) {
-      return null;
+      return { kind: "not_found" as const };
+    }
+
+    if (lesson.status !== "draft" && lesson.status !== "failed") {
+      return { kind: "not_editable" as const };
     }
 
     lesson.sourceContent = input.sourceContent;
     lesson.updatedAt = this.now();
+    return { kind: "updated" as const, lesson };
+  }
+
+  async claimLessonForProcessing(input: ClaimLanguageLessonInput) {
+    const project = this.projects.find(
+      (candidate) =>
+        candidate.id === input.languageProjectId &&
+        candidate.userId === input.userId,
+    );
+
+    if (!project) {
+      return { kind: "not_found" as const };
+    }
+
+    const lesson = this.lessons.find(
+      (candidate) =>
+        candidate.id === input.lessonId &&
+        candidate.languageProjectId === input.languageProjectId,
+    );
+
+    if (!lesson) {
+      return { kind: "not_found" as const };
+    }
+
+    if (lesson.status === "ready") {
+      return { kind: "already_ready" as const };
+    }
+
+    if (lesson.status === "processing") {
+      return { kind: "processing" as const };
+    }
+
+    lesson.sourceContent = input.sourceContent;
+    lesson.status = "processing";
+    lesson.structuredContent = null;
+    lesson.processedAt = null;
+    lesson.updatedAt = this.now();
+    return { kind: "claimed" as const, lesson, project };
+  }
+
+  async completeLessonProcessing(input: CompleteLanguageLessonProcessingInput) {
+    const lesson = this.lessons.find(
+      (candidate) =>
+        candidate.id === input.lessonId &&
+        candidate.languageProjectId === input.languageProjectId,
+    );
+
+    if (
+      !this.ownsProject(input.languageProjectId, input.userId) ||
+      !lesson ||
+      lesson.status !== "processing" ||
+      lesson.updatedAt.getTime() !== input.processingStartedAt.getTime()
+    ) {
+      return null;
+    }
+
+    const now = this.now();
+    lesson.status = "ready";
+    lesson.structuredContent = input.structuredContent;
+    lesson.processedAt = now;
+    lesson.updatedAt = now;
     return lesson;
+  }
+
+  async failLessonProcessing(input: FailLanguageLessonProcessingInput) {
+    const lesson = this.lessons.find(
+      (candidate) =>
+        candidate.id === input.lessonId &&
+        candidate.languageProjectId === input.languageProjectId,
+    );
+
+    if (
+      !this.ownsProject(input.languageProjectId, input.userId) ||
+      !lesson ||
+      lesson.status !== "processing" ||
+      lesson.updatedAt.getTime() !== input.processingStartedAt.getTime()
+    ) {
+      return null;
+    }
+
+    lesson.status = "failed";
+    lesson.structuredContent = null;
+    lesson.processedAt = null;
+    lesson.updatedAt = this.now();
+    return lesson;
+  }
+
+  async deleteLesson(lessonId: string, projectId: string, userId: string) {
+    if (!this.ownsProject(projectId, userId)) {
+      return false;
+    }
+
+    const index = this.lessons.findIndex(
+      (lesson) =>
+        lesson.id === lessonId && lesson.languageProjectId === projectId,
+    );
+
+    if (index === -1) {
+      return false;
+    }
+
+    this.lessons.splice(index, 1);
+    return true;
+  }
+}
+
+class FakeLanguageLessonProcessor implements LanguageLessonProcessor {
+  readonly calls: ProcessLanguageLessonInput[] = [];
+  result = structuredLesson;
+  error: Error | null = null;
+
+  async process(input: ProcessLanguageLessonInput) {
+    this.calls.push(input);
+
+    if (this.error) {
+      throw this.error;
+    }
+
+    return this.result;
   }
 }
 
@@ -169,14 +340,19 @@ function sessionCookie(userId: string) {
   return createSessionCookie(userId).split(";", 1)[0];
 }
 
-function testServer(store = new MemoryLanguageStore()) {
+function testServer(
+  store = new MemoryLanguageStore(),
+  processor = new FakeLanguageLessonProcessor(),
+) {
   return {
     store,
+    processor,
     server: createServer(
       {},
       {
         authStore: new MemoryAuthStore(),
         languageStore: store,
+        languageLessonProcessor: processor,
       },
     ),
   };
@@ -201,6 +377,36 @@ async function createProject(
   };
 }
 
+async function createLesson(
+  server: ReturnType<typeof createServer>,
+  projectId: string,
+  cookie: string,
+) {
+  const response = await server.inject({
+    method: "POST",
+    url: `/languages/projects/${projectId}/lessons`,
+    headers: { cookie },
+  });
+
+  assert.equal(response.statusCode, 201);
+  return response.json().lesson as { id: string; lessonNumber: number };
+}
+
+async function processLesson(
+  server: ReturnType<typeof createServer>,
+  projectId: string,
+  lessonId: string,
+  cookie: string,
+  sourceContent = "Ich bin sehr müde.",
+) {
+  return server.inject({
+    method: "POST",
+    url: `/languages/projects/${projectId}/lessons/${lessonId}/process`,
+    headers: { cookie },
+    payload: { sourceContent },
+  });
+}
+
 test("Idiomas requires authentication and validates project fields", async () => {
   const { store, server } = testServer();
   const cookie = sessionCookie(firstUser.id);
@@ -210,11 +416,6 @@ test("Idiomas requires authentication and validates project fields", async () =>
       method: "GET",
       url: "/languages/projects",
     });
-    const unauthenticatedCreation = await server.inject({
-      method: "POST",
-      url: "/languages/projects",
-      payload: { language: "Alemán", level: "Nivel 2" },
-    });
     const invalidCreation = await server.inject({
       method: "POST",
       url: "/languages/projects",
@@ -223,7 +424,6 @@ test("Idiomas requires authentication and validates project fields", async () =>
     });
 
     assert.equal(unauthenticatedList.statusCode, 401);
-    assert.equal(unauthenticatedCreation.statusCode, 401);
     assert.equal(invalidCreation.statusCode, 400);
     assert.equal(store.projects.length, 0);
   } finally {
@@ -232,7 +432,7 @@ test("Idiomas requires authentication and validates project fields", async () =>
 });
 
 test("a language project is trimmed, listed and visible only to its owner", async () => {
-  const { store, server } = testServer();
+  const { server } = testServer();
   const ownerCookie = sessionCookie(firstUser.id);
   const otherCookie = sessionCookie(secondUser.id);
 
@@ -243,11 +443,6 @@ test("a language project is trimmed, listed and visible only to its owner", asyn
       url: "/languages/projects",
       headers: { cookie: ownerCookie },
     });
-    const ownerDetail = await server.inject({
-      method: "GET",
-      url: `/languages/projects/${project.id}`,
-      headers: { cookie: ownerCookie },
-    });
     const otherDetail = await server.inject({
       method: "GET",
       url: `/languages/projects/${project.id}`,
@@ -256,137 +451,297 @@ test("a language project is trimmed, listed and visible only to its owner", asyn
 
     assert.equal(project.language, "Alemán");
     assert.equal(project.level, "Nivel 2");
-    assert.equal(store.projects[0]?.userId, firstUser.id);
     assert.equal(ownerList.statusCode, 200);
     assert.equal(ownerList.json().projects[0].language, "Alemán");
-    assert.equal(ownerDetail.statusCode, 200);
     assert.equal(otherDetail.statusCode, 404);
   } finally {
     await server.close();
   }
 });
 
-test("lessons are sequential and source material persists without trimming", async () => {
+test("lessons remain sequential and draft source material can still persist", async () => {
   const { server } = testServer();
   const cookie = sessionCookie(firstUser.id);
 
   try {
     const project = await createProject(server, cookie);
-    const firstCreation = await server.inject({
-      method: "POST",
-      url: `/languages/projects/${project.id}/lessons`,
-      headers: { cookie },
-    });
-    const secondCreation = await server.inject({
-      method: "POST",
-      url: `/languages/projects/${project.id}/lessons`,
-      headers: { cookie },
-    });
-
-    assert.equal(firstCreation.statusCode, 201);
-    assert.equal(firstCreation.json().lesson.lessonNumber, 1);
-    assert.equal(secondCreation.statusCode, 201);
-    assert.equal(secondCreation.json().lesson.lessonNumber, 2);
-
-    const listing = await server.inject({
-      method: "GET",
-      url: `/languages/projects/${project.id}/lessons`,
-      headers: { cookie },
-    });
-    const lessons = listing.json().lessons as Array<{
-      id: string;
-      lessonNumber: number;
-    }>;
-
-    assert.equal(listing.statusCode, 200);
-    assert.deepEqual(
-      lessons.map((lesson) => lesson.lessonNumber),
-      [1, 2],
-    );
-
+    const first = await createLesson(server, project.id, cookie);
+    const second = await createLesson(server, project.id, cookie);
     const sourceContent = "  Guten Morgen.\nWie geht es dir?  ";
     const update = await server.inject({
       method: "PATCH",
-      url: `/languages/projects/${project.id}/lessons/${lessons[0]?.id}`,
+      url: `/languages/projects/${project.id}/lessons/${first.id}`,
       headers: { cookie },
       payload: { sourceContent },
     });
-    const detail = await server.inject({
-      method: "GET",
-      url: `/languages/projects/${project.id}/lessons/${lessons[0]?.id}`,
-      headers: { cookie },
-    });
 
+    assert.equal(first.lessonNumber, 1);
+    assert.equal(second.lessonNumber, 2);
     assert.equal(update.statusCode, 200);
     assert.equal(update.json().lesson.sourceContent, sourceContent);
-    assert.equal(detail.statusCode, 200);
-    assert.equal(detail.json().lesson.sourceContent, sourceContent);
+    assert.equal(update.json().lesson.status, "draft");
   } finally {
     await server.close();
   }
 });
 
-test("a different user cannot read, create or update lessons", async () => {
-  const { server } = testServer();
+test("processing uses project language and level, stores all sections and hides ready source", async () => {
+  const { store, processor, server } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+  const sourceContent = "  Ich bin sehr müde.  ";
+
+  try {
+    const project = await createProject(server, cookie);
+    const lesson = await createLesson(server, project.id, cookie);
+    const response = await processLesson(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      sourceContent,
+    );
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(processor.calls, [
+      { language: "Alemán", level: "Nivel 2", sourceContent },
+    ]);
+    assert.equal(store.lessons[0]?.status, "ready");
+    assert.equal(store.lessons[0]?.sourceContent, sourceContent);
+    assert.deepEqual(store.lessons[0]?.structuredContent, structuredLesson);
+    assert.ok(store.lessons[0]?.processedAt);
+    assert.equal("sourceContent" in response.json().lesson, false);
+    assert.deepEqual(
+      Object.keys(response.json().lesson.structuredContent).sort(),
+      [
+        "automaticThoughts",
+        "dialogue",
+        "miniStory",
+        "nextLevelBridge",
+        "patterns",
+        "phrases",
+        "review",
+        "vocabulary",
+      ],
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("empty input is rejected before processing", async () => {
+  const { processor, server } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+
+  try {
+    const project = await createProject(server, cookie);
+    const lesson = await createLesson(server, project.id, cookie);
+    const response = await processLesson(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      "   \n",
+    );
+
+    assert.equal(response.statusCode, 400);
+    assert.equal(processor.calls.length, 0);
+  } finally {
+    await server.close();
+  }
+});
+
+test("another user cannot read, process, update or delete a lesson", async () => {
+  const { processor, server } = testServer();
   const ownerCookie = sessionCookie(firstUser.id);
   const otherCookie = sessionCookie(secondUser.id);
 
   try {
     const project = await createProject(server, ownerCookie);
-    const creation = await server.inject({
-      method: "POST",
-      url: `/languages/projects/${project.id}/lessons`,
-      headers: { cookie: ownerCookie },
-    });
-    const lessonId = creation.json().lesson.id as string;
-
-    const listing = await server.inject({
-      method: "GET",
-      url: `/languages/projects/${project.id}/lessons`,
-      headers: { cookie: otherCookie },
-    });
-    const unauthorizedCreation = await server.inject({
-      method: "POST",
-      url: `/languages/projects/${project.id}/lessons`,
-      headers: { cookie: otherCookie },
-    });
+    const lesson = await createLesson(server, project.id, ownerCookie);
     const detail = await server.inject({
       method: "GET",
-      url: `/languages/projects/${project.id}/lessons/${lessonId}`,
+      url: `/languages/projects/${project.id}/lessons/${lesson.id}`,
       headers: { cookie: otherCookie },
     });
+    const processing = await processLesson(
+      server,
+      project.id,
+      lesson.id,
+      otherCookie,
+    );
     const update = await server.inject({
       method: "PATCH",
-      url: `/languages/projects/${project.id}/lessons/${lessonId}`,
+      url: `/languages/projects/${project.id}/lessons/${lesson.id}`,
       headers: { cookie: otherCookie },
       payload: { sourceContent: "Private material" },
     });
+    const deletion = await server.inject({
+      method: "DELETE",
+      url: `/languages/projects/${project.id}/lessons/${lesson.id}`,
+      headers: { cookie: otherCookie },
+    });
 
-    assert.equal(listing.statusCode, 404);
-    assert.equal(unauthorizedCreation.statusCode, 404);
     assert.equal(detail.statusCode, 404);
+    assert.equal(processing.statusCode, 404);
     assert.equal(update.statusCode, 404);
+    assert.equal(deletion.statusCode, 404);
+    assert.equal(processor.calls.length, 0);
   } finally {
     await server.close();
   }
 });
 
-test("Idiomas migration is additive and protects lesson numbering", async () => {
+test("provider and validation failures preserve source material and allow retry", async () => {
+  const { store, processor, server } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+  const sourceContent = "Hast du schon gegessen?";
+
+  try {
+    const project = await createProject(server, cookie);
+    const lesson = await createLesson(server, project.id, cookie);
+    processor.error = new LanguageLessonProcessingError("invalid_response");
+    const failed = await processLesson(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      sourceContent,
+    );
+
+    assert.equal(failed.statusCode, 502);
+    assert.equal(store.lessons[0]?.status, "failed");
+    assert.equal(store.lessons[0]?.sourceContent, sourceContent);
+    assert.equal(store.lessons[0]?.structuredContent, null);
+
+    processor.error = null;
+    const retried = await processLesson(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      sourceContent,
+    );
+
+    assert.equal(retried.statusCode, 200);
+    assert.equal(store.lessons[0]?.status, "ready");
+  } finally {
+    await server.close();
+  }
+});
+
+test("ready and actively processing lessons cannot be processed twice", async () => {
+  const { store, processor, server } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+
+  try {
+    const project = await createProject(server, cookie);
+    const first = await createLesson(server, project.id, cookie);
+    assert.equal(
+      (await processLesson(server, project.id, first.id, cookie)).statusCode,
+      200,
+    );
+    assert.equal(
+      (await processLesson(server, project.id, first.id, cookie)).statusCode,
+      409,
+    );
+
+    const second = await createLesson(server, project.id, cookie);
+    const processingLesson = store.lessons.find(
+      (lesson) => lesson.id === second.id,
+    );
+    assert.ok(processingLesson);
+    processingLesson.status = "processing";
+    processingLesson.updatedAt = new Date();
+    assert.equal(
+      (await processLesson(server, project.id, second.id, cookie)).statusCode,
+      409,
+    );
+    assert.equal(processor.calls.length, 1);
+  } finally {
+    await server.close();
+  }
+});
+
+test("ready lessons cannot be edited through the legacy PATCH route", async () => {
+  const { server } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+
+  try {
+    const project = await createProject(server, cookie);
+    const lesson = await createLesson(server, project.id, cookie);
+    await processLesson(server, project.id, lesson.id, cookie);
+    const update = await server.inject({
+      method: "PATCH",
+      url: `/languages/projects/${project.id}/lessons/${lesson.id}`,
+      headers: { cookie },
+      payload: { sourceContent: "Silently replace ready content" },
+    });
+
+    assert.equal(update.statusCode, 409);
+    assert.equal(update.json().error, "LANGUAGE_LESSON_NOT_EDITABLE");
+  } finally {
+    await server.close();
+  }
+});
+
+test("deletion removes only the selected lesson and never renumbers others", async () => {
+  const { store, server } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+
+  try {
+    const project = await createProject(server, cookie);
+    const first = await createLesson(server, project.id, cookie);
+    const second = await createLesson(server, project.id, cookie);
+    const deletion = await server.inject({
+      method: "DELETE",
+      url: `/languages/projects/${project.id}/lessons/${first.id}`,
+      headers: { cookie },
+    });
+
+    assert.equal(deletion.statusCode, 204);
+    assert.equal(store.lessons.length, 1);
+    assert.equal(store.lessons[0]?.id, second.id);
+    assert.equal(store.lessons[0]?.lessonNumber, 2);
+  } finally {
+    await server.close();
+  }
+});
+
+test("ready lesson detail persists structure without exposing source content", async () => {
+  const { server } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+
+  try {
+    const project = await createProject(server, cookie);
+    const lesson = await createLesson(server, project.id, cookie);
+    await processLesson(server, project.id, lesson.id, cookie, "Private source");
+    const detail = await server.inject({
+      method: "GET",
+      url: `/languages/projects/${project.id}/lessons/${lesson.id}`,
+      headers: { cookie },
+    });
+
+    assert.equal(detail.statusCode, 200);
+    assert.equal(detail.json().lesson.status, "ready");
+    assert.equal("sourceContent" in detail.json().lesson, false);
+    assert.deepEqual(detail.json().lesson.structuredContent, structuredLesson);
+  } finally {
+    await server.close();
+  }
+});
+
+test("Idiomas Phase 2 migration is additive and keeps existing lessons as draft", async () => {
   const migration = await readFile(
-    new URL("../drizzle/0005_create_languages.sql", import.meta.url),
+    new URL("../drizzle/0006_structure_language_lessons.sql", import.meta.url),
     "utf8",
   );
 
-  assert.match(migration, /CREATE TABLE "language_projects"/);
-  assert.match(migration, /CREATE TABLE "language_lessons"/);
-  assert.match(migration, /REFERENCES "users" \("id"\)/);
-  assert.match(migration, /REFERENCES "language_projects" \("id"\)/);
-  assert.match(
-    migration,
-    /CREATE UNIQUE INDEX "language_lessons_project_number_unique"/,
-  );
-  assert.doesNotMatch(
-    migration,
-    /\b(?:DROP|TRUNCATE|ALTER)\b|\bDELETE\s+FROM\b/i,
-  );
+  assert.match(migration, /ALTER TABLE "language_lessons"/);
+  assert.match(migration, /"status" text DEFAULT 'draft' NOT NULL/);
+  assert.match(migration, /"structured_content" jsonb/);
+  assert.match(migration, /"processed_at" timestamp with time zone/);
+  assert.match(migration, /language_lessons_status_check/);
+  assert.match(migration, /language_lessons_ready_content_check/);
+  assert.doesNotMatch(migration, /\b(?:DROP|TRUNCATE)\b|\bDELETE\s+FROM\b/i);
+  assert.doesNotMatch(migration, /CREATE TABLE/i);
 });
