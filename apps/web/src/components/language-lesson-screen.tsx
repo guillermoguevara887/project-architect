@@ -27,6 +27,54 @@ type LessonSectionKey =
   | "nextLevelBridge"
   | "review";
 
+function BookOpenIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="lesson-section-icon"
+      fill="none"
+      focusable="false"
+      viewBox="0 0 24 24"
+    >
+      <path
+        d="M4.75 5.5A2.75 2.75 0 0 1 7.5 2.75H12v17.5H7.5a2.75 2.75 0 0 0-2.75 2.75V5.5Zm14.5 0a2.75 2.75 0 0 0-2.75-2.75H12v17.5h4.5A2.75 2.75 0 0 1 19.25 23V5.5Z"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.75"
+      />
+    </svg>
+  );
+}
+
+function CopyIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="copy-button-icon"
+      fill="none"
+      focusable="false"
+      viewBox="0 0 20 20"
+    >
+      <rect
+        height="10.5"
+        rx="1.75"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        width="9.5"
+        x="6.5"
+        y="6"
+      />
+      <path
+        d="M13.5 6V5.25A1.75 1.75 0 0 0 11.75 3.5h-7A1.75 1.75 0 0 0 3 5.25v7A1.75 1.75 0 0 0 4.75 14h1.5"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.5"
+      />
+    </svg>
+  );
+}
+
 function LessonSection({
   sectionKey,
   title,
@@ -41,15 +89,23 @@ function LessonSection({
   children: ReactNode;
 }) {
   return (
-    <section className="lesson-section" aria-labelledby={`${sectionKey}-title`}>
+    <section
+      className={`lesson-section lesson-section-${sectionKey}`}
+      aria-labelledby={`${sectionKey}-title`}
+    >
       <header className="lesson-section-header">
-        <h2 id={`${sectionKey}-title`}>{title}</h2>
+        <h2 id={`${sectionKey}-title`}>
+          {sectionKey === "vocabulary" ? <BookOpenIcon /> : null}
+          <span>{title}</span>
+        </h2>
         <button
           className="copy-button"
           type="button"
           onClick={() => onCopy(sectionKey)}
+          aria-label={copied ? `${title} copiado` : `Copiar ${title}`}
         >
-          {copied ? "Copiado" : "Copiar"}
+          <CopyIcon />
+          <span>{copied ? "Copiado" : "Copiar"}</span>
         </button>
       </header>
       <div className="lesson-section-content">{children}</div>
@@ -490,8 +546,8 @@ export function LanguageLessonScreen({
           <p className="form-error" role="alert">
             {loadError}
           </p>
-          <Link className="primary-link" href={`/languages/${projectId}`}>
-            Volver al idioma
+          <Link className="primary-link" href="/languages">
+            Volver a Idiomas
           </Link>
         </section>
       </main>
@@ -502,16 +558,19 @@ export function LanguageLessonScreen({
     lesson.status === "ready" ? lesson.structuredContent : null;
 
   return (
-    <main className="flow-shell language-shell">
+    <main className="flow-shell language-shell language-lesson-shell">
       <article
         className="flow-card language-lesson-card"
         aria-labelledby="lesson-title"
       >
-        <p className="brand">MemoOS · Idiomas</p>
-        <Link className="back-link" href={`/languages/${project.id}`}>
-          Volver a {project.language}
-        </Link>
-        <h1 id="lesson-title">Lección {lesson.lessonNumber}</h1>
+        <header className="lesson-page-header">
+          <p className="brand">MemoOS · Idiomas</p>
+          <Link className="back-link lesson-back-link" href="/languages">
+            <span aria-hidden="true">←</span>
+            <span>Idiomas</span>
+          </Link>
+          <h1 id="lesson-title">Lección {lesson.lessonNumber}</h1>
+        </header>
 
         {lesson.status === "processing" ? (
           <section className="lesson-processing" aria-live="polite">

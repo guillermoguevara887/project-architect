@@ -799,6 +799,49 @@ button:disabled {
   width: min(100%, 64rem);
 }
 
+.language-lesson-shell {
+  background: #f8fbfc;
+}
+
+.language-lesson-card {
+  border-color: #d7ece9;
+  background: #fff;
+  box-shadow: 0 1rem 2.75rem rgb(15 33 71 / 7%);
+}
+
+.lesson-page-header {
+  min-width: 0;
+}
+
+.language-lesson-card .brand {
+  margin-bottom: 0.65rem;
+  color: #2563eb;
+}
+
+.lesson-back-link {
+  display: inline-flex;
+  width: fit-content;
+  min-height: 2.75rem;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.85rem;
+  color: #0ea5a4;
+}
+
+.lesson-back-link:hover {
+  color: #0b7f7d;
+}
+
+.lesson-back-link:focus-visible {
+  border-radius: 0.35rem;
+  outline: 3px solid rgb(14 165 164 / 22%);
+  outline-offset: 0.2rem;
+}
+
+.lesson-page-header h1 {
+  color: #0f2147;
+}
+
 .language-form-card {
   width: min(100%, 42rem);
 }
@@ -956,7 +999,7 @@ button:disabled {
   display: grid;
   min-width: 0;
   gap: 1.25rem;
-  margin-top: 2.5rem;
+  margin-top: 2rem;
 }
 
 .lesson-section {
@@ -965,6 +1008,11 @@ button:disabled {
   border: 1px solid var(--border);
   border-radius: 1rem;
   background: #fbfcfd;
+}
+
+.lesson-section-vocabulary {
+  border-color: #bfe8e4;
+  background: #f4fbfa;
 }
 
 .lesson-section-header {
@@ -978,20 +1026,56 @@ button:disabled {
 }
 
 .lesson-section-header h2 {
+  display: flex;
   min-width: 0;
+  align-items: center;
+  gap: 0.55rem;
   margin: 0;
+  color: #0f2147;
   font-size: 1.3rem;
   letter-spacing: -0.02em;
   overflow-wrap: anywhere;
 }
 
-.copy-button {
+.lesson-section-icon {
+  width: 1.25rem;
+  height: 1.25rem;
   flex: 0 0 auto;
-  min-height: 2.35rem;
-  padding: 0.5rem 0.75rem;
-  background: #e8ecf4;
-  color: #27344d;
+  color: #0ea5a4;
+}
+
+.copy-button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  min-height: 2.75rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.75rem;
+  background: #2563eb;
+  color: #fff;
   font-size: 0.82rem;
+  line-height: 1;
+  white-space: nowrap;
+  transition:
+    background-color 150ms ease,
+    transform 150ms ease;
+}
+
+.copy-button:hover {
+  background: #1d4ed8;
+  transform: translateY(-1px);
+}
+
+.copy-button:focus-visible {
+  outline: 3px solid rgb(37 99 235 / 22%);
+  outline-offset: 0.2rem;
+}
+
+.copy-button-icon {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
 }
 
 .lesson-section-content {
@@ -1019,11 +1103,29 @@ button:disabled {
   border-bottom: 0;
 }
 
+.lesson-section-vocabulary .lesson-item-list {
+  gap: 0.85rem;
+}
+
+.lesson-section-vocabulary .lesson-item {
+  padding-bottom: 0.85rem;
+  border-color: #bfe8e4;
+}
+
+.lesson-section-vocabulary .lesson-item:last-child {
+  padding-bottom: 0;
+}
+
 .lesson-item h3,
 .lesson-review-grid h3 {
   margin: 0;
   font-size: 1rem;
   overflow-wrap: anywhere;
+}
+
+.lesson-section-vocabulary .lesson-item h3 {
+  color: #0f2147;
+  font-weight: 750;
 }
 
 .lesson-item p,
@@ -1044,6 +1146,14 @@ button:disabled {
 
 .lesson-item em {
   color: #27344d;
+}
+
+.lesson-section-vocabulary .lesson-item p {
+  color: #64748b;
+}
+
+.lesson-section-vocabulary .lesson-item em {
+  color: #0f2147;
 }
 
 .lesson-item ul,
@@ -1169,6 +1279,15 @@ button:disabled {
     padding: 1.5rem;
   }
 
+  .language-lesson-shell {
+    padding: 0.75rem;
+  }
+
+  .language-lesson-card {
+    padding: 1.25rem;
+    border-radius: 1.1rem;
+  }
+
   h1 {
     font-size: 2rem;
     line-height: 1.08;
@@ -1212,6 +1331,15 @@ button:disabled {
 
   .lesson-section-header {
     align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .lesson-section {
+    padding: 1.1rem;
+  }
+
+  .lesson-section-content {
+    margin-top: 1rem;
   }
 
   .lesson-review-grid {
