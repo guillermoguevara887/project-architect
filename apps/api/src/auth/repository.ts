@@ -6,6 +6,7 @@ export type AuthUser = {
   id: string;
   username: string;
   passwordHash: string;
+  createdAt: Date;
 };
 
 export interface AuthStore {
@@ -20,6 +21,7 @@ function toAuthUser(user: UserRow): AuthUser {
     id: user.id,
     username: user.username,
     passwordHash: user.passwordHash,
+    createdAt: user.createdAt,
   };
 }
 

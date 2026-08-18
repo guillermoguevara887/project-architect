@@ -31,12 +31,14 @@ const firstUser: AuthUser = {
   id: "aaec2ea2-9130-4a70-b516-e187c994d119",
   username: "language-user",
   passwordHash: "unused",
+  createdAt: new Date("2026-01-02T03:04:05.000Z"),
 };
 
 const secondUser: AuthUser = {
   id: "bdf28936-4853-423d-b43e-020bb1b5ddcb",
   username: "other-user",
   passwordHash: "unused",
+  createdAt: new Date("2026-01-02T03:04:05.000Z"),
 };
 
 const structuredLesson: StructuredLanguageLesson = {
