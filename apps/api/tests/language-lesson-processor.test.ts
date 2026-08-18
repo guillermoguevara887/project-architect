@@ -1,0 +1,126 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import type { StructuredLanguageLesson } from "../src/languages/contracts.js";
+import {
+  LanguageLessonProcessingError,
+  OpenAILanguageLessonProcessor,
+} from "../src/languages/lesson-processor.js";
+
+const validLesson: StructuredLanguageLesson = {
+  vocabulary: [{ term: "bonjour", meaning: "hola", example: null }],
+  phrases: [{ text: "Bonjour !", translation: "¡Hola!", note: null }],
+  patterns: [
+    {
+      name: "Je suis …",
+      explanation: "Sirve para describirse.",
+      examples: ["Je suis prêt."],
+    },
+  ],
+  miniStory: { text: "Paul dit bonjour." },
+  automaticThoughts: [{ text: "Je suis prêt." }],
+  dialogue: [{ speaker: "Paul", text: "Bonjour !" }],
+  nextLevelBridge: [
+    {
+      base: "Je suis prêt.",
+      advanced: "Je suis tout à fait prêt.",
+      note: "Añade énfasis.",
+    },
+  ],
+  review: { keyVocabulary: ["bonjour"], keyPatterns: ["Je suis …"] },
+};
+
+const input = {
+  language: "Francés",
+  level: "Nivel 1",
+  sourceContent: "Bonjour !",
+};
+
+async function processingErrorCode(promise: Promise<unknown>) {
+  try {
+    await promise;
+  } catch (error) {
+    assert.ok(error instanceof LanguageLessonProcessingError);
+    return error.code;
+  }
+
+  assert.fail("Expected lesson processing to fail.");
+}
+
+test("the OpenAI lesson processor validates and returns all eight sections", async () => {
+  let request: { input?: string; store?: boolean } | null = null;
+  const processor = new OpenAILanguageLessonProcessor(async (received) => {
+    request = received;
+    return { status: "completed", output_parsed: validLesson };
+  });
+
+  assert.deepEqual(await processor.process(input), validLesson);
+  assert.equal(request?.store, false);
+  assert.match(request?.input ?? "", /Idioma objetivo: Francés/);
+  assert.match(request?.input ?? "", /Nivel del proyecto: Nivel 1/);
+});
+
+test("the processor rejects a missing section and arbitrary properties", async () => {
+  const { review: _review, ...missingReview } = validLesson;
+  const missingProcessor = new OpenAILanguageLessonProcessor(async () => ({
+    status: "completed",
+    output_parsed: missingReview,
+  }));
+  const extraProcessor = new OpenAILanguageLessonProcessor(async () => ({
+    status: "completed",
+    output_parsed: { ...validLesson, ninthSection: [] },
+  }));
+
+  assert.equal(
+    await processingErrorCode(missingProcessor.process(input)),
+    "invalid_response",
+  );
+  assert.equal(
+    await processingErrorCode(extraProcessor.process(input)),
+    "invalid_response",
+  );
+});
+
+test("the processor rejects incorrect nested structure", async () => {
+  const processor = new OpenAILanguageLessonProcessor(async () => ({
+    status: "completed",
+    output_parsed: { ...validLesson, dialogue: "Paul: Bonjour" },
+  }));
+
+  assert.equal(
+    await processingErrorCode(processor.process(input)),
+    "invalid_response",
+  );
+});
+
+test("the processor distinguishes empty output and refusal", async () => {
+  const emptyProcessor = new OpenAILanguageLessonProcessor(async () => ({
+    status: "completed",
+    output_parsed: null,
+    output: [],
+  }));
+  const refusalProcessor = new OpenAILanguageLessonProcessor(async () => ({
+    status: "completed",
+    output_parsed: null,
+    output: [{ content: [{ type: "refusal", refusal: "Refused" }] }],
+  }));
+
+  assert.equal(
+    await processingErrorCode(emptyProcessor.process(input)),
+    "empty_response",
+  );
+  assert.equal(
+    await processingErrorCode(refusalProcessor.process(input)),
+    "refusal",
+  );
+});
+
+test("the processor converts SDK failures into a provider error", async () => {
+  const processor = new OpenAILanguageLessonProcessor(async () => {
+    throw new Error("SDK request failed");
+  });
+
+  assert.equal(
+    await processingErrorCode(processor.process(input)),
+    "provider_error",
+  );
+});

@@ -1,6 +1,12 @@
-import { and, asc, desc, eq, max } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, max } from "drizzle-orm";
 import { getDb } from "../db/client.js";
 import { languageLessons, languageProjects } from "../db/schema.js";
+import type {
+  LanguageLessonStatus,
+  StructuredLanguageLesson,
+} from "./contracts.js";
+
+export const LANGUAGE_LESSON_PROCESSING_TIMEOUT_MS = 15 * 60 * 1_000;
 
 export type LanguageProject = typeof languageProjects.$inferSelect;
 export type LanguageLesson = typeof languageLessons.$inferSelect;
@@ -20,6 +26,35 @@ export type UpdateLanguageLessonInput = CreateNextLanguageLessonInput & {
   lessonId: string;
   sourceContent: string;
 };
+
+export type ClaimLanguageLessonInput = UpdateLanguageLessonInput;
+
+export type CompleteLanguageLessonProcessingInput =
+  CreateNextLanguageLessonInput & {
+    lessonId: string;
+    processingStartedAt: Date;
+    structuredContent: StructuredLanguageLesson;
+  };
+
+export type FailLanguageLessonProcessingInput = CreateNextLanguageLessonInput & {
+  lessonId: string;
+  processingStartedAt: Date;
+};
+
+export type UpdateLanguageLessonResult =
+  | { kind: "updated"; lesson: LanguageLesson }
+  | { kind: "not_found" }
+  | { kind: "not_editable" };
+
+export type ClaimLanguageLessonResult =
+  | {
+      kind: "claimed";
+      lesson: LanguageLesson;
+      project: LanguageProject;
+    }
+  | { kind: "not_found" }
+  | { kind: "already_ready" }
+  | { kind: "processing" };
 
 export interface LanguageStore {
   listProjects(userId: string): Promise<LanguageProject[]>;
@@ -42,7 +77,35 @@ export interface LanguageStore {
   ): Promise<LanguageLesson | null>;
   updateLessonSourceContent(
     input: UpdateLanguageLessonInput,
+  ): Promise<UpdateLanguageLessonResult>;
+  claimLessonForProcessing(
+    input: ClaimLanguageLessonInput,
+  ): Promise<ClaimLanguageLessonResult>;
+  completeLessonProcessing(
+    input: CompleteLanguageLessonProcessingInput,
   ): Promise<LanguageLesson | null>;
+  failLessonProcessing(
+    input: FailLanguageLessonProcessingInput,
+  ): Promise<LanguageLesson | null>;
+  deleteLesson(
+    lessonId: string,
+    projectId: string,
+    userId: string,
+  ): Promise<boolean>;
+}
+
+export function effectiveLanguageLessonStatus(
+  lesson: Pick<LanguageLesson, "status" | "updatedAt">,
+  now = Date.now(),
+): LanguageLessonStatus {
+  if (
+    lesson.status === "processing" &&
+    now - lesson.updatedAt.getTime() >= LANGUAGE_LESSON_PROCESSING_TIMEOUT_MS
+  ) {
+    return "failed";
+  }
+
+  return lesson.status;
 }
 
 async function ownsProject(projectId: string, userId: string) {
@@ -162,21 +225,197 @@ export const languageStore: LanguageStore = {
   },
 
   async updateLessonSourceContent(input) {
+    return getDb().transaction(async (transaction) => {
+      const [project] = await transaction
+        .select({ id: languageProjects.id })
+        .from(languageProjects)
+        .where(
+          and(
+            eq(languageProjects.id, input.languageProjectId),
+            eq(languageProjects.userId, input.userId),
+          ),
+        )
+        .limit(1);
+
+      if (!project) {
+        return { kind: "not_found" as const };
+      }
+
+      const [existing] = await transaction
+        .select()
+        .from(languageLessons)
+        .where(
+          and(
+            eq(languageLessons.id, input.lessonId),
+            eq(languageLessons.languageProjectId, input.languageProjectId),
+          ),
+        )
+        .limit(1)
+        .for("update");
+
+      if (!existing) {
+        return { kind: "not_found" as const };
+      }
+
+      if (!(["draft", "failed"] as LanguageLessonStatus[]).includes(existing.status)) {
+        return { kind: "not_editable" as const };
+      }
+
+      const [lesson] = await transaction
+        .update(languageLessons)
+        .set({ sourceContent: input.sourceContent, updatedAt: new Date() })
+        .where(
+          and(
+            eq(languageLessons.id, input.lessonId),
+            eq(languageLessons.languageProjectId, input.languageProjectId),
+            inArray(languageLessons.status, ["draft", "failed"]),
+          ),
+        )
+        .returning();
+
+      return lesson
+        ? { kind: "updated" as const, lesson }
+        : { kind: "not_editable" as const };
+    });
+  },
+
+  async claimLessonForProcessing(input) {
+    return getDb().transaction(async (transaction) => {
+      const [project] = await transaction
+        .select()
+        .from(languageProjects)
+        .where(
+          and(
+            eq(languageProjects.id, input.languageProjectId),
+            eq(languageProjects.userId, input.userId),
+          ),
+        )
+        .limit(1);
+
+      if (!project) {
+        return { kind: "not_found" as const };
+      }
+
+      const [existing] = await transaction
+        .select()
+        .from(languageLessons)
+        .where(
+          and(
+            eq(languageLessons.id, input.lessonId),
+            eq(languageLessons.languageProjectId, input.languageProjectId),
+          ),
+        )
+        .limit(1)
+        .for("update");
+
+      if (!existing) {
+        return { kind: "not_found" as const };
+      }
+
+      const effectiveStatus = effectiveLanguageLessonStatus(existing);
+
+      if (effectiveStatus === "ready") {
+        return { kind: "already_ready" as const };
+      }
+
+      if (effectiveStatus === "processing") {
+        return { kind: "processing" as const };
+      }
+
+      const processingStartedAt = new Date();
+      const [lesson] = await transaction
+        .update(languageLessons)
+        .set({
+          sourceContent: input.sourceContent,
+          status: "processing",
+          structuredContent: null,
+          processedAt: null,
+          updatedAt: processingStartedAt,
+        })
+        .where(
+          and(
+            eq(languageLessons.id, input.lessonId),
+            eq(languageLessons.languageProjectId, input.languageProjectId),
+          ),
+        )
+        .returning();
+
+      if (!lesson) {
+        throw new Error("The language lesson could not enter processing.");
+      }
+
+      return { kind: "claimed" as const, lesson, project };
+    });
+  },
+
+  async completeLessonProcessing(input) {
+    if (!(await ownsProject(input.languageProjectId, input.userId))) {
+      return null;
+    }
+
+    const completedAt = new Date();
+    const [lesson] = await getDb()
+      .update(languageLessons)
+      .set({
+        status: "ready",
+        structuredContent: input.structuredContent,
+        processedAt: completedAt,
+        updatedAt: completedAt,
+      })
+      .where(
+        and(
+          eq(languageLessons.id, input.lessonId),
+          eq(languageLessons.languageProjectId, input.languageProjectId),
+          eq(languageLessons.status, "processing"),
+          eq(languageLessons.updatedAt, input.processingStartedAt),
+        ),
+      )
+      .returning();
+
+    return lesson ?? null;
+  },
+
+  async failLessonProcessing(input) {
     if (!(await ownsProject(input.languageProjectId, input.userId))) {
       return null;
     }
 
     const [lesson] = await getDb()
       .update(languageLessons)
-      .set({ sourceContent: input.sourceContent, updatedAt: new Date() })
+      .set({
+        status: "failed",
+        structuredContent: null,
+        processedAt: null,
+        updatedAt: new Date(),
+      })
       .where(
         and(
           eq(languageLessons.id, input.lessonId),
           eq(languageLessons.languageProjectId, input.languageProjectId),
+          eq(languageLessons.status, "processing"),
+          eq(languageLessons.updatedAt, input.processingStartedAt),
         ),
       )
       .returning();
 
     return lesson ?? null;
+  },
+
+  async deleteLesson(lessonId, projectId, userId) {
+    if (!(await ownsProject(projectId, userId))) {
+      return false;
+    }
+
+    const deleted = await getDb()
+      .delete(languageLessons)
+      .where(
+        and(
+          eq(languageLessons.id, lessonId),
+          eq(languageLessons.languageProjectId, projectId),
+        ),
+      )
+      .returning({ id: languageLessons.id });
+
+    return deleted.length === 1;
   },
 };

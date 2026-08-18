@@ -12,6 +12,10 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import type {
+  LanguageLessonStatus,
+  StructuredLanguageLesson,
+} from "../languages/contracts.js";
 
 type StoredDiscoveryAnswerValue = string | number | boolean | string[];
 
@@ -335,6 +339,12 @@ export const languageLessons = pgTable(
       .references(() => languageProjects.id, { onDelete: "cascade" }),
     lessonNumber: integer("lesson_number").notNull(),
     sourceContent: text("source_content").default("").notNull(),
+    status: text("status")
+      .$type<LanguageLessonStatus>()
+      .default("draft")
+      .notNull(),
+    structuredContent: jsonb("structured_content").$type<StructuredLanguageLesson>(),
+    processedAt: timestamp("processed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -349,6 +359,14 @@ export const languageLessons = pgTable(
     lessonNumberCheck: check(
       "language_lessons_number_check",
       sql`${table.lessonNumber} > 0`,
+    ),
+    statusCheck: check(
+      "language_lessons_status_check",
+      sql`${table.status} in ('draft', 'processing', 'ready', 'failed')`,
+    ),
+    readyContentCheck: check(
+      "language_lessons_ready_content_check",
+      sql`${table.status} <> 'ready' or (${table.structuredContent} is not null and ${table.processedAt} is not null)`,
     ),
   }),
 );

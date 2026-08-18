@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import {
   bootstrapLegacyMigrationHistory,
   checksumMigrationSql,
   getMigrationStatus,
+  loadMigrationFiles,
   migratePending,
   type MigrationFile,
 } from "../../src/db/migrations.js";
@@ -20,6 +23,12 @@ if (!databaseUrl || process.env.MIGRATION_TEST_ALLOW_LOCAL !== "1") {
 
 const parsedDatabaseUrl = new URL(databaseUrl);
 const allowedHosts = new Set(["127.0.0.1", "localhost", "[::1]"]);
+const migrationDirectory = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  "drizzle",
+);
 
 if (
   !allowedHosts.has(parsedDatabaseUrl.hostname) ||
@@ -278,6 +287,107 @@ test("legacy PostgreSQL history requires bootstrap before pending SQL runs", asy
       ],
     );
     assert.equal(state.pendingTable, "pending_probe");
+  } finally {
+    await database.close();
+  }
+});
+
+test("the real MemoOS migration chain safely upgrades existing language lessons", async () => {
+  const isolatedUrl = await createIsolatedDatabase("language_phase_2");
+  const database = createPostgresMigrationDatabase(isolatedUrl);
+  const migrations = await loadMigrationFiles(migrationDirectory);
+
+  try {
+    assert.equal(
+      migrations.at(-1)?.id,
+      "0006_structure_language_lessons.sql",
+    );
+    assert.deepEqual(await migratePending(database, migrations),
+      migrations.map((migrationFile) => migrationFile.id),
+    );
+
+    const state = await withSql(isolatedUrl, async (sql) => {
+      const userId = "5d17bcbe-7cb8-4a5f-93ba-42c0f97b2e5f";
+      const projectId = "090820ae-5278-4e4c-b272-35de08cabd8a";
+      const lessonId = "ff3c792f-f9cf-44cb-9223-1f6c6e9e509f";
+
+      await sql`
+        INSERT INTO users (id, username, password_hash)
+        VALUES (${userId}, 'migration-user', 'not-a-real-hash')
+      `;
+      await sql`
+        INSERT INTO language_projects (id, user_id, language, level)
+        VALUES (${projectId}, ${userId}, 'Alemán', 'Nivel 2')
+      `;
+      await sql`
+        INSERT INTO language_lessons (
+          id,
+          language_project_id,
+          lesson_number,
+          source_content
+        )
+        VALUES (${lessonId}, ${projectId}, 1, 'Bestehendes Material')
+      `;
+
+      const [lesson] = await sql<
+        Array<{
+          status: string;
+          sourceContent: string;
+          structuredContent: unknown;
+          processedAt: Date | null;
+        }>
+      >`
+        SELECT status,
+               source_content AS "sourceContent",
+               structured_content AS "structuredContent",
+               processed_at AS "processedAt"
+        FROM language_lessons
+        WHERE id = ${lessonId}
+      `;
+      const [history] = await sql<Array<{ count: number }>>`
+        SELECT count(*)::integer AS count FROM schema_migrations
+      `;
+      const constraints = await sql<Array<{ name: string }>>`
+        SELECT conname AS name
+        FROM pg_constraint
+        WHERE conrelid = 'language_lessons'::regclass
+          AND conname IN (
+            'language_lessons_status_check',
+            'language_lessons_ready_content_check'
+          )
+        ORDER BY conname
+      `;
+
+      await assert.rejects(
+        sql`
+          UPDATE language_lessons
+          SET status = 'ready'
+          WHERE id = ${lessonId}
+        `,
+        /language_lessons_ready_content_check/i,
+      );
+
+      return { lesson, history, constraints };
+    });
+
+    assert.deepEqual(state.lesson, {
+      status: "draft",
+      sourceContent: "Bestehendes Material",
+      structuredContent: null,
+      processedAt: null,
+    });
+    assert.equal(state.history?.count, migrations.length);
+    assert.deepEqual(
+      state.constraints.map(({ name }) => name),
+      [
+        "language_lessons_ready_content_check",
+        "language_lessons_status_check",
+      ],
+    );
+
+    const report = await getMigrationStatus(database, migrations);
+    assert.equal(report.historyMode, "current");
+    assert.ok(report.migrations.every(({ state: status }) => status === "applied"));
   } finally {
     await database.close();
   }

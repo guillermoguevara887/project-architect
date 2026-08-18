@@ -3,15 +3,23 @@ import type { AuthStore } from "../auth/repository.js";
 import { readSessionUserId } from "../auth/session.js";
 import {
   createLanguageProjectSchema,
+  LANGUAGE_LESSON_SOURCE_MAX_LENGTH,
   languageLessonIdSchema,
   languageProjectIdSchema,
+  processLanguageLessonSchema,
+  structuredLanguageLessonSchema,
   updateLanguageLessonSchema,
 } from "./contracts.js";
+import {
+  LanguageLessonProcessingError,
+  type LanguageLessonProcessor,
+} from "./lesson-processor.js";
 import type {
   LanguageLesson,
   LanguageProject,
   LanguageStore,
 } from "./repository.js";
+import { effectiveLanguageLessonStatus } from "./repository.js";
 
 function publicProject(project: LanguageProject) {
   return {
@@ -23,14 +31,36 @@ function publicProject(project: LanguageProject) {
   };
 }
 
-function publicLesson(lesson: LanguageLesson) {
+function publicLessonSummary(lesson: LanguageLesson) {
+  const status = effectiveLanguageLessonStatus(lesson);
+
   return {
     id: lesson.id,
     languageProjectId: lesson.languageProjectId,
     lessonNumber: lesson.lessonNumber,
-    sourceContent: lesson.sourceContent,
+    status,
+    processedAt: lesson.processedAt?.toISOString() ?? null,
     createdAt: lesson.createdAt.toISOString(),
     updatedAt: lesson.updatedAt.toISOString(),
+  };
+}
+
+function publicLesson(lesson: LanguageLesson) {
+  const summary = publicLessonSummary(lesson);
+
+  if (summary.status === "ready") {
+    return {
+      ...summary,
+      structuredContent: structuredLanguageLessonSchema.parse(
+        lesson.structuredContent,
+      ),
+    };
+  }
+
+  return {
+    ...summary,
+    sourceContent: lesson.sourceContent,
+    structuredContent: null,
   };
 }
 
@@ -52,6 +82,7 @@ export function registerLanguageRoutes(
   server: FastifyInstance,
   store: LanguageStore,
   authStore: AuthStore,
+  processor: LanguageLessonProcessor,
 ) {
   server.get("/languages/projects", async (request, reply) => {
     try {
@@ -154,7 +185,7 @@ export function registerLanguageRoutes(
           return reply.code(404).send({ error: "LANGUAGE_PROJECT_NOT_FOUND" });
         }
 
-        return { lessons: lessons.map(publicLesson) };
+        return { lessons: lessons.map(publicLessonSummary) };
       } catch (error) {
         server.log.error({ error }, "Language lesson listing failed.");
         return reply.code(503).send({
@@ -263,23 +294,204 @@ export function registerLanguageRoutes(
           });
         }
 
-        const lesson = await store.updateLessonSourceContent({
+        const result = await store.updateLessonSourceContent({
           languageProjectId: request.params.projectId,
           lessonId: request.params.lessonId,
           userId,
           sourceContent: parsedInput.data.sourceContent,
         });
 
-        if (!lesson) {
+        if (result.kind === "not_found") {
           return reply.code(404).send({ error: "LANGUAGE_LESSON_NOT_FOUND" });
         }
 
-        return { lesson: publicLesson(lesson) };
+        if (result.kind === "not_editable") {
+          return reply.code(409).send({
+            error: "LANGUAGE_LESSON_NOT_EDITABLE",
+            message: "Una lección procesada no se puede editar.",
+          });
+        }
+
+        return { lesson: publicLesson(result.lesson) };
       } catch (error) {
         server.log.error({ error }, "Language lesson update failed.");
         return reply.code(503).send({
           error: "LANGUAGES_UNAVAILABLE",
           message: "No se pudo guardar el material.",
+        });
+      }
+    },
+  );
+
+  server.post<{ Params: { projectId: string; lessonId: string } }>(
+    "/languages/projects/:projectId/lessons/:lessonId/process",
+    async (request, reply) => {
+      const { projectId, lessonId } = request.params;
+      let userId: string | null = null;
+      let processingStartedAt: Date | null = null;
+
+      try {
+        userId = await authenticatedUserId(request, authStore);
+
+        if (!userId) {
+          return reply.code(401).send({ error: "UNAUTHORIZED" });
+        }
+
+        if (
+          !languageProjectIdSchema.safeParse(projectId).success ||
+          !languageLessonIdSchema.safeParse(lessonId).success
+        ) {
+          return reply.code(404).send({ error: "LANGUAGE_LESSON_NOT_FOUND" });
+        }
+
+        const sourceContent =
+          request.body &&
+          typeof request.body === "object" &&
+          "sourceContent" in request.body
+            ? request.body.sourceContent
+            : undefined;
+
+        if (
+          typeof sourceContent === "string" &&
+          sourceContent.length > LANGUAGE_LESSON_SOURCE_MAX_LENGTH
+        ) {
+          return reply.code(413).send({
+            error: "LANGUAGE_LESSON_SOURCE_TOO_LARGE",
+            message:
+              `El material supera el límite de ${LANGUAGE_LESSON_SOURCE_MAX_LENGTH.toLocaleString("es")} caracteres.`,
+          });
+        }
+
+        const parsedInput = processLanguageLessonSchema.safeParse(request.body);
+
+        if (!parsedInput.success) {
+          return reply.code(400).send({
+            error: "INVALID_LANGUAGE_LESSON",
+            message: "Pega material antes de procesar la lección.",
+          });
+        }
+
+        const claim = await store.claimLessonForProcessing({
+          languageProjectId: projectId,
+          lessonId,
+          userId,
+          sourceContent: parsedInput.data.sourceContent,
+        });
+
+        if (claim.kind === "not_found") {
+          return reply.code(404).send({ error: "LANGUAGE_LESSON_NOT_FOUND" });
+        }
+
+        if (claim.kind === "already_ready") {
+          return reply.code(409).send({
+            error: "LANGUAGE_LESSON_ALREADY_PROCESSED",
+            message: "La lección ya fue procesada.",
+          });
+        }
+
+        if (claim.kind === "processing") {
+          return reply.code(409).send({
+            error: "LANGUAGE_LESSON_PROCESSING",
+            message: "La lección ya se está procesando.",
+          });
+        }
+
+        const claimedAt = claim.lesson.updatedAt;
+        processingStartedAt = claimedAt;
+        const structuredContent = await processor.process({
+          language: claim.project.language,
+          level: claim.project.level,
+          sourceContent: parsedInput.data.sourceContent,
+        });
+        const lesson = await store.completeLessonProcessing({
+          languageProjectId: projectId,
+          lessonId,
+          userId,
+          processingStartedAt: claimedAt,
+          structuredContent,
+        });
+
+        if (!lesson) {
+          server.log.warn(
+            { projectId, lessonId, processingState: "changed" },
+            "Language lesson completion was not persisted.",
+          );
+          return reply.code(409).send({
+            error: "LANGUAGE_LESSON_STATE_CHANGED",
+            message: "La lección cambió mientras se procesaba.",
+          });
+        }
+
+        return { lesson: publicLesson(lesson) };
+      } catch (error) {
+        if (userId && processingStartedAt) {
+          try {
+            await store.failLessonProcessing({
+              languageProjectId: projectId,
+              lessonId,
+              userId,
+              processingStartedAt,
+            });
+          } catch {
+            server.log.error(
+              { projectId, lessonId, errorType: "failure_state_persist_error" },
+              "Language lesson failure state could not be persisted.",
+            );
+          }
+        }
+
+        server.log.error(
+          {
+            projectId,
+            lessonId,
+            errorType:
+              error instanceof LanguageLessonProcessingError
+                ? error.code
+                : "unexpected",
+          },
+          "Language lesson processing failed.",
+        );
+        return reply.code(502).send({
+          error: "LANGUAGE_LESSON_PROCESSING_FAILED",
+          message: "No se pudo procesar la lección. Intenta nuevamente.",
+        });
+      }
+    },
+  );
+
+  server.delete<{ Params: { projectId: string; lessonId: string } }>(
+    "/languages/projects/:projectId/lessons/:lessonId",
+    async (request, reply) => {
+      try {
+        const userId = await authenticatedUserId(request, authStore);
+
+        if (!userId) {
+          return reply.code(401).send({ error: "UNAUTHORIZED" });
+        }
+
+        if (
+          !languageProjectIdSchema.safeParse(request.params.projectId).success ||
+          !languageLessonIdSchema.safeParse(request.params.lessonId).success
+        ) {
+          return reply.code(404).send({ error: "LANGUAGE_LESSON_NOT_FOUND" });
+        }
+
+        const deleted = await store.deleteLesson(
+          request.params.lessonId,
+          request.params.projectId,
+          userId,
+        );
+
+        if (!deleted) {
+          return reply.code(404).send({ error: "LANGUAGE_LESSON_NOT_FOUND" });
+        }
+
+        return reply.code(204).send();
+      } catch (error) {
+        server.log.error({ error }, "Language lesson deletion failed.");
+        return reply.code(503).send({
+          error: "LANGUAGES_UNAVAILABLE",
+          message: "No se pudo eliminar la lección.",
         });
       }
     },

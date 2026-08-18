@@ -1,7 +1,109 @@
 import { z } from "zod";
 
+export const LANGUAGE_LESSON_SOURCE_MAX_LENGTH = 100_000;
+
 export const languageProjectIdSchema = z.string().uuid();
 export const languageLessonIdSchema = z.string().uuid();
+
+export const languageLessonStatusSchema = z.enum([
+  "draft",
+  "processing",
+  "ready",
+  "failed",
+]);
+
+export type LanguageLessonStatus = z.infer<typeof languageLessonStatusSchema>;
+
+const requiredText = z.string().trim().min(1);
+
+export const structuredLanguageLessonSchema = z
+  .object({
+    vocabulary: z
+      .array(
+        z
+          .object({
+            term: requiredText,
+            meaning: requiredText,
+            example: requiredText.nullable(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(12),
+    phrases: z
+      .array(
+        z
+          .object({
+            text: requiredText,
+            translation: requiredText,
+            note: requiredText.nullable(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(12),
+    patterns: z
+      .array(
+        z
+          .object({
+            name: requiredText,
+            explanation: requiredText,
+            examples: z.array(requiredText).min(1).max(5),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(5),
+    miniStory: z
+      .object({
+        text: requiredText,
+      })
+      .strict(),
+    automaticThoughts: z
+      .array(
+        z
+          .object({
+            text: requiredText,
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(20),
+    dialogue: z
+      .array(
+        z
+          .object({
+            speaker: requiredText,
+            text: requiredText,
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(16),
+    nextLevelBridge: z
+      .array(
+        z
+          .object({
+            base: requiredText,
+            advanced: requiredText,
+            note: requiredText,
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(5),
+    review: z
+      .object({
+        keyVocabulary: z.array(requiredText).min(1).max(5),
+        keyPatterns: z.array(requiredText).min(1).max(5),
+      })
+      .strict(),
+  })
+  .strict();
+
+export type StructuredLanguageLesson = z.infer<
+  typeof structuredLanguageLessonSchema
+>;
 
 export const createLanguageProjectSchema = z
   .object({
@@ -12,6 +114,15 @@ export const createLanguageProjectSchema = z
 
 export const updateLanguageLessonSchema = z
   .object({
-    sourceContent: z.string().max(1_000_000),
+    sourceContent: z.string().max(LANGUAGE_LESSON_SOURCE_MAX_LENGTH),
+  })
+  .strict();
+
+export const processLanguageLessonSchema = z
+  .object({
+    sourceContent: z
+      .string()
+      .max(LANGUAGE_LESSON_SOURCE_MAX_LENGTH)
+      .refine((value) => value.trim().length > 0),
   })
   .strict();
