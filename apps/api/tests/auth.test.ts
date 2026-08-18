@@ -42,6 +42,7 @@ test("login, session verification and logout use an HTTP-only cookie", async () 
     id: "af31bb93-55f4-4cf4-a8ad-23c6733c3b36",
     username: "architect",
     passwordHash: await hashPassword("correct-password"),
+    createdAt: new Date("2026-01-02T03:04:05.000Z"),
   };
   const server = createServer({}, { authStore: new MemoryAuthStore(user) });
 
@@ -72,8 +73,10 @@ test("login, session verification and logout use an HTTP-only cookie", async () 
       user: {
         id: user.id,
         username: user.username,
+        createdAt: user.createdAt.toISOString(),
       },
     });
+    assert.equal("passwordHash" in login.json().user, false);
 
     const setCookie = login.headers["set-cookie"];
     const cookie = cookieValue(setCookie);
@@ -88,8 +91,15 @@ test("login, session verification and logout use an HTTP-only cookie", async () 
     });
 
     assert.equal(session.statusCode, 200);
-    assert.equal(session.json().authenticated, true);
-    assert.equal(session.json().user.username, user.username);
+    assert.deepEqual(session.json(), {
+      authenticated: true,
+      user: {
+        id: user.id,
+        username: user.username,
+        createdAt: user.createdAt.toISOString(),
+      },
+    });
+    assert.equal("passwordHash" in session.json().user, false);
 
     const logout = await server.inject({
       method: "POST",
@@ -117,6 +127,7 @@ test("session rejects missing and tampered cookies", async () => {
     id: "8ac9bb20-229c-47f8-a038-ccab0a5f8d1f",
     username: "architect",
     passwordHash: await hashPassword("correct-password"),
+    createdAt: new Date("2026-01-02T03:04:05.000Z"),
   };
   const server = createServer({}, { authStore: new MemoryAuthStore(user) });
 

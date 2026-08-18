@@ -3,9 +3,15 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
+export type SessionUser = {
+  id: string;
+  username: string;
+  createdAt: string;
+};
+
 export function useSessionGuard() {
   const router = useRouter();
-  const [authorized, setAuthorized] = useState(false);
+  const [user, setUser] = useState<SessionUser | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -22,8 +28,17 @@ export function useSessionGuard() {
           return;
         }
 
+        const session = (await response.json()) as {
+          user?: SessionUser;
+        };
+
+        if (!session.user) {
+          router.replace("/");
+          return;
+        }
+
         if (active) {
-          setAuthorized(true);
+          setUser(session.user);
         }
       } catch {
         router.replace("/");
@@ -37,5 +52,5 @@ export function useSessionGuard() {
     };
   }, [router]);
 
-  return authorized;
+  return user;
 }

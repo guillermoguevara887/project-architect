@@ -15,7 +15,6 @@ export function DashboardScreen() {
   const router = useRouter();
   const [user, setUser] = useState<SessionUser | null>(null);
   const [database, setDatabase] = useState<DatabaseState>("checking");
-  const [loggingOut, setLoggingOut] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -75,20 +74,6 @@ export function DashboardScreen() {
     };
   }, [router]);
 
-  async function logout() {
-    setLoggingOut(true);
-
-    try {
-      await fetch("/api/auth/logout", {
-        method: "POST",
-        credentials: "include",
-      });
-    } finally {
-      router.replace("/");
-      router.refresh();
-    }
-  }
-
   if (!user) {
     return (
       <main className="dashboard-shell">
@@ -106,14 +91,9 @@ export function DashboardScreen() {
             <h1 id="dashboard-title">Dashboard</h1>
           </div>
 
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={loggingOut}
-            onClick={logout}
-          >
-            {loggingOut ? "Saliendo…" : "Logout"}
-          </button>
+          <Link className="primary-link" href="/account">
+            Cuenta
+          </Link>
         </header>
 
         <dl className="status-list">
