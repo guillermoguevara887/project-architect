@@ -5,7 +5,10 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
   formatLanguageDate,
+  LANGUAGE_LESSON_SOURCE_OPTIONS,
+  languageLessonSourceLabel,
   type LanguageLesson,
+  type LanguageLessonSource,
   type LanguageProject,
 } from "@/lib/languages";
 import { useSessionGuard } from "@/lib/use-session-guard";
@@ -18,6 +21,8 @@ export function LanguageProjectScreen({ projectId }: { projectId: string }) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [lessonSource, setLessonSource] =
+    useState<LanguageLessonSource>("free");
 
   useEffect(() => {
     if (!authorized) return;
@@ -75,7 +80,12 @@ export function LanguageProjectScreen({ projectId }: { projectId: string }) {
     try {
       const response = await fetch(
         `/api/languages/projects/${encodeURIComponent(projectId)}/lessons`,
-        { method: "POST", credentials: "include" },
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ lessonSource }),
+        },
       );
       if (response.status === 401) {
         router.replace("/");
@@ -123,10 +133,35 @@ export function LanguageProjectScreen({ projectId }: { projectId: string }) {
         <Link className="back-link" href="/languages">Volver a Idiomas</Link>
         <header className="language-heading">
           <h1 id="language-project-title">{project.language} — {project.level}</h1>
-          <button type="button" disabled={creating} onClick={createLesson}>
+        </header>
+        <form
+          className="lesson-create-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void createLesson();
+          }}
+        >
+          <fieldset className="lesson-source-fieldset">
+            <legend>Procedencia de la lección</legend>
+            <div className="lesson-source-options">
+              {LANGUAGE_LESSON_SOURCE_OPTIONS.map((option) => (
+                <label className="lesson-source-option" key={option.value}>
+                  <input
+                    checked={lessonSource === option.value}
+                    name="lesson-source"
+                    type="radio"
+                    value={option.value}
+                    onChange={() => setLessonSource(option.value)}
+                  />
+                  <span>{option.label}</span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          <button type="submit" disabled={creating}>
             {creating ? "Creando…" : "Crear lección"}
           </button>
-        </header>
+        </form>
         {actionError ? <p className="form-error language-error" role="alert">{actionError}</p> : null}
         <section className="language-lessons" aria-labelledby="lessons-title">
           <h2 id="lessons-title">Lecciones</h2>
@@ -143,7 +178,10 @@ export function LanguageProjectScreen({ projectId }: { projectId: string }) {
                   href={`/languages/${project.id}/lessons/${lesson.id}`}
                   key={lesson.id}
                 >
-                  <strong>Lección {lesson.lessonNumber}</strong>
+                  <span className="language-lesson-summary">
+                    <strong>Lección {lesson.lessonNumber}</strong>
+                    <small>{languageLessonSourceLabel(lesson.lessonSource)}</small>
+                  </span>
                   <time dateTime={lesson.createdAt}>{formatLanguageDate(lesson.createdAt)}</time>
                 </Link>
               ))}

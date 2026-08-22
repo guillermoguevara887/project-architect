@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { AuthStore } from "../auth/repository.js";
 import { readSessionUserId } from "../auth/session.js";
 import {
+  createLanguageLessonSchema,
   createLanguageProjectSchema,
   LANGUAGE_LESSON_SOURCE_MAX_LENGTH,
   languageLessonIdSchema,
@@ -38,6 +39,7 @@ function publicLessonSummary(lesson: LanguageLesson) {
     id: lesson.id,
     languageProjectId: lesson.languageProjectId,
     lessonNumber: lesson.lessonNumber,
+    lessonSource: lesson.lessonSource,
     status,
     processedAt: lesson.processedAt?.toISOString() ?? null,
     createdAt: lesson.createdAt.toISOString(),
@@ -210,9 +212,21 @@ export function registerLanguageRoutes(
           return reply.code(404).send({ error: "LANGUAGE_PROJECT_NOT_FOUND" });
         }
 
+        const parsedInput = createLanguageLessonSchema.safeParse(
+          request.body ?? {},
+        );
+
+        if (!parsedInput.success) {
+          return reply.code(400).send({
+            error: "INVALID_LANGUAGE_LESSON_SOURCE",
+            message: "Selecciona una procedencia válida para la lección.",
+          });
+        }
+
         const lesson = await store.createNextLesson({
           languageProjectId: request.params.projectId,
           userId,
+          lessonSource: parsedInput.data.lessonSource,
         });
 
         if (!lesson) {

@@ -12,6 +12,22 @@ export type LanguageLessonStatus =
   | "ready"
   | "failed";
 
+export const LANGUAGE_LESSON_SOURCE_OPTIONS = [
+  { value: "assimil", label: "Assimil" },
+  { value: "language_framework", label: "Marco de idiomas" },
+  { value: "free", label: "Lección libre" },
+] as const;
+
+export type LanguageLessonSource =
+  (typeof LANGUAGE_LESSON_SOURCE_OPTIONS)[number]["value"];
+
+export function languageLessonSourceLabel(source: LanguageLessonSource) {
+  return (
+    LANGUAGE_LESSON_SOURCE_OPTIONS.find((option) => option.value === source)
+      ?.label ?? "Lección libre"
+  );
+}
+
 export type StructuredLanguageLesson = {
   vocabulary: Array<{
     term: string;
@@ -53,6 +69,7 @@ export type LanguageLesson = {
   id: string;
   languageProjectId: string;
   lessonNumber: number;
+  lessonSource: LanguageLessonSource;
   status: LanguageLessonStatus;
   sourceContent?: string;
   structuredContent?: StructuredLanguageLesson | null;

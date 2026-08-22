@@ -13,6 +13,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import type {
+  LanguageLessonSource,
   LanguageLessonStatus,
   StructuredLanguageLesson,
 } from "../languages/contracts.js";
@@ -338,6 +339,10 @@ export const languageLessons = pgTable(
       .notNull()
       .references(() => languageProjects.id, { onDelete: "cascade" }),
     lessonNumber: integer("lesson_number").notNull(),
+    lessonSource: text("lesson_source")
+      .$type<LanguageLessonSource>()
+      .default("free")
+      .notNull(),
     sourceContent: text("source_content").default("").notNull(),
     status: text("status")
       .$type<LanguageLessonStatus>()
@@ -359,6 +364,10 @@ export const languageLessons = pgTable(
     lessonNumberCheck: check(
       "language_lessons_number_check",
       sql`${table.lessonNumber} > 0`,
+    ),
+    lessonSourceCheck: check(
+      "language_lessons_source_check",
+      sql`${table.lessonSource} in ('assimil', 'language_framework', 'free')`,
     ),
     statusCheck: check(
       "language_lessons_status_check",

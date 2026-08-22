@@ -859,6 +859,73 @@ button:disabled {
   flex: 0 0 auto;
 }
 
+.lesson-create-form {
+  display: flex;
+  min-width: 0;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1.5rem;
+  margin-top: 2rem;
+}
+
+.lesson-source-fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.lesson-source-fieldset legend {
+  margin-bottom: 0.65rem;
+  color: #465269;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.lesson-source-options {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.lesson-source-option {
+  display: flex;
+  min-width: 0;
+  min-height: 2.75rem;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid #bfe8e4;
+  border-radius: 0.7rem;
+  background: #f4fbfa;
+  color: #0f2147;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 650;
+}
+
+.lesson-source-option:has(input:checked) {
+  border-color: #0ea5a4;
+  background: #e9f8f6;
+  box-shadow: 0 0 0 2px rgb(14 165 164 / 12%);
+}
+
+.lesson-source-option input {
+  flex: 0 0 auto;
+  margin: 0;
+  accent-color: #0ea5a4;
+}
+
+.lesson-source-option span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.lesson-create-form > button {
+  flex: 0 0 auto;
+}
+
 .language-error {
   margin-top: 2rem;
 }
@@ -1000,6 +1067,27 @@ button:disabled {
   min-width: 0;
   gap: 1.25rem;
   margin-top: 2rem;
+}
+
+.language-lesson-summary {
+  display: grid;
+  min-width: 0;
+  gap: 0.3rem;
+}
+
+.language-lesson-summary small {
+  color: #64748b;
+  font-size: 0.82rem;
+}
+
+.lesson-source-label {
+  margin: 0.6rem 0 0;
+  color: #64748b;
+  font-size: 0.9rem;
+}
+
+.lesson-source-label strong {
+  color: #0b7f7d;
 }
 
 .lesson-section {
@@ -1355,9 +1443,19 @@ button:disabled {
 
   .language-heading > button,
   .language-heading .primary-link,
+  .lesson-create-form > button,
   .language-form > button,
   .lesson-form > button {
     width: 100%;
+  }
+
+  .lesson-create-form {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .lesson-source-options {
+    grid-template-columns: 1fr;
   }
 
   .lesson-section-header {

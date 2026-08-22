@@ -8,10 +8,11 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
-import type {
-  LanguageLesson,
-  LanguageProject,
-  StructuredLanguageLesson,
+import {
+  languageLessonSourceLabel,
+  type LanguageLesson,
+  type LanguageProject,
+  type StructuredLanguageLesson,
 } from "@/lib/languages";
 import { useSessionGuard } from "@/lib/use-session-guard";
 
@@ -591,6 +592,10 @@ export function LanguageLessonScreen({
             <span>Idiomas</span>
           </Link>
           <h1 id="lesson-title">Lección {lesson.lessonNumber}</h1>
+          <p className="lesson-source-label">
+            Procedencia:{" "}
+            <strong>{languageLessonSourceLabel(lesson.lessonSource)}</strong>
+          </p>
         </header>
 
         {lesson.status === "processing" ? (

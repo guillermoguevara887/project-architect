@@ -14,6 +14,14 @@ export const languageLessonStatusSchema = z.enum([
 
 export type LanguageLessonStatus = z.infer<typeof languageLessonStatusSchema>;
 
+export const languageLessonSourceSchema = z.enum([
+  "assimil",
+  "language_framework",
+  "free",
+]);
+
+export type LanguageLessonSource = z.infer<typeof languageLessonSourceSchema>;
+
 const requiredText = z.string().trim().min(1);
 
 export const structuredLanguageLessonSchema = z
@@ -109,6 +117,12 @@ export const createLanguageProjectSchema = z
   .object({
     language: z.string().trim().min(1).max(100),
     level: z.string().trim().min(1).max(100),
+  })
+  .strict();
+
+export const createLanguageLessonSchema = z
+  .object({
+    lessonSource: languageLessonSourceSchema.default("free"),
   })
   .strict();
 

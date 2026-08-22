@@ -5,7 +5,10 @@ import test from "node:test";
 import type { AuthStore, AuthUser } from "../src/auth/repository.js";
 import { createSessionCookie } from "../src/auth/session.js";
 import { createServer } from "../src/create-server.js";
-import type { StructuredLanguageLesson } from "../src/languages/contracts.js";
+import type {
+  LanguageLessonSource,
+  StructuredLanguageLesson,
+} from "../src/languages/contracts.js";
 import {
   LanguageLessonProcessingError,
   type LanguageLessonProcessor,
@@ -156,6 +159,7 @@ class MemoryLanguageStore implements LanguageStore {
       id: randomUUID(),
       languageProjectId: input.languageProjectId,
       lessonNumber,
+      lessonSource: input.lessonSource,
       sourceContent: "",
       status: "draft",
       structuredContent: null,
@@ -383,15 +387,21 @@ async function createLesson(
   server: ReturnType<typeof createServer>,
   projectId: string,
   cookie: string,
+  lessonSource?: LanguageLessonSource,
 ) {
   const response = await server.inject({
     method: "POST",
     url: `/languages/projects/${projectId}/lessons`,
     headers: { cookie },
+    ...(lessonSource ? { payload: { lessonSource } } : {}),
   });
 
   assert.equal(response.statusCode, 201);
-  return response.json().lesson as { id: string; lessonNumber: number };
+  return response.json().lesson as {
+    id: string;
+    lessonNumber: number;
+    lessonSource: LanguageLessonSource;
+  };
 }
 
 async function processLesson(
@@ -482,6 +492,79 @@ test("lessons remain sequential and draft source material can still persist", as
     assert.equal(update.statusCode, 200);
     assert.equal(update.json().lesson.sourceContent, sourceContent);
     assert.equal(update.json().lesson.status, "draft");
+  } finally {
+    await server.close();
+  }
+});
+
+test("lesson provenance accepts every supported value, persists and defaults to free", async () => {
+  const { server } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+  const supportedSources: LanguageLessonSource[] = [
+    "assimil",
+    "language_framework",
+    "free",
+  ];
+
+  try {
+    const project = await createProject(server, cookie);
+
+    for (const lessonSource of supportedSources) {
+      const created = await createLesson(
+        server,
+        project.id,
+        cookie,
+        lessonSource,
+      );
+      assert.equal(created.lessonSource, lessonSource);
+
+      const detail = await server.inject({
+        method: "GET",
+        url: `/languages/projects/${project.id}/lessons/${created.id}`,
+        headers: { cookie },
+      });
+
+      assert.equal(detail.statusCode, 200);
+      assert.equal(detail.json().lesson.lessonSource, lessonSource);
+    }
+
+    const compatibleCreation = await createLesson(server, project.id, cookie);
+    assert.equal(compatibleCreation.lessonSource, "free");
+
+    const list = await server.inject({
+      method: "GET",
+      url: `/languages/projects/${project.id}/lessons`,
+      headers: { cookie },
+    });
+
+    assert.equal(list.statusCode, 200);
+    assert.deepEqual(
+      list.json().lessons.map(
+        (lesson: { lessonSource: LanguageLessonSource }) => lesson.lessonSource,
+      ),
+      [...supportedSources, "free"],
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("lesson provenance rejects unsupported values", async () => {
+  const { store, server } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+
+  try {
+    const project = await createProject(server, cookie);
+    const response = await server.inject({
+      method: "POST",
+      url: `/languages/projects/${project.id}/lessons`,
+      headers: { cookie },
+      payload: { lessonSource: "unknown_source" },
+    });
+
+    assert.equal(response.statusCode, 400);
+    assert.equal(response.json().error, "INVALID_LANGUAGE_LESSON_SOURCE");
+    assert.equal(store.lessons.length, 0);
   } finally {
     await server.close();
   }
@@ -744,6 +827,20 @@ test("Idiomas Phase 2 migration is additive and keeps existing lessons as draft"
   assert.match(migration, /"processed_at" timestamp with time zone/);
   assert.match(migration, /language_lessons_status_check/);
   assert.match(migration, /language_lessons_ready_content_check/);
+  assert.doesNotMatch(migration, /\b(?:DROP|TRUNCATE)\b|\bDELETE\s+FROM\b/i);
+  assert.doesNotMatch(migration, /CREATE TABLE/i);
+});
+
+test("lesson source migration defaults existing lessons to free and constrains values", async () => {
+  const migration = await readFile(
+    new URL("../drizzle/0007_add_language_lesson_source.sql", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(migration, /ALTER TABLE "language_lessons"/);
+  assert.match(migration, /"lesson_source" text DEFAULT 'free' NOT NULL/);
+  assert.match(migration, /language_lessons_source_check/);
+  assert.match(migration, /'assimil', 'language_framework', 'free'/);
   assert.doesNotMatch(migration, /\b(?:DROP|TRUNCATE)\b|\bDELETE\s+FROM\b/i);
   assert.doesNotMatch(migration, /CREATE TABLE/i);
 });

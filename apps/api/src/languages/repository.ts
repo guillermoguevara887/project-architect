@@ -2,6 +2,7 @@ import { and, asc, desc, eq, inArray, max } from "drizzle-orm";
 import { getDb } from "../db/client.js";
 import { languageLessons, languageProjects } from "../db/schema.js";
 import type {
+  LanguageLessonSource,
   LanguageLessonStatus,
   StructuredLanguageLesson,
 } from "./contracts.js";
@@ -20,9 +21,15 @@ export type CreateLanguageProjectInput = {
 export type CreateNextLanguageLessonInput = {
   languageProjectId: string;
   userId: string;
+  lessonSource: LanguageLessonSource;
 };
 
-export type UpdateLanguageLessonInput = CreateNextLanguageLessonInput & {
+type OwnedLanguageProjectInput = Pick<
+  CreateNextLanguageLessonInput,
+  "languageProjectId" | "userId"
+>;
+
+export type UpdateLanguageLessonInput = OwnedLanguageProjectInput & {
   lessonId: string;
   sourceContent: string;
 };
@@ -30,13 +37,13 @@ export type UpdateLanguageLessonInput = CreateNextLanguageLessonInput & {
 export type ClaimLanguageLessonInput = UpdateLanguageLessonInput;
 
 export type CompleteLanguageLessonProcessingInput =
-  CreateNextLanguageLessonInput & {
+  OwnedLanguageProjectInput & {
     lessonId: string;
     processingStartedAt: Date;
     structuredContent: StructuredLanguageLesson;
   };
 
-export type FailLanguageLessonProcessingInput = CreateNextLanguageLessonInput & {
+export type FailLanguageLessonProcessingInput = OwnedLanguageProjectInput & {
   lessonId: string;
   processingStartedAt: Date;
 };
@@ -182,7 +189,11 @@ export const languageStore: LanguageStore = {
       const lessonNumber = (latestLesson?.lessonNumber ?? 0) + 1;
       const [lesson] = await transaction
         .insert(languageLessons)
-        .values({ languageProjectId: project.id, lessonNumber })
+        .values({
+          languageProjectId: project.id,
+          lessonNumber,
+          lessonSource: input.lessonSource,
+        })
         .returning();
 
       if (!lesson) {

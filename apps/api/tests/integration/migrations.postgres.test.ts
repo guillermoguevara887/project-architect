@@ -293,24 +293,27 @@ test("legacy PostgreSQL history requires bootstrap before pending SQL runs", asy
 });
 
 test("the real MemoOS migration chain safely upgrades existing language lessons", async () => {
-  const isolatedUrl = await createIsolatedDatabase("language_phase_2");
+  const isolatedUrl = await createIsolatedDatabase("language_phase_3_source");
   const database = createPostgresMigrationDatabase(isolatedUrl);
   const migrations = await loadMigrationFiles(migrationDirectory);
+  const sourceMigrationId = "0007_add_language_lesson_source.sql";
+  const sourceMigrationIndex = migrations.findIndex(
+    ({ id }) => id === sourceMigrationId,
+  );
+  const userId = "5d17bcbe-7cb8-4a5f-93ba-42c0f97b2e5f";
+  const projectId = "090820ae-5278-4e4c-b272-35de08cabd8a";
+  const lessonId = "ff3c792f-f9cf-44cb-9223-1f6c6e9e509f";
 
   try {
-    assert.equal(
-      migrations.at(-1)?.id,
-      "0006_structure_language_lessons.sql",
-    );
-    assert.deepEqual(await migratePending(database, migrations),
-      migrations.map((migrationFile) => migrationFile.id),
+    assert.equal(migrations.at(-1)?.id, sourceMigrationId);
+    assert.equal(sourceMigrationIndex, migrations.length - 1);
+    const migrationsBeforeSource = migrations.slice(0, sourceMigrationIndex);
+    assert.deepEqual(
+      await migratePending(database, migrationsBeforeSource),
+      migrationsBeforeSource.map((migrationFile) => migrationFile.id),
     );
 
-    const state = await withSql(isolatedUrl, async (sql) => {
-      const userId = "5d17bcbe-7cb8-4a5f-93ba-42c0f97b2e5f";
-      const projectId = "090820ae-5278-4e4c-b272-35de08cabd8a";
-      const lessonId = "ff3c792f-f9cf-44cb-9223-1f6c6e9e509f";
-
+    await withSql(isolatedUrl, async (sql) => {
       await sql`
         INSERT INTO users (id, username, password_hash)
         VALUES (${userId}, 'migration-user', 'not-a-real-hash')
@@ -328,16 +331,24 @@ test("the real MemoOS migration chain safely upgrades existing language lessons"
         )
         VALUES (${lessonId}, ${projectId}, 1, 'Bestehendes Material')
       `;
+    });
 
+    assert.deepEqual(await migratePending(database, migrations), [
+      sourceMigrationId,
+    ]);
+
+    const state = await withSql(isolatedUrl, async (sql) => {
       const [lesson] = await sql<
         Array<{
           status: string;
+          lessonSource: string;
           sourceContent: string;
           structuredContent: unknown;
           processedAt: Date | null;
         }>
       >`
         SELECT status,
+               lesson_source AS "lessonSource",
                source_content AS "sourceContent",
                structured_content AS "structuredContent",
                processed_at AS "processedAt"
@@ -353,7 +364,8 @@ test("the real MemoOS migration chain safely upgrades existing language lessons"
         WHERE conrelid = 'language_lessons'::regclass
           AND conname IN (
             'language_lessons_status_check',
-            'language_lessons_ready_content_check'
+            'language_lessons_ready_content_check',
+            'language_lessons_source_check'
           )
         ORDER BY conname
       `;
@@ -372,6 +384,7 @@ test("the real MemoOS migration chain safely upgrades existing language lessons"
 
     assert.deepEqual(state.lesson, {
       status: "draft",
+      lessonSource: "free",
       sourceContent: "Bestehendes Material",
       structuredContent: null,
       processedAt: null,
@@ -381,6 +394,7 @@ test("the real MemoOS migration chain safely upgrades existing language lessons"
       state.constraints.map(({ name }) => name),
       [
         "language_lessons_ready_content_check",
+        "language_lessons_source_check",
         "language_lessons_status_check",
       ],
     );
