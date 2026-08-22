@@ -27,6 +27,14 @@ type LessonSectionKey =
   | "nextLevelBridge"
   | "review";
 
+const LESSON_SECTION_VARIANTS = ["a", "b", "c"] as const;
+
+function lessonSectionVariant(sectionIndex: number) {
+  return LESSON_SECTION_VARIANTS[
+    sectionIndex % LESSON_SECTION_VARIANTS.length
+  ];
+}
+
 function BookOpenIcon() {
   return (
     <svg
@@ -76,21 +84,26 @@ function CopyIcon() {
 }
 
 function LessonSection({
+  sectionIndex,
   sectionKey,
   title,
   copied,
   onCopy,
   children,
 }: {
+  sectionIndex: number;
   sectionKey: LessonSectionKey;
   title: string;
   copied: boolean;
   onCopy: (sectionKey: LessonSectionKey) => void;
   children: ReactNode;
 }) {
+  const variant = lessonSectionVariant(sectionIndex);
+
   return (
     <section
-      className={`lesson-section lesson-section-${sectionKey}`}
+      className={`lesson-section lesson-section-variant-${variant}`}
+      data-variant={variant}
       aria-labelledby={`${sectionKey}-title`}
     >
       <header className="lesson-section-header">
@@ -176,6 +189,7 @@ function ReadyLesson({
   return (
     <div className="lesson-sections">
       <LessonSection
+        sectionIndex={0}
         sectionKey="vocabulary"
         title="Vocabulario"
         copied={copiedSection === "vocabulary"}
@@ -193,6 +207,7 @@ function ReadyLesson({
       </LessonSection>
 
       <LessonSection
+        sectionIndex={1}
         sectionKey="phrases"
         title="Frases"
         copied={copiedSection === "phrases"}
@@ -210,6 +225,7 @@ function ReadyLesson({
       </LessonSection>
 
       <LessonSection
+        sectionIndex={2}
         sectionKey="patterns"
         title="Patrones"
         copied={copiedSection === "patterns"}
@@ -231,6 +247,7 @@ function ReadyLesson({
       </LessonSection>
 
       <LessonSection
+        sectionIndex={3}
         sectionKey="miniStory"
         title="Mini historia"
         copied={copiedSection === "miniStory"}
@@ -240,6 +257,7 @@ function ReadyLesson({
       </LessonSection>
 
       <LessonSection
+        sectionIndex={4}
         sectionKey="automaticThoughts"
         title="Pensamientos automáticos"
         copied={copiedSection === "automaticThoughts"}
@@ -253,6 +271,7 @@ function ReadyLesson({
       </LessonSection>
 
       <LessonSection
+        sectionIndex={5}
         sectionKey="dialogue"
         title="Diálogo"
         copied={copiedSection === "dialogue"}
@@ -268,6 +287,7 @@ function ReadyLesson({
       </LessonSection>
 
       <LessonSection
+        sectionIndex={6}
         sectionKey="nextLevelBridge"
         title="Puente al siguiente nivel"
         copied={copiedSection === "nextLevelBridge"}
@@ -294,6 +314,7 @@ function ReadyLesson({
       </LessonSection>
 
       <LessonSection
+        sectionIndex={7}
         sectionKey="review"
         title="Repaso"
         copied={copiedSection === "review"}
