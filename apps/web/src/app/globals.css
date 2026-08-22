@@ -1029,6 +1029,42 @@ button:disabled {
   font-size: 1.25rem;
 }
 
+.lesson-filters {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin-top: 1rem;
+}
+
+.lesson-filter-button {
+  min-height: 2.75rem;
+  padding: 0.65rem 0.9rem;
+  border: 1px solid #bfe8e4;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: none;
+  color: #0f2147;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.lesson-filter-button:hover {
+  border-color: #0ea5a4;
+  background: #f4fbfa;
+}
+
+.lesson-filter-button[aria-pressed="true"] {
+  border-color: #0ea5a4;
+  background: #0ea5a4;
+  color: #fff;
+}
+
+.lesson-filter-button:focus-visible {
+  outline: 3px solid rgb(14 165 164 / 22%);
+  outline-offset: 0.15rem;
+}
+
 .language-lessons .lesson-list {
   margin-top: 1rem;
 }
@@ -1435,6 +1471,10 @@ button:disabled {
 
   .lesson-source-options {
     grid-template-columns: 1fr;
+  }
+
+  .lesson-filter-button {
+    flex: 1 1 calc(50% - 0.55rem);
   }
 
   .lesson-section-header {

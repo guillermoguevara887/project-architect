@@ -13,13 +13,37 @@ export type LanguageLessonStatus =
   | "failed";
 
 export const LANGUAGE_LESSON_SOURCE_OPTIONS = [
-  { value: "assimil", label: "Assimil" },
-  { value: "language_framework", label: "Marco de idiomas" },
-  { value: "free", label: "Lección libre" },
+  {
+    value: "assimil",
+    label: "Assimil",
+    emptyMessage: "No hay lecciones de Assimil todavía.",
+  },
+  {
+    value: "language_framework",
+    label: "Marco de idiomas",
+    emptyMessage: "No hay lecciones del Marco de idiomas todavía.",
+  },
+  {
+    value: "free",
+    label: "Lección libre",
+    emptyMessage: "No hay lecciones libres todavía.",
+  },
 ] as const;
 
 export type LanguageLessonSource =
   (typeof LANGUAGE_LESSON_SOURCE_OPTIONS)[number]["value"];
+
+export const LANGUAGE_LESSON_FILTER_OPTIONS = [
+  {
+    value: "all",
+    label: "Todas",
+    emptyMessage: "No hay lecciones todavía.",
+  },
+  ...LANGUAGE_LESSON_SOURCE_OPTIONS,
+] as const;
+
+export type LanguageLessonFilter =
+  (typeof LANGUAGE_LESSON_FILTER_OPTIONS)[number]["value"];
 
 export type StructuredLanguageLesson = {
   vocabulary: Array<{
@@ -84,6 +108,26 @@ export function formatLanguageLessonTitle(
     case "free":
       return `Lección libre ${lesson.sourceLessonNumber}`;
   }
+}
+
+export function filterLanguageLessons(
+  lessons: readonly LanguageLesson[],
+  filter: LanguageLessonFilter,
+) {
+  if (filter === "all") {
+    return lessons;
+  }
+
+  return lessons.filter((lesson) => lesson.lessonSource === filter);
+}
+
+export function languageLessonFilterEmptyMessage(
+  filter: LanguageLessonFilter,
+) {
+  return (
+    LANGUAGE_LESSON_FILTER_OPTIONS.find((option) => option.value === filter)
+      ?.emptyMessage ?? "No hay lecciones todavía."
+  );
 }
 
 export function formatLanguageDate(value: string) {

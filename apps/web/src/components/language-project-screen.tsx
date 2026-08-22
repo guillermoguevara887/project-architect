@@ -4,10 +4,14 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
+  filterLanguageLessons,
   formatLanguageDate,
   formatLanguageLessonTitle,
+  LANGUAGE_LESSON_FILTER_OPTIONS,
   LANGUAGE_LESSON_SOURCE_OPTIONS,
+  languageLessonFilterEmptyMessage,
   type LanguageLesson,
+  type LanguageLessonFilter,
   type LanguageLessonSource,
   type LanguageProject,
 } from "@/lib/languages";
@@ -23,6 +27,8 @@ export function LanguageProjectScreen({ projectId }: { projectId: string }) {
   const [creating, setCreating] = useState(false);
   const [lessonSource, setLessonSource] =
     useState<LanguageLessonSource>("free");
+  const [lessonFilter, setLessonFilter] =
+    useState<LanguageLessonFilter>("all");
 
   useEffect(() => {
     if (!authorized) return;
@@ -126,6 +132,8 @@ export function LanguageProjectScreen({ projectId }: { projectId: string }) {
     );
   }
 
+  const filteredLessons = filterLanguageLessons(lessons, lessonFilter);
+
   return (
     <main className="flow-shell language-shell">
       <article className="flow-card language-card" aria-labelledby="language-project-title">
@@ -165,14 +173,35 @@ export function LanguageProjectScreen({ projectId }: { projectId: string }) {
         {actionError ? <p className="form-error language-error" role="alert">{actionError}</p> : null}
         <section className="language-lessons" aria-labelledby="lessons-title">
           <h2 id="lessons-title">Lecciones</h2>
-          {lessons.length === 0 ? (
+          <div
+            aria-label="Filtrar lecciones por procedencia"
+            className="lesson-filters"
+            role="group"
+          >
+            {LANGUAGE_LESSON_FILTER_OPTIONS.map((option) => (
+              <button
+                aria-pressed={lessonFilter === option.value}
+                className="lesson-filter-button"
+                key={option.value}
+                type="button"
+                onClick={() => setLessonFilter(option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          {filteredLessons.length === 0 ? (
             <div className="empty-state">
-              <h3>Aún no hay lecciones</h3>
-              <p>Crea la primera para añadir material.</p>
+              <h3>{languageLessonFilterEmptyMessage(lessonFilter)}</h3>
+              <p>
+                {lessons.length === 0
+                  ? "Crea la primera para añadir material."
+                  : "Selecciona otro filtro o crea una nueva lección."}
+              </p>
             </div>
           ) : (
             <div className="lesson-list">
-              {lessons.map((lesson) => (
+              {filteredLessons.map((lesson) => (
                 <Link
                   className="language-list-card"
                   href={`/languages/${project.id}/lessons/${lesson.id}`}
