@@ -343,6 +343,7 @@ export const languageLessons = pgTable(
       .$type<LanguageLessonSource>()
       .default("free")
       .notNull(),
+    sourceLessonNumber: integer("source_lesson_number").notNull(),
     sourceContent: text("source_content").default("").notNull(),
     status: text("status")
       .$type<LanguageLessonStatus>()
@@ -361,6 +362,13 @@ export const languageLessons = pgTable(
     projectLessonNumberUnique: uniqueIndex(
       "language_lessons_project_number_unique",
     ).on(table.languageProjectId, table.lessonNumber),
+    projectSourceLessonNumberUnique: uniqueIndex(
+      "language_lessons_project_source_number_unique",
+    ).on(
+      table.languageProjectId,
+      table.lessonSource,
+      table.sourceLessonNumber,
+    ),
     lessonNumberCheck: check(
       "language_lessons_number_check",
       sql`${table.lessonNumber} > 0`,
@@ -368,6 +376,10 @@ export const languageLessons = pgTable(
     lessonSourceCheck: check(
       "language_lessons_source_check",
       sql`${table.lessonSource} in ('assimil', 'language_framework', 'free')`,
+    ),
+    sourceLessonNumberCheck: check(
+      "language_lessons_source_number_check",
+      sql`${table.sourceLessonNumber} > 0`,
     ),
     statusCheck: check(
       "language_lessons_status_check",

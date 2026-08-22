@@ -40,6 +40,7 @@ function publicLessonSummary(lesson: LanguageLesson) {
     languageProjectId: lesson.languageProjectId,
     lessonNumber: lesson.lessonNumber,
     lessonSource: lesson.lessonSource,
+    sourceLessonNumber: lesson.sourceLessonNumber,
     status,
     processedAt: lesson.processedAt?.toISOString() ?? null,
     createdAt: lesson.createdAt.toISOString(),

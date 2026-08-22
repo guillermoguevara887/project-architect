@@ -21,13 +21,6 @@ export const LANGUAGE_LESSON_SOURCE_OPTIONS = [
 export type LanguageLessonSource =
   (typeof LANGUAGE_LESSON_SOURCE_OPTIONS)[number]["value"];
 
-export function languageLessonSourceLabel(source: LanguageLessonSource) {
-  return (
-    LANGUAGE_LESSON_SOURCE_OPTIONS.find((option) => option.value === source)
-      ?.label ?? "Lección libre"
-  );
-}
-
 export type StructuredLanguageLesson = {
   vocabulary: Array<{
     term: string;
@@ -70,6 +63,7 @@ export type LanguageLesson = {
   languageProjectId: string;
   lessonNumber: number;
   lessonSource: LanguageLessonSource;
+  sourceLessonNumber: number;
   status: LanguageLessonStatus;
   sourceContent?: string;
   structuredContent?: StructuredLanguageLesson | null;
@@ -77,6 +71,20 @@ export type LanguageLesson = {
   createdAt: string;
   updatedAt: string;
 };
+
+export function formatLanguageLessonTitle(
+  lesson: Pick<LanguageLesson, "lessonSource" | "sourceLessonNumber">,
+  language: string,
+) {
+  switch (lesson.lessonSource) {
+    case "assimil":
+      return `Assimil ${lesson.sourceLessonNumber}`;
+    case "language_framework":
+      return `Marco ${language} ${lesson.sourceLessonNumber}`;
+    case "free":
+      return `Lección libre ${lesson.sourceLessonNumber}`;
+  }
+}
 
 export function formatLanguageDate(value: string) {
   return new Intl.DateTimeFormat("es", {

@@ -1069,27 +1069,6 @@ button:disabled {
   margin-top: 2rem;
 }
 
-.language-lesson-summary {
-  display: grid;
-  min-width: 0;
-  gap: 0.3rem;
-}
-
-.language-lesson-summary small {
-  color: #64748b;
-  font-size: 0.82rem;
-}
-
-.lesson-source-label {
-  margin: 0.6rem 0 0;
-  color: #64748b;
-  font-size: 0.9rem;
-}
-
-.lesson-source-label strong {
-  color: #0b7f7d;
-}
-
 .lesson-section {
   --lesson-section-accent: #0ea5a4;
   --lesson-section-border: #bfe8e4;

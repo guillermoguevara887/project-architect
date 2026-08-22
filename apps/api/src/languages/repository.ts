@@ -187,12 +187,26 @@ export const languageStore: LanguageStore = {
         .from(languageLessons)
         .where(eq(languageLessons.languageProjectId, project.id));
       const lessonNumber = (latestLesson?.lessonNumber ?? 0) + 1;
+      const [latestSourceLesson] = await transaction
+        .select({
+          sourceLessonNumber: max(languageLessons.sourceLessonNumber),
+        })
+        .from(languageLessons)
+        .where(
+          and(
+            eq(languageLessons.languageProjectId, project.id),
+            eq(languageLessons.lessonSource, input.lessonSource),
+          ),
+        );
+      const sourceLessonNumber =
+        (latestSourceLesson?.sourceLessonNumber ?? 0) + 1;
       const [lesson] = await transaction
         .insert(languageLessons)
         .values({
           languageProjectId: project.id,
           lessonNumber,
           lessonSource: input.lessonSource,
+          sourceLessonNumber,
         })
         .returning();
 

@@ -154,12 +154,24 @@ class MemoryLanguageStore implements LanguageStore {
           )
           .map((lesson) => lesson.lessonNumber),
       ) + 1;
+    const sourceLessonNumber =
+      Math.max(
+        0,
+        ...this.lessons
+          .filter(
+            (lesson) =>
+              lesson.languageProjectId === input.languageProjectId &&
+              lesson.lessonSource === input.lessonSource,
+          )
+          .map((lesson) => lesson.sourceLessonNumber),
+      ) + 1;
     const now = this.now();
     const lesson: LanguageLesson = {
       id: randomUUID(),
       languageProjectId: input.languageProjectId,
       lessonNumber,
       lessonSource: input.lessonSource,
+      sourceLessonNumber,
       sourceContent: "",
       status: "draft",
       structuredContent: null,
@@ -401,6 +413,7 @@ async function createLesson(
     id: string;
     lessonNumber: number;
     lessonSource: LanguageLessonSource;
+    sourceLessonNumber: number;
   };
 }
 
@@ -489,6 +502,8 @@ test("lessons remain sequential and draft source material can still persist", as
 
     assert.equal(first.lessonNumber, 1);
     assert.equal(second.lessonNumber, 2);
+    assert.equal(first.sourceLessonNumber, 1);
+    assert.equal(second.sourceLessonNumber, 2);
     assert.equal(update.statusCode, 200);
     assert.equal(update.json().lesson.sourceContent, sourceContent);
     assert.equal(update.json().lesson.status, "draft");
@@ -517,6 +532,7 @@ test("lesson provenance accepts every supported value, persists and defaults to 
         lessonSource,
       );
       assert.equal(created.lessonSource, lessonSource);
+      assert.equal(created.sourceLessonNumber, 1);
 
       const detail = await server.inject({
         method: "GET",
@@ -526,10 +542,12 @@ test("lesson provenance accepts every supported value, persists and defaults to 
 
       assert.equal(detail.statusCode, 200);
       assert.equal(detail.json().lesson.lessonSource, lessonSource);
+      assert.equal(detail.json().lesson.sourceLessonNumber, 1);
     }
 
     const compatibleCreation = await createLesson(server, project.id, cookie);
     assert.equal(compatibleCreation.lessonSource, "free");
+    assert.equal(compatibleCreation.sourceLessonNumber, 2);
 
     const list = await server.inject({
       method: "GET",
@@ -544,6 +562,81 @@ test("lesson provenance accepts every supported value, persists and defaults to 
       ),
       [...supportedSources, "free"],
     );
+    assert.deepEqual(
+      list.json().lessons.map(
+        (lesson: { sourceLessonNumber: number }) => lesson.sourceLessonNumber,
+      ),
+      [1, 1, 1, 2],
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("lesson source numbering is independent while general order stays sequential", async () => {
+  const { server } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+  const lessonSources: LanguageLessonSource[] = [
+    "assimil",
+    "language_framework",
+    "assimil",
+    "free",
+    "language_framework",
+  ];
+
+  try {
+    const project = await createProject(server, cookie);
+    const created = [];
+
+    for (const lessonSource of lessonSources) {
+      created.push(
+        await createLesson(server, project.id, cookie, lessonSource),
+      );
+    }
+
+    assert.deepEqual(
+      created.map(({ lessonNumber }) => lessonNumber),
+      [1, 2, 3, 4, 5],
+    );
+    assert.deepEqual(
+      created.map(({ sourceLessonNumber }) => sourceLessonNumber),
+      [1, 1, 2, 1, 2],
+    );
+
+    const list = await server.inject({
+      method: "GET",
+      url: `/languages/projects/${project.id}/lessons`,
+      headers: { cookie },
+    });
+    const detail = await server.inject({
+      method: "GET",
+      url: `/languages/projects/${project.id}/lessons/${created[2]?.id}`,
+      headers: { cookie },
+    });
+
+    assert.equal(list.statusCode, 200);
+    assert.deepEqual(
+      list.json().lessons.map(
+        (lesson: {
+          lessonNumber: number;
+          lessonSource: LanguageLessonSource;
+          sourceLessonNumber: number;
+        }) => ({
+          lessonNumber: lesson.lessonNumber,
+          lessonSource: lesson.lessonSource,
+          sourceLessonNumber: lesson.sourceLessonNumber,
+        }),
+      ),
+      lessonSources.map((lessonSource, index) => ({
+        lessonNumber: index + 1,
+        lessonSource,
+        sourceLessonNumber: [1, 1, 2, 1, 2][index],
+      })),
+    );
+    assert.equal(detail.statusCode, 200);
+    assert.equal(detail.json().lesson.lessonNumber, 3);
+    assert.equal(detail.json().lesson.lessonSource, "assimil");
+    assert.equal(detail.json().lesson.sourceLessonNumber, 2);
   } finally {
     await server.close();
   }
@@ -843,4 +936,31 @@ test("lesson source migration defaults existing lessons to free and constrains v
   assert.match(migration, /'assimil', 'language_framework', 'free'/);
   assert.doesNotMatch(migration, /\b(?:DROP|TRUNCATE)\b|\bDELETE\s+FROM\b/i);
   assert.doesNotMatch(migration, /CREATE TABLE/i);
+});
+
+test("lesson source number migration backfills by project and source without replacing general order", async () => {
+  const migration = await readFile(
+    new URL(
+      "../drizzle/0008_add_language_lesson_source_number.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+
+  assert.match(migration, /ADD COLUMN "source_lesson_number" integer/);
+  assert.match(migration, /ROW_NUMBER\(\) OVER/i);
+  assert.match(
+    migration,
+    /PARTITION BY "language_project_id", "lesson_source"/,
+  );
+  assert.match(migration, /ORDER BY "lesson_number"/);
+  assert.match(
+    migration,
+    /ALTER COLUMN "source_lesson_number" SET NOT NULL/,
+  );
+  assert.match(migration, /language_lessons_source_number_check/);
+  assert.match(migration, /language_lessons_project_source_number_unique/);
+  assert.doesNotMatch(migration, /\b(?:DROP|TRUNCATE)\b|\bDELETE\s+FROM\b/i);
+  assert.doesNotMatch(migration, /CREATE TABLE/i);
+  assert.doesNotMatch(migration, /SET\s+"lesson_number"/i);
 });

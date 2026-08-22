@@ -305,9 +305,9 @@ test("the real MemoOS migration chain safely upgrades existing language lessons"
   const lessonId = "ff3c792f-f9cf-44cb-9223-1f6c6e9e509f";
 
   try {
-    assert.equal(migrations.at(-1)?.id, sourceMigrationId);
-    assert.equal(sourceMigrationIndex, migrations.length - 1);
+    assert.notEqual(sourceMigrationIndex, -1);
     const migrationsBeforeSource = migrations.slice(0, sourceMigrationIndex);
+    const migrationsThroughSource = migrations.slice(0, sourceMigrationIndex + 1);
     assert.deepEqual(
       await migratePending(database, migrationsBeforeSource),
       migrationsBeforeSource.map((migrationFile) => migrationFile.id),
@@ -333,7 +333,7 @@ test("the real MemoOS migration chain safely upgrades existing language lessons"
       `;
     });
 
-    assert.deepEqual(await migratePending(database, migrations), [
+    assert.deepEqual(await migratePending(database, migrationsThroughSource), [
       sourceMigrationId,
     ]);
 
@@ -389,7 +389,7 @@ test("the real MemoOS migration chain safely upgrades existing language lessons"
       structuredContent: null,
       processedAt: null,
     });
-    assert.equal(state.history?.count, migrations.length);
+    assert.equal(state.history?.count, migrationsThroughSource.length);
     assert.deepEqual(
       state.constraints.map(({ name }) => name),
       [
@@ -398,6 +398,202 @@ test("the real MemoOS migration chain safely upgrades existing language lessons"
         "language_lessons_status_check",
       ],
     );
+
+    const report = await getMigrationStatus(database, migrationsThroughSource);
+    assert.equal(report.historyMode, "current");
+    assert.ok(report.migrations.every(({ state: status }) => status === "applied"));
+  } finally {
+    await database.close();
+  }
+});
+
+test("source lesson numbers are backfilled independently without changing general order", async () => {
+  const isolatedUrl = await createIsolatedDatabase("language_phase_3_source_number");
+  const database = createPostgresMigrationDatabase(isolatedUrl);
+  const migrations = await loadMigrationFiles(migrationDirectory);
+  const sourceNumberMigrationId =
+    "0008_add_language_lesson_source_number.sql";
+  const sourceNumberMigrationIndex = migrations.findIndex(
+    ({ id }) => id === sourceNumberMigrationId,
+  );
+  const userId = "6e28cdcf-8dc9-4b70-a6cb-870d219acd60";
+  const projectId = "1a1931bf-6389-46a0-bddd-28d88b22e7e2";
+  const seededLessons = [
+    {
+      id: "10000000-0000-4000-8000-000000000001",
+      lessonNumber: 1,
+      lessonSource: "assimil",
+    },
+    {
+      id: "10000000-0000-4000-8000-000000000002",
+      lessonNumber: 2,
+      lessonSource: "language_framework",
+    },
+    {
+      id: "10000000-0000-4000-8000-000000000003",
+      lessonNumber: 3,
+      lessonSource: "assimil",
+    },
+    {
+      id: "10000000-0000-4000-8000-000000000004",
+      lessonNumber: 4,
+      lessonSource: "free",
+    },
+    {
+      id: "10000000-0000-4000-8000-000000000005",
+      lessonNumber: 5,
+      lessonSource: "language_framework",
+    },
+  ];
+
+  try {
+    assert.equal(migrations.at(-1)?.id, sourceNumberMigrationId);
+    assert.equal(sourceNumberMigrationIndex, migrations.length - 1);
+    const migrationsBeforeSourceNumber = migrations.slice(
+      0,
+      sourceNumberMigrationIndex,
+    );
+    assert.deepEqual(
+      await migratePending(database, migrationsBeforeSourceNumber),
+      migrationsBeforeSourceNumber.map((migrationFile) => migrationFile.id),
+    );
+
+    await withSql(isolatedUrl, async (sql) => {
+      await sql`
+        INSERT INTO users (id, username, password_hash)
+        VALUES (${userId}, 'source-number-user', 'not-a-real-hash')
+      `;
+      await sql`
+        INSERT INTO language_projects (id, user_id, language, level)
+        VALUES (${projectId}, ${userId}, 'Alemán', 'Nivel 2')
+      `;
+
+      for (const lesson of seededLessons) {
+        await sql`
+          INSERT INTO language_lessons (
+            id,
+            language_project_id,
+            lesson_number,
+            lesson_source
+          )
+          VALUES (
+            ${lesson.id},
+            ${projectId},
+            ${lesson.lessonNumber},
+            ${lesson.lessonSource}
+          )
+        `;
+      }
+    });
+
+    assert.deepEqual(await migratePending(database, migrations), [
+      sourceNumberMigrationId,
+    ]);
+
+    const state = await withSql(isolatedUrl, async (sql) => {
+      const lessons = await sql<
+        Array<{
+          id: string;
+          lessonNumber: number;
+          lessonSource: string;
+          sourceLessonNumber: number;
+        }>
+      >`
+        SELECT id,
+               lesson_number AS "lessonNumber",
+               lesson_source AS "lessonSource",
+               source_lesson_number AS "sourceLessonNumber"
+        FROM language_lessons
+        WHERE language_project_id = ${projectId}
+        ORDER BY lesson_number
+      `;
+      const constraints = await sql<Array<{ name: string }>>`
+        SELECT conname AS name
+        FROM pg_constraint
+        WHERE conrelid = 'language_lessons'::regclass
+          AND conname = 'language_lessons_source_number_check'
+      `;
+      const indexes = await sql<Array<{ name: string }>>`
+        SELECT indexname AS name
+        FROM pg_indexes
+        WHERE schemaname = current_schema()
+          AND tablename = 'language_lessons'
+          AND indexname = 'language_lessons_project_source_number_unique'
+      `;
+      const [sourceNumberColumn] = await sql<
+        Array<{ isNullable: "YES" | "NO" }>
+      >`
+        SELECT is_nullable AS "isNullable"
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'language_lessons'
+          AND column_name = 'source_lesson_number'
+      `;
+
+      await assert.rejects(
+        sql`
+          INSERT INTO language_lessons (
+            id,
+            language_project_id,
+            lesson_number,
+            lesson_source,
+            source_lesson_number
+          )
+          VALUES (
+            '10000000-0000-4000-8000-000000000006',
+            ${projectId},
+            6,
+            'assimil',
+            1
+          )
+        `,
+        /language_lessons_project_source_number_unique/i,
+      );
+
+      return { lessons, constraints, indexes, sourceNumberColumn };
+    });
+
+    assert.deepEqual(
+      state.lessons.map(
+        ({ lessonNumber, lessonSource, sourceLessonNumber }) => ({
+          lessonNumber,
+          lessonSource,
+          sourceLessonNumber,
+        }),
+      ),
+      [
+        {
+          lessonNumber: 1,
+          lessonSource: "assimil",
+          sourceLessonNumber: 1,
+        },
+        {
+          lessonNumber: 2,
+          lessonSource: "language_framework",
+          sourceLessonNumber: 1,
+        },
+        {
+          lessonNumber: 3,
+          lessonSource: "assimil",
+          sourceLessonNumber: 2,
+        },
+        { lessonNumber: 4, lessonSource: "free", sourceLessonNumber: 1 },
+        {
+          lessonNumber: 5,
+          lessonSource: "language_framework",
+          sourceLessonNumber: 2,
+        },
+      ],
+    );
+    assert.deepEqual(
+      state.constraints.map(({ name }) => name),
+      ["language_lessons_source_number_check"],
+    );
+    assert.deepEqual(
+      state.indexes.map(({ name }) => name),
+      ["language_lessons_project_source_number_unique"],
+    );
+    assert.equal(state.sourceNumberColumn?.isNullable, "NO");
 
     const report = await getMigrationStatus(database, migrations);
     assert.equal(report.historyMode, "current");

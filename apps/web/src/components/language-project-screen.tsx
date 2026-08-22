@@ -5,8 +5,8 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
   formatLanguageDate,
+  formatLanguageLessonTitle,
   LANGUAGE_LESSON_SOURCE_OPTIONS,
-  languageLessonSourceLabel,
   type LanguageLesson,
   type LanguageLessonSource,
   type LanguageProject,
@@ -178,10 +178,9 @@ export function LanguageProjectScreen({ projectId }: { projectId: string }) {
                   href={`/languages/${project.id}/lessons/${lesson.id}`}
                   key={lesson.id}
                 >
-                  <span className="language-lesson-summary">
-                    <strong>Lección {lesson.lessonNumber}</strong>
-                    <small>{languageLessonSourceLabel(lesson.lessonSource)}</small>
-                  </span>
+                  <strong>
+                    {formatLanguageLessonTitle(lesson, project.language)}
+                  </strong>
                   <time dateTime={lesson.createdAt}>{formatLanguageDate(lesson.createdAt)}</time>
                 </Link>
               ))}

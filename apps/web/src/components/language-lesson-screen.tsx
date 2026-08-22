@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import {
-  languageLessonSourceLabel,
+  formatLanguageLessonTitle,
   type LanguageLesson,
   type LanguageProject,
   type StructuredLanguageLesson,
@@ -591,11 +591,9 @@ export function LanguageLessonScreen({
             <span aria-hidden="true">←</span>
             <span>Idiomas</span>
           </Link>
-          <h1 id="lesson-title">Lección {lesson.lessonNumber}</h1>
-          <p className="lesson-source-label">
-            Procedencia:{" "}
-            <strong>{languageLessonSourceLabel(lesson.lessonSource)}</strong>
-          </p>
+          <h1 id="lesson-title">
+            {formatLanguageLessonTitle(lesson, project.language)}
+          </h1>
         </header>
 
         {lesson.status === "processing" ? (
