@@ -46,6 +46,7 @@ import type {
 process.env.NODE_ENV = "test";
 process.env.AUTH_COOKIE_SECRET =
   "test-only-cookie-secret-with-more-than-thirty-two-characters";
+process.env.ELEVENLABS_VOICE_ID_DE = "test-german-voice";
 
 const firstUser: AuthUser = {
   id: "aaec2ea2-9130-4a70-b516-e187c994d119",
@@ -623,13 +624,15 @@ class MemoryLanguageAudioStore implements LanguageAudioStore {
 }
 
 class FakeLanguageAudioProvider implements LanguageAudioProvider {
-  readonly calls: GenerateLanguageAudioInput[] = [];
+  readonly calls: Array<Pick<GenerateLanguageAudioInput, "text" | "language">> = [];
+  readonly configurations: GenerateLanguageAudioInput["configuration"][] = [];
   result = new Uint8Array([73, 68, 51]);
   error: Error | null = null;
   wait: Promise<void> | null = null;
 
   async generate(input: GenerateLanguageAudioInput) {
-    this.calls.push(input);
+    this.calls.push({ text: input.text, language: input.language });
+    this.configurations.push(input.configuration);
     if (this.wait) await this.wait;
     if (this.error) throw this.error;
     return this.result;
@@ -666,6 +669,7 @@ function testServer(
   audioStore = new MemoryLanguageAudioStore(),
   audioProvider = new FakeLanguageAudioProvider(),
   audioStorage = new MemoryLanguageAudioStorage(),
+  elevenLabsProvider = new FakeLanguageAudioProvider(),
 ) {
   return {
     store,
@@ -673,6 +677,7 @@ function testServer(
     audioStore,
     audioProvider,
     audioStorage,
+    elevenLabsProvider,
     server: createServer(
       {},
       {
@@ -681,6 +686,7 @@ function testServer(
         languageLessonProcessor: processor,
         languageAudioStore: audioStore,
         languageAudioProvider: audioProvider,
+        elevenLabsLanguageAudioProvider: elevenLabsProvider,
         languageAudioStorage: audioStorage,
       },
     ),
@@ -1653,7 +1659,14 @@ test("lesson audio rejects arbitrary text, unsupported sections and invalid inde
       project.id,
       lesson.id,
       cookie,
-      { version: "original", section: "miniStory", index: 0 },
+      { version: "original", section: "patterns", index: 0 },
+    );
+    const invalidMiniStoryIndex = await requestLessonAudio(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      { version: "original", section: "miniStory", index: 1 },
     );
     const invalidIndex = await requestLessonAudio(
       server,
@@ -1666,10 +1679,154 @@ test("lesson audio rejects arbitrary text, unsupported sections and invalid inde
     assert.equal(unauthenticated.statusCode, 401);
     assert.equal(arbitraryText.statusCode, 400);
     assert.equal(unsupportedSection.statusCode, 400);
+    assert.equal(invalidMiniStoryIndex.statusCode, 400);
     assert.equal(invalidIndex.statusCode, 400);
     assert.equal(audioProvider.calls.length, 0);
   } finally {
     await server.close();
+  }
+});
+
+test("German mini story uses ElevenLabs for original and simplified content and reuses cache", async () => {
+  const {
+    store,
+    audioStore,
+    audioProvider,
+    audioStorage,
+    elevenLabsProvider,
+    server,
+  } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+
+  try {
+    const project = await createProject(server, cookie, "  Deutsch  ");
+    const lesson = await createLesson(server, project.id, cookie);
+    await processLesson(server, project.id, lesson.id, cookie);
+    const storedLesson = store.lessons.find(({ id }) => id === lesson.id);
+    assert.ok(storedLesson);
+    storedLesson.simplifiedStructuredContent = simplifiedLesson;
+    storedLesson.simplifiedAt = new Date();
+
+    const original = await requestLessonAudio(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      { version: "original", section: "miniStory", index: 0 },
+    );
+    const cachedOriginal = await requestLessonAudio(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      { version: "original", section: "miniStory", index: 0 },
+    );
+    const simplified = await requestLessonAudio(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      { version: "simplified", section: "miniStory", index: 0 },
+    );
+
+    assert.equal(original.statusCode, 200);
+    assert.equal(cachedOriginal.statusCode, 200);
+    assert.equal(cachedOriginal.body, "ID3");
+    assert.equal(simplified.statusCode, 200);
+    assert.equal(audioProvider.calls.length, 0);
+    assert.deepEqual(elevenLabsProvider.calls, [
+      {
+        text: "Lukas ist müde, aber morgen muss er früh aufstehen.",
+        language: "Deutsch",
+      },
+      {
+        text: "Lukas ist müde. Morgen steht er früh auf.",
+        language: "Deutsch",
+      },
+    ]);
+    assert.ok(
+      elevenLabsProvider.configurations.every(
+        (configuration) =>
+          configuration.provider === "elevenlabs" &&
+          configuration.model === "eleven_multilingual_v2" &&
+          configuration.voice === "test-german-voice" &&
+          configuration.audioFormat === "mp3_44100_128" &&
+          configuration.fileExtension === "mp3",
+      ),
+    );
+    assert.equal(audioStorage.puts.length, 2);
+    assert.equal(audioStorage.gets.length, 1);
+    assert.equal(audioStore.assets.length, 2);
+    assert.ok(
+      audioStore.assets.every(
+        (asset) =>
+          asset.provider === "elevenlabs" &&
+          asset.model === "eleven_multilingual_v2" &&
+          asset.voice === "test-german-voice" &&
+          asset.audioFormat === "mp3_44100_128" &&
+          /^language-audio\/[a-f0-9]{64}\.mp3$/.test(asset.storageKey),
+      ),
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("mini story in an unconfigured language returns controlled 409 without provider fallback", async () => {
+  const { audioProvider, elevenLabsProvider, server } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+
+  try {
+    const project = await createProject(server, cookie, "Polaco");
+    const lesson = await createLesson(server, project.id, cookie);
+    await processLesson(server, project.id, lesson.id, cookie);
+
+    const response = await requestLessonAudio(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      { version: "original", section: "miniStory", index: 0 },
+    );
+
+    assert.equal(response.statusCode, 409);
+    assert.equal(response.json().error, "LANGUAGE_STORY_AUDIO_UNAVAILABLE");
+    assert.equal(audioProvider.calls.length, 0);
+    assert.equal(elevenLabsProvider.calls.length, 0);
+  } finally {
+    await server.close();
+  }
+});
+
+test("ElevenLabs failure marks mini story audio failed without storing an object", async () => {
+  const dependencies = testServer();
+  const cookie = sessionCookie(firstUser.id);
+
+  try {
+    const project = await createProject(dependencies.server, cookie, "German");
+    const lesson = await createLesson(
+      dependencies.server,
+      project.id,
+      cookie,
+    );
+    await processLesson(dependencies.server, project.id, lesson.id, cookie);
+    dependencies.elevenLabsProvider.error = new Error("ElevenLabs unavailable");
+
+    const response = await requestLessonAudio(
+      dependencies.server,
+      project.id,
+      lesson.id,
+      cookie,
+      { version: "original", section: "miniStory", index: 0 },
+    );
+
+    assert.equal(response.statusCode, 502);
+    assert.equal(dependencies.audioStore.assets[0]?.status, "failed");
+    assert.equal(dependencies.audioStorage.puts.length, 0);
+    assert.equal(dependencies.audioProvider.calls.length, 0);
+    assert.equal(dependencies.elevenLabsProvider.calls.length, 1);
+  } finally {
+    await dependencies.server.close();
   }
 });
 

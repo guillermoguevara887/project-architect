@@ -19,6 +19,7 @@ import {
   type LanguageLessonProcessor,
 } from "./languages/lesson-processor.js";
 import {
+  elevenLabsLanguageAudioProvider,
   languageAudioProvider,
   type LanguageAudioProvider,
 } from "./languages/audio.js";
@@ -42,6 +43,7 @@ type ServerDependencies = {
   languageLessonProcessor?: LanguageLessonProcessor;
   languageAudioStore?: LanguageAudioStore;
   languageAudioProvider?: LanguageAudioProvider;
+  elevenLabsLanguageAudioProvider?: LanguageAudioProvider;
   languageAudioStorage?: LanguageAudioStorage;
 };
 
@@ -148,6 +150,9 @@ export function configureServer(
     languageStore: dependencies.languageStore ?? languageStore,
     audioStore: dependencies.languageAudioStore ?? languageAudioStore,
     provider: dependencies.languageAudioProvider ?? languageAudioProvider,
+    elevenLabsProvider:
+      dependencies.elevenLabsLanguageAudioProvider ??
+      elevenLabsLanguageAudioProvider,
     storage: dependencies.languageAudioStorage ?? languageAudioStorage,
   });
 

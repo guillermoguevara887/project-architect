@@ -8,21 +8,73 @@ import type {
 } from "./audio-repository.js";
 import type { LanguageAudioStorage } from "./audio-storage.js";
 
-export const LANGUAGE_AUDIO_CONFIG = {
+export type LanguageAudioConfiguration = {
+  provider: "openai" | "elevenlabs";
+  model: string;
+  voice: string;
+  audioFormat: string;
+  fileExtension: string;
+  contentType: string;
+};
+
+export const OPENAI_LANGUAGE_AUDIO_CONFIG = {
   provider: "openai",
   model: "gpt-4o-mini-tts",
   voice: "coral",
   audioFormat: "mp3",
+  fileExtension: "mp3",
   contentType: "audio/mpeg",
 } as const;
+
+// Keep the original export for callers that use the existing OpenAI defaults.
+export const LANGUAGE_AUDIO_CONFIG = OPENAI_LANGUAGE_AUDIO_CONFIG;
+
+const ELEVENLABS_MODEL = "eleven_multilingual_v2";
+const ELEVENLABS_AUDIO_FORMAT = "mp3_44100_128";
+
+export function resolveGermanStoryAudioConfiguration(
+  language: string,
+  voiceId = process.env.ELEVENLABS_VOICE_ID_DE,
+): LanguageAudioConfiguration | null {
+  const normalizedLanguage = language
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .trim()
+    .toLocaleLowerCase("und");
+
+  if (
+    !["german", "deutsch", "aleman"].includes(normalizedLanguage) ||
+    !voiceId?.trim()
+  ) {
+    return null;
+  }
+
+  return {
+    provider: "elevenlabs",
+    model: ELEVENLABS_MODEL,
+    voice: voiceId.trim(),
+    audioFormat: ELEVENLABS_AUDIO_FORMAT,
+    fileExtension: "mp3",
+    contentType: "audio/mpeg",
+  };
+}
 
 export const languageLessonAudioRequestSchema = z
   .object({
     version: z.enum(["original", "simplified"]),
-    section: z.enum(["vocabulary", "phrases"]),
+    section: z.enum(["vocabulary", "phrases", "miniStory"]),
     index: z.number().int().min(0),
   })
-  .strict();
+  .strict()
+  .superRefine((input, context) => {
+    if (input.section === "miniStory" && input.index !== 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["index"],
+        message: "Mini story audio only supports index 0.",
+      });
+    }
+  });
 
 export type LanguageLessonAudioRequest = z.infer<
   typeof languageLessonAudioRequestSchema
@@ -31,6 +83,7 @@ export type LanguageLessonAudioRequest = z.infer<
 export type GenerateLanguageAudioInput = {
   text: string;
   language: string;
+  configuration: LanguageAudioConfiguration;
 };
 
 export interface LanguageAudioProvider {
@@ -49,6 +102,10 @@ export function resolveLanguageLessonAudioText(
     return content.vocabulary[target.index]?.term ?? null;
   }
 
+  if (target.section === "miniStory") {
+    return target.index === 0 ? content.miniStory.text : null;
+  }
+
   return content.phrases[target.index]?.text ?? null;
 }
 
@@ -56,18 +113,20 @@ export function languageAudioStorageKey(input: {
   userId: string;
   language: string;
   normalizedText: string;
+  configuration?: LanguageAudioConfiguration;
 }) {
+  const configuration = input.configuration ?? OPENAI_LANGUAGE_AUDIO_CONFIG;
   const identity = JSON.stringify([
     input.userId,
     input.language,
     input.normalizedText,
-    LANGUAGE_AUDIO_CONFIG.provider,
-    LANGUAGE_AUDIO_CONFIG.model,
-    LANGUAGE_AUDIO_CONFIG.voice,
-    LANGUAGE_AUDIO_CONFIG.audioFormat,
+    configuration.provider,
+    configuration.model,
+    configuration.voice,
+    configuration.audioFormat,
   ]);
   const hash = createHash("sha256").update(identity).digest("hex");
-  return `language-audio/${hash}.${LANGUAGE_AUDIO_CONFIG.audioFormat}`;
+  return `language-audio/${hash}.${configuration.fileExtension}`;
 }
 
 type CreateSpeech = (input: {
@@ -96,14 +155,59 @@ export class OpenAILanguageAudioProvider implements LanguageAudioProvider {
 
   async generate(input: GenerateLanguageAudioInput) {
     const audio = await this.createSpeech({
-      model: LANGUAGE_AUDIO_CONFIG.model,
-      voice: LANGUAGE_AUDIO_CONFIG.voice,
+      model: OPENAI_LANGUAGE_AUDIO_CONFIG.model,
+      voice: OPENAI_LANGUAGE_AUDIO_CONFIG.voice,
       input: input.text,
       instructions: `Pronuncia con claridad y naturalidad en ${input.language}.`,
-      response_format: LANGUAGE_AUDIO_CONFIG.audioFormat,
+      response_format: OPENAI_LANGUAGE_AUDIO_CONFIG.audioFormat,
     });
 
     return new Uint8Array(audio);
+  }
+}
+
+type ElevenLabsFetch = (
+  input: string | URL | Request,
+  init?: RequestInit,
+) => Promise<Pick<Response, "ok" | "status" | "arrayBuffer">>;
+
+export class ElevenLabsLanguageAudioProvider implements LanguageAudioProvider {
+  constructor(
+    private readonly fetchImplementation: ElevenLabsFetch = fetch,
+    private readonly apiKey: () => string | undefined = () =>
+      process.env.ELEVENLABS_API_KEY,
+  ) {}
+
+  async generate(input: GenerateLanguageAudioInput) {
+    const apiKey = this.apiKey();
+
+    if (!apiKey) {
+      throw new Error("ELEVENLABS_API_KEY is not configured.");
+    }
+
+    const { configuration } = input;
+    const response = await this.fetchImplementation(
+      `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(configuration.voice)}?output_format=${encodeURIComponent(configuration.audioFormat)}`,
+      {
+        method: "POST",
+        headers: {
+          "xi-api-key": apiKey,
+          "content-type": "application/json",
+          accept: configuration.contentType,
+        },
+        body: JSON.stringify({
+          text: input.text,
+          model_id: configuration.model,
+          language_code: "de",
+        }),
+      },
+    );
+
+    if (!response.ok) {
+      throw new Error(`ElevenLabs TTS failed with status ${response.status}.`);
+    }
+
+    return new Uint8Array(await response.arrayBuffer());
   }
 }
 
@@ -116,6 +220,7 @@ export async function getOrCreateLanguageAudio(
     userId: string;
     language: string;
     originalText: string;
+    configuration?: LanguageAudioConfiguration;
   },
   dependencies: {
     store: LanguageAudioStore;
@@ -124,6 +229,7 @@ export async function getOrCreateLanguageAudio(
   },
 ): Promise<LanguageAudioResult> {
   const normalizedText = normalizeLanguageAudioText(input.originalText);
+  const configuration = input.configuration ?? OPENAI_LANGUAGE_AUDIO_CONFIG;
 
   if (!normalizedText) {
     throw new Error("Language audio text is empty.");
@@ -133,16 +239,17 @@ export async function getOrCreateLanguageAudio(
     userId: input.userId,
     language: input.language,
     normalizedText,
+    configuration,
   });
   const claim = await dependencies.store.claim({
     userId: input.userId,
     language: input.language,
     normalizedText,
     originalText: input.originalText,
-    provider: LANGUAGE_AUDIO_CONFIG.provider,
-    model: LANGUAGE_AUDIO_CONFIG.model,
-    voice: LANGUAGE_AUDIO_CONFIG.voice,
-    audioFormat: LANGUAGE_AUDIO_CONFIG.audioFormat,
+    provider: configuration.provider,
+    model: configuration.model,
+    voice: configuration.voice,
+    audioFormat: configuration.audioFormat,
     storageKey,
   });
 
@@ -162,10 +269,11 @@ export async function getOrCreateLanguageAudio(
     const audio = await dependencies.provider.generate({
       text: input.originalText,
       language: input.language,
+      configuration,
     });
     await dependencies.storage.put({
       key: claim.asset.storageKey,
-      contentType: LANGUAGE_AUDIO_CONFIG.contentType,
+      contentType: configuration.contentType,
       body: audio,
     });
     const asset = await dependencies.store.complete({
@@ -188,3 +296,5 @@ export async function getOrCreateLanguageAudio(
 }
 
 export const languageAudioProvider = new OpenAILanguageAudioProvider();
+export const elevenLabsLanguageAudioProvider =
+  new ElevenLabsLanguageAudioProvider();

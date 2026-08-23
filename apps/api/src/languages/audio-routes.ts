@@ -4,6 +4,8 @@ import { readSessionUserId } from "../auth/session.js";
 import {
   getOrCreateLanguageAudio,
   languageLessonAudioRequestSchema,
+  OPENAI_LANGUAGE_AUDIO_CONFIG,
+  resolveGermanStoryAudioConfiguration,
   resolveLanguageLessonAudioText,
   type LanguageAudioProvider,
 } from "./audio.js";
@@ -35,6 +37,7 @@ export function registerLanguageAudioRoutes(
     languageStore: LanguageStore;
     audioStore: LanguageAudioStore;
     provider: LanguageAudioProvider;
+    elevenLabsProvider: LanguageAudioProvider;
     storage: LanguageAudioStorage;
   },
 ) {
@@ -105,6 +108,19 @@ export function registerLanguageAudioRoutes(
         }
 
         const structuredContent = structuredLanguageLessonSchema.parse(content);
+        const configuration =
+          parsedInput.data.section === "miniStory"
+            ? resolveGermanStoryAudioConfiguration(project.language)
+            : OPENAI_LANGUAGE_AUDIO_CONFIG;
+
+        if (!configuration) {
+          return reply.code(409).send({
+            error: "LANGUAGE_STORY_AUDIO_UNAVAILABLE",
+            message:
+              "El audio de Mini historia no está disponible para este idioma.",
+          });
+        }
+
         const originalText = resolveLanguageLessonAudioText(
           structuredContent,
           parsedInput.data,
@@ -122,10 +138,14 @@ export function registerLanguageAudioRoutes(
             userId,
             language: project.language,
             originalText,
+            configuration,
           },
           {
             store: dependencies.audioStore,
-            provider: dependencies.provider,
+            provider:
+              configuration.provider === "elevenlabs"
+                ? dependencies.elevenLabsProvider
+                : dependencies.provider,
             storage: dependencies.storage,
           },
         );
@@ -138,7 +158,7 @@ export function registerLanguageAudioRoutes(
         }
 
         return reply
-          .header("content-type", "audio/mpeg")
+          .header("content-type", configuration.contentType)
           .header("cache-control", "private, no-store")
           .header("x-content-type-options", "nosniff")
           .send(Buffer.from(result.audio));
