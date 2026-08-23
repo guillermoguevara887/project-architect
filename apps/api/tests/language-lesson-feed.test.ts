@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   canRegenerateLanguageLesson,
@@ -7,11 +8,16 @@ import {
   formatLanguageLessonTitle,
   INITIAL_LANGUAGE_LESSON_CREATION_STATE,
   LANGUAGE_LESSON_SOURCE_OPTIONS,
+  languageLessonAudioButtonLabel,
+  languageLessonAudioKey,
   languageLessonAudioRequest,
+  languageLessonAudioStateAfterEnd,
+  languageLessonAudioToggleAction,
   languageLessonCreationReducer,
   languageLessonContentForVersion,
   languageLessonFilterEmptyMessage,
   playExclusiveLanguageAudio,
+  stopPlayableLanguageAudio,
   type LanguageLesson,
   type LanguageLessonSource,
   type StructuredLanguageLesson,
@@ -28,6 +34,100 @@ test("lesson audio UI builds positional requests without arbitrary text", () => 
     section: "phrases",
     index: 1,
   });
+});
+
+test("lesson audio idle, loading and playing states expose the correct action", () => {
+  const key = languageLessonAudioKey("original", "vocabulary", 0);
+
+  assert.equal(
+    languageLessonAudioButtonLabel("müde", "idle"),
+    "Reproducir pronunciación de müde",
+  );
+  assert.equal(languageLessonAudioToggleAction(null, key), "play");
+  assert.equal(
+    languageLessonAudioButtonLabel("müde", "loading"),
+    "Preparando pronunciación de müde",
+  );
+  assert.equal(
+    languageLessonAudioToggleAction(
+      { key, status: "loading", error: null },
+      key,
+    ),
+    "ignore",
+  );
+  assert.equal(
+    languageLessonAudioButtonLabel("müde", "playing"),
+    "Detener pronunciación de müde",
+  );
+});
+
+test("a second click stops the same audio without requesting it again", () => {
+  const key = languageLessonAudioKey("original", "phrases", 0);
+  const audio = {
+    currentTime: 7,
+    paused: false,
+    pause() {
+      this.paused = true;
+    },
+    async play() {},
+  };
+
+  assert.equal(
+    languageLessonAudioToggleAction(
+      { key, status: "playing", error: null },
+      key,
+    ),
+    "stop",
+  );
+  stopPlayableLanguageAudio(audio);
+  assert.equal(audio.paused, true);
+  assert.equal(audio.currentTime, 0);
+});
+
+test("ending audio clears only the playback that actually ended", () => {
+  const firstKey = languageLessonAudioKey("original", "vocabulary", 0);
+  const secondKey = languageLessonAudioKey("original", "vocabulary", 1);
+  const playing = { key: firstKey, status: "playing" as const, error: null };
+
+  assert.equal(languageLessonAudioStateAfterEnd(playing, firstKey), null);
+  assert.equal(languageLessonAudioStateAfterEnd(playing, secondKey), playing);
+});
+
+test("an audio error returns to a retryable play action", () => {
+  const key = languageLessonAudioKey("simplified", "phrases", 2);
+  const error = {
+    key,
+    status: "error" as const,
+    error: "No se pudo reproducir la pronunciación.",
+  };
+
+  assert.equal(languageLessonAudioToggleAction(error, key), "play");
+  assert.equal(
+    languageLessonAudioButtonLabel("Guten Morgen", error.status),
+    "Reproducir pronunciación de Guten Morgen",
+  );
+});
+
+test("lesson audio controls use an accessible spinner and non-color playing cue", async () => {
+  const component = await readFile(
+    new URL(
+      "../../web/src/components/language-lesson-screen.tsx",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  const styles = await readFile(
+    new URL("../../web/src/app/globals.css", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(component, /className="lesson-audio-spinner"/);
+  assert.match(component, /<StopIcon \/>/);
+  assert.match(component, /aria-busy=\{loading\}/);
+  assert.match(styles, /@keyframes lesson-audio-spin/);
+  assert.match(styles, /@keyframes lesson-audio-pulse/);
+  assert.match(styles, /prefers-reduced-motion: reduce/);
+  assert.match(styles, /width: 2\.65rem;[\s\S]*height: 2\.65rem;/);
 });
 
 test("lesson audio UI starts the selected audio and stops the previous one", async () => {
@@ -54,6 +154,17 @@ test("lesson audio UI starts the selected audio and stops the previous one", asy
   assert.equal(await playExclusiveLanguageAudio(previous, next), next);
   assert.equal(previous.currentTime, 0);
   assert.deepEqual(events, ["pause-previous", "play-next"]);
+  assert.equal(
+    languageLessonAudioToggleAction(
+      {
+        key: languageLessonAudioKey("original", "vocabulary", 0),
+        status: "playing",
+        error: null,
+      },
+      languageLessonAudioKey("original", "vocabulary", 1),
+    ),
+    "play",
+  );
 });
 
 test("lesson creation source stays hidden until the primary action opens it", () => {

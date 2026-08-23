@@ -168,6 +168,54 @@ export type LanguageLessonContentVersion =
 
 export type LanguageLessonAudioSection = "vocabulary" | "phrases";
 
+export type LanguageLessonAudioPlayback = {
+  key: string;
+  status: "loading" | "playing" | "error";
+  error: string | null;
+};
+
+export type LanguageLessonAudioToggleAction = "play" | "stop" | "ignore";
+
+export function languageLessonAudioKey(
+  version: LanguageLessonContentVersion,
+  section: LanguageLessonAudioSection,
+  index: number,
+) {
+  return `${version}:${section}:${index}`;
+}
+
+export function languageLessonAudioToggleAction(
+  playback: LanguageLessonAudioPlayback | null,
+  key: string,
+): LanguageLessonAudioToggleAction {
+  if (playback?.key !== key) return "play";
+  if (playback.status === "loading") return "ignore";
+  if (playback.status === "playing") return "stop";
+  return "play";
+}
+
+export function languageLessonAudioButtonLabel(
+  text: string,
+  status: LanguageLessonAudioPlayback["status"] | "idle",
+) {
+  if (status === "loading") {
+    return `Preparando pronunciación de ${text}`;
+  }
+
+  if (status === "playing") {
+    return `Detener pronunciación de ${text}`;
+  }
+
+  return `Reproducir pronunciación de ${text}`;
+}
+
+export function languageLessonAudioStateAfterEnd(
+  playback: LanguageLessonAudioPlayback | null,
+  key: string,
+) {
+  return playback?.key === key ? null : playback;
+}
+
 export function languageLessonAudioRequest(
   version: LanguageLessonContentVersion,
   section: LanguageLessonAudioSection,
@@ -182,13 +230,20 @@ export type PlayableLanguageAudio = {
   play(): Promise<void>;
 };
 
+export function stopPlayableLanguageAudio(
+  audio: PlayableLanguageAudio | null,
+) {
+  if (!audio) return;
+  audio.pause();
+  audio.currentTime = 0;
+}
+
 export async function playExclusiveLanguageAudio(
   current: PlayableLanguageAudio | null,
   next: PlayableLanguageAudio,
 ) {
   if (current && current !== next) {
-    current.pause();
-    current.currentTime = 0;
+    stopPlayableLanguageAudio(current);
   }
 
   await next.play();

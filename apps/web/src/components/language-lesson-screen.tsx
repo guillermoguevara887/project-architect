@@ -12,11 +12,17 @@ import {
 import {
   canRegenerateLanguageLesson,
   formatLanguageLessonTitle,
+  languageLessonAudioButtonLabel,
+  languageLessonAudioKey,
   languageLessonAudioRequest,
+  languageLessonAudioStateAfterEnd,
+  languageLessonAudioToggleAction,
   languageLessonContentForVersion,
   LANGUAGE_LESSON_CONTENT_VERSION_OPTIONS,
   playExclusiveLanguageAudio,
+  stopPlayableLanguageAudio,
   type LanguageLesson,
+  type LanguageLessonAudioPlayback,
   type LanguageLessonAudioSection,
   type LanguageLessonContentVersion,
   type LanguageProject,
@@ -37,20 +43,6 @@ type LessonSectionKey =
   | "review";
 
 const LESSON_SECTION_VARIANTS = ["a", "b", "c"] as const;
-
-type LessonAudioPlayback = {
-  key: string;
-  status: "loading" | "playing" | "error";
-  error: string | null;
-};
-
-function lessonAudioKey(
-  version: LanguageLessonContentVersion,
-  section: LanguageLessonAudioSection,
-  index: number,
-) {
-  return `${version}:${section}:${index}`;
-}
 
 function lessonSectionVariant(sectionIndex: number) {
   return LESSON_SECTION_VARIANTS[
@@ -129,36 +121,52 @@ function SpeakerIcon() {
   );
 }
 
+function StopIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="lesson-audio-icon lesson-audio-stop-icon"
+      fill="none"
+      focusable="false"
+      viewBox="0 0 20 20"
+    >
+      <rect fill="currentColor" height="7" rx="1.4" width="7" x="6.5" y="6.5" />
+    </svg>
+  );
+}
+
 function LessonAudioButton({
   text,
   playback,
   onPlay,
 }: {
   text: string;
-  playback: LessonAudioPlayback | null;
+  playback: LanguageLessonAudioPlayback | null;
   onPlay: () => void;
 }) {
   const loading = playback?.status === "loading";
   const playing = playback?.status === "playing";
+  const status = playback?.status ?? "idle";
 
   return (
     <>
       <button
-        aria-label={
-          loading
-            ? `Preparando pronunciación de ${text}`
-            : playing
-              ? `Reproduciendo pronunciación de ${text}`
-              : `Reproducir pronunciación de ${text}`
-        }
+        aria-label={languageLessonAudioButtonLabel(text, status)}
         aria-pressed={playing}
+        aria-busy={loading}
         className="lesson-audio-button"
-        data-state={playback?.status ?? "idle"}
+        data-state={status}
         disabled={loading}
         type="button"
         onClick={onPlay}
       >
-        {loading ? <span aria-hidden="true">•••</span> : <SpeakerIcon />}
+        {loading ? (
+          <span aria-hidden="true" className="lesson-audio-spinner" />
+        ) : playing ? (
+          <StopIcon />
+        ) : (
+          <SpeakerIcon />
+        )}
       </button>
       {playback?.status === "error" && playback.error ? (
         <small className="lesson-audio-error" role="alert">
@@ -274,7 +282,7 @@ function ReadyLesson({
   content: StructuredLanguageLesson;
   contentVersion: LanguageLessonContentVersion;
   copiedSection: LessonSectionKey | null;
-  audioPlayback: LessonAudioPlayback | null;
+  audioPlayback: LanguageLessonAudioPlayback | null;
   onCopy: (sectionKey: LessonSectionKey) => void;
   onPlayAudio: (
     section: LanguageLessonAudioSection,
@@ -299,7 +307,7 @@ function ReadyLesson({
                   text={item.term}
                   playback={
                     audioPlayback?.key ===
-                    lessonAudioKey(contentVersion, "vocabulary", index)
+                    languageLessonAudioKey(contentVersion, "vocabulary", index)
                       ? audioPlayback
                       : null
                   }
@@ -329,7 +337,7 @@ function ReadyLesson({
                   text={item.text}
                   playback={
                     audioPlayback?.key ===
-                    lessonAudioKey(contentVersion, "phrases", index)
+                    languageLessonAudioKey(contentVersion, "phrases", index)
                       ? audioPlayback
                       : null
                   }
@@ -486,23 +494,27 @@ export function LanguageLessonScreen({
   const [copiedSection, setCopiedSection] =
     useState<LessonSectionKey | null>(null);
   const [audioPlayback, setAudioPlayback] =
-    useState<LessonAudioPlayback | null>(null);
+    useState<LanguageLessonAudioPlayback | null>(null);
+  const audioPlaybackRef = useRef<LanguageLessonAudioPlayback | null>(null);
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
   const audioObjectUrlRef = useRef<string | null>(null);
   const audioAbortControllerRef = useRef<AbortController | null>(null);
   const audioRequestIdRef = useRef(0);
   const simplifying = simplificationAction !== null;
 
+  function updateAudioPlayback(
+    playback: LanguageLessonAudioPlayback | null,
+  ) {
+    audioPlaybackRef.current = playback;
+    setAudioPlayback(playback);
+  }
+
   function stopLanguageAudio() {
     audioRequestIdRef.current += 1;
     audioAbortControllerRef.current?.abort();
     audioAbortControllerRef.current = null;
-    audioElementRef.current?.pause();
-
-    if (audioElementRef.current) {
-      audioElementRef.current.currentTime = 0;
-      audioElementRef.current = null;
-    }
+    stopPlayableLanguageAudio(audioElementRef.current);
+    audioElementRef.current = null;
 
     if (audioObjectUrlRef.current) {
       URL.revokeObjectURL(audioObjectUrlRef.current);
@@ -767,14 +779,27 @@ export function LanguageLessonScreen({
     section: LanguageLessonAudioSection,
     index: number,
   ) {
-    const key = lessonAudioKey(contentVersion, section, index);
+    const key = languageLessonAudioKey(contentVersion, section, index);
+    const toggleAction = languageLessonAudioToggleAction(
+      audioPlaybackRef.current,
+      key,
+    );
+
+    if (toggleAction === "ignore") return;
+
+    if (toggleAction === "stop") {
+      stopLanguageAudio();
+      updateAudioPlayback(null);
+      return;
+    }
+
     const previousAudio = audioElementRef.current;
 
     stopLanguageAudio();
     const requestId = audioRequestIdRef.current;
     const controller = new AbortController();
     audioAbortControllerRef.current = controller;
-    setAudioPlayback({ key, status: "loading", error: null });
+    updateAudioPlayback({ key, status: "loading", error: null });
 
     try {
       const response = await fetch(
@@ -791,6 +816,8 @@ export function LanguageLessonScreen({
       );
 
       if (response.status === 401) {
+        stopLanguageAudio();
+        updateAudioPlayback(null);
         router.replace("/");
         return;
       }
@@ -815,13 +842,15 @@ export function LanguageLessonScreen({
       audio.onended = () => {
         if (audioElementRef.current === audio) {
           stopLanguageAudio();
-          setAudioPlayback(null);
+          updateAudioPlayback(
+            languageLessonAudioStateAfterEnd(audioPlaybackRef.current, key),
+          );
         }
       };
       audio.onerror = () => {
         if (audioElementRef.current === audio) {
           stopLanguageAudio();
-          setAudioPlayback({
+          updateAudioPlayback({
             key,
             status: "error",
             error: "No se pudo reproducir la pronunciación.",
@@ -831,7 +860,7 @@ export function LanguageLessonScreen({
       await playExclusiveLanguageAudio(previousAudio, audio);
 
       if (requestId === audioRequestIdRef.current) {
-        setAudioPlayback({ key, status: "playing", error: null });
+        updateAudioPlayback({ key, status: "playing", error: null });
       }
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
@@ -839,7 +868,8 @@ export function LanguageLessonScreen({
       }
 
       if (requestId === audioRequestIdRef.current) {
-        setAudioPlayback({
+        stopLanguageAudio();
+        updateAudioPlayback({
           key,
           status: "error",
           error:
@@ -952,7 +982,7 @@ export function LanguageLessonScreen({
                       type="button"
                       onClick={() => {
                         stopLanguageAudio();
-                        setAudioPlayback(null);
+                        updateAudioPlayback(null);
                         setContentVersion(option.value);
                         setCopiedSection(null);
                       }}
