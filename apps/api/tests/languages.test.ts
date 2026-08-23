@@ -122,6 +122,18 @@ const simplifiedLesson: StructuredLanguageLesson = {
   },
 };
 
+const regeneratedLesson: StructuredLanguageLesson = {
+  ...simplifiedLesson,
+  vocabulary: [
+    { term: "früh", meaning: "temprano", example: "Ich stehe früh auf." },
+  ],
+  miniStory: { text: "Lukas steht früh auf. Er ist müde und trinkt Kaffee." },
+  review: {
+    keyVocabulary: ["früh"],
+    keyPatterns: ["Ich stehe … auf."],
+  },
+};
+
 class MemoryAuthStore implements AuthStore {
   private readonly users = [firstUser, secondUser];
 
@@ -390,7 +402,7 @@ class MemoryLanguageStore implements LanguageStore {
       return { kind: "not_ready" as const };
     }
 
-    if (lesson.simplifiedStructuredContent) {
+    if (!input.regenerate && lesson.simplifiedStructuredContent) {
       return { kind: "already_simplified" as const, lesson };
     }
 
@@ -588,11 +600,13 @@ async function simplifyLesson(
   projectId: string,
   lessonId: string,
   cookie: string,
+  regenerate = false,
 ) {
   return server.inject({
     method: "POST",
     url: `/languages/projects/${projectId}/lessons/${lessonId}/simplify`,
     headers: { cookie },
+    ...(regenerate ? { payload: { regenerate: true } } : {}),
   });
 }
 
@@ -1210,57 +1224,7 @@ test("a persisted simplification makes the endpoint idempotent", async () => {
   }
 });
 
-test("concurrent simplification requests produce only one OpenAI call", async () => {
-  const { processor, server } = testServer();
-  const cookie = sessionCookie(firstUser.id);
-  let releaseSimplification = () => {};
-  processor.simplificationWait = new Promise<void>((resolve) => {
-    releaseSimplification = resolve;
-  });
-
-  try {
-    const project = await createProject(server, cookie);
-    const lesson = await createLesson(server, project.id, cookie);
-    await processLesson(server, project.id, lesson.id, cookie);
-
-    const firstRequest = simplifyLesson(
-      server,
-      project.id,
-      lesson.id,
-      cookie,
-    );
-
-    for (
-      let attempt = 0;
-      attempt < 20 && processor.simplificationCalls.length === 0;
-      attempt += 1
-    ) {
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    }
-
-    const secondResponse = await simplifyLesson(
-      server,
-      project.id,
-      lesson.id,
-      cookie,
-    );
-    releaseSimplification();
-    const firstResponse = await firstRequest;
-
-    assert.equal(firstResponse.statusCode, 200);
-    assert.equal(secondResponse.statusCode, 409);
-    assert.equal(
-      secondResponse.json().error,
-      "LANGUAGE_LESSON_SIMPLIFICATION_PROCESSING",
-    );
-    assert.equal(processor.simplificationCalls.length, 1);
-  } finally {
-    releaseSimplification();
-    await server.close();
-  }
-});
-
-test("OpenAI errors leave the ready original intact and allow retry", async () => {
+test("explicit regeneration replaces only the simplification using the original source", async () => {
   const { store, processor, server } = testServer();
   const cookie = sessionCookie(firstUser.id);
 
@@ -1271,6 +1235,132 @@ test("OpenAI errors leave the ready original intact and allow retry", async () =
     const originalBefore = structuredClone(
       store.lessons[0]?.structuredContent,
     );
+    const originalJsonBefore = JSON.stringify(originalBefore);
+    processor.simplificationResult = simplifiedLesson;
+    await simplifyLesson(server, project.id, lesson.id, cookie);
+    const firstSimplifiedAt = store.lessons[0]?.simplifiedAt;
+    processor.simplificationResult = regeneratedLesson;
+
+    const regenerated = await simplifyLesson(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      true,
+    );
+
+    assert.equal(regenerated.statusCode, 200);
+    assert.equal(processor.simplificationCalls.length, 2);
+    assert.deepEqual(
+      processor.simplificationCalls[1]?.structuredContent,
+      originalBefore,
+    );
+    assert.notDeepEqual(
+      processor.simplificationCalls[1]?.structuredContent,
+      simplifiedLesson,
+    );
+    assert.equal(
+      JSON.stringify(store.lessons[0]?.structuredContent),
+      originalJsonBefore,
+    );
+    assert.deepEqual(
+      store.lessons[0]?.simplifiedStructuredContent,
+      regeneratedLesson,
+    );
+    assert.ok(store.lessons[0]?.simplifiedAt);
+    assert.ok(
+      store.lessons[0]!.simplifiedAt!.getTime() >
+        firstSimplifiedAt!.getTime(),
+    );
+    assert.deepEqual(
+      regenerated.json().lesson.simplifiedStructuredContent,
+      regeneratedLesson,
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("two concurrent regenerations produce only one new OpenAI call", async () => {
+  const { store, processor, server } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+  let releaseSimplification = () => {};
+
+  try {
+    const project = await createProject(server, cookie);
+    const lesson = await createLesson(server, project.id, cookie);
+    await processLesson(server, project.id, lesson.id, cookie);
+    processor.simplificationResult = simplifiedLesson;
+    await simplifyLesson(server, project.id, lesson.id, cookie);
+    processor.simplificationResult = regeneratedLesson;
+    processor.simplificationWait = new Promise<void>((resolve) => {
+      releaseSimplification = resolve;
+    });
+
+    const firstRequest = simplifyLesson(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      true,
+    );
+
+    for (
+      let attempt = 0;
+      attempt < 20 && processor.simplificationCalls.length < 2;
+      attempt += 1
+    ) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+
+    const secondResponse = await simplifyLesson(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      true,
+    );
+    assert.deepEqual(
+      store.lessons[0]?.simplifiedStructuredContent,
+      simplifiedLesson,
+    );
+    releaseSimplification();
+    const firstResponse = await firstRequest;
+
+    assert.equal(firstResponse.statusCode, 200);
+    assert.equal(secondResponse.statusCode, 409);
+    assert.equal(
+      secondResponse.json().error,
+      "LANGUAGE_LESSON_SIMPLIFICATION_PROCESSING",
+    );
+    assert.equal(processor.simplificationCalls.length, 2);
+    assert.deepEqual(
+      store.lessons[0]?.simplifiedStructuredContent,
+      regeneratedLesson,
+    );
+  } finally {
+    releaseSimplification();
+    await server.close();
+  }
+});
+
+test("regeneration errors preserve the original and previous simplification", async () => {
+  const { store, processor, server } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+
+  try {
+    const project = await createProject(server, cookie);
+    const lesson = await createLesson(server, project.id, cookie);
+    await processLesson(server, project.id, lesson.id, cookie);
+    const originalBefore = structuredClone(
+      store.lessons[0]?.structuredContent,
+    );
+    processor.simplificationResult = simplifiedLesson;
+    await simplifyLesson(server, project.id, lesson.id, cookie);
+    const simplifiedBefore = structuredClone(
+      store.lessons[0]?.simplifiedStructuredContent,
+    );
+    const simplifiedAtBefore = store.lessons[0]?.simplifiedAt;
     processor.simplificationError = new LanguageLessonProcessingError(
       "provider_error",
     );
@@ -1280,25 +1370,34 @@ test("OpenAI errors leave the ready original intact and allow retry", async () =
       project.id,
       lesson.id,
       cookie,
+      true,
     );
 
     assert.equal(failed.statusCode, 502);
     assert.equal(store.lessons[0]?.status, "ready");
     assert.deepEqual(store.lessons[0]?.structuredContent, originalBefore);
-    assert.equal(store.lessons[0]?.simplifiedStructuredContent, null);
-    assert.equal(store.lessons[0]?.simplifiedAt, null);
+    assert.deepEqual(
+      store.lessons[0]?.simplifiedStructuredContent,
+      simplifiedBefore,
+    );
+    assert.equal(
+      store.lessons[0]?.simplifiedAt?.getTime(),
+      simplifiedAtBefore?.getTime(),
+    );
     assert.equal(store.lessons[0]?.simplificationStartedAt, null);
 
     processor.simplificationError = null;
+    processor.simplificationResult = regeneratedLesson;
     const retried = await simplifyLesson(
       server,
       project.id,
       lesson.id,
       cookie,
+      true,
     );
 
     assert.equal(retried.statusCode, 200);
-    assert.equal(processor.simplificationCalls.length, 2);
+    assert.equal(processor.simplificationCalls.length, 3);
   } finally {
     await server.close();
   }

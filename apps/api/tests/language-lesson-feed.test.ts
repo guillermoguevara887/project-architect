@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  canRegenerateLanguageLesson,
   filterLanguageLessons,
   formatLanguageLessonTitle,
   languageLessonContentForVersion,
@@ -119,5 +120,10 @@ test("the displayed lesson version switches locally between persisted content", 
   assert.equal(
     languageLessonContentForVersion(persistedLesson, "simplified"),
     simplified,
+  );
+  assert.equal(canRegenerateLanguageLesson(persistedLesson), true);
+  assert.equal(
+    canRegenerateLanguageLesson({ simplifiedStructuredContent: null }),
+    false,
   );
 });

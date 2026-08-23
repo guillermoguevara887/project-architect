@@ -49,19 +49,23 @@ export type FailLanguageLessonProcessingInput = OwnedLanguageProjectInput & {
   processingStartedAt: Date;
 };
 
+type OwnedLanguageLessonInput = OwnedLanguageProjectInput & {
+  lessonId: string;
+};
+
 export type ClaimLanguageLessonSimplificationInput =
-  OwnedLanguageProjectInput & {
-    lessonId: string;
+  OwnedLanguageLessonInput & {
+    regenerate: boolean;
   };
 
 export type CompleteLanguageLessonSimplificationInput =
-  ClaimLanguageLessonSimplificationInput & {
+  OwnedLanguageLessonInput & {
     simplificationStartedAt: Date;
     simplifiedStructuredContent: StructuredLanguageLesson;
   };
 
 export type FailLanguageLessonSimplificationInput =
-  ClaimLanguageLessonSimplificationInput & {
+  OwnedLanguageLessonInput & {
     simplificationStartedAt: Date;
   };
 
@@ -500,7 +504,7 @@ export const languageStore: LanguageStore = {
         return { kind: "not_ready" as const };
       }
 
-      if (existing.simplifiedStructuredContent) {
+      if (!input.regenerate && existing.simplifiedStructuredContent) {
         return { kind: "already_simplified" as const, lesson: existing };
       }
 

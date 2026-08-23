@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import {
+  canRegenerateLanguageLesson,
   formatLanguageLessonTitle,
   languageLessonContentForVersion,
   LANGUAGE_LESSON_CONTENT_VERSION_OPTIONS,
@@ -362,12 +363,15 @@ export function LanguageLessonScreen({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [processing, setProcessing] = useState(false);
-  const [simplifying, setSimplifying] = useState(false);
+  const [simplificationAction, setSimplificationAction] = useState<
+    "simplify" | "regenerate" | null
+  >(null);
   const [contentVersion, setContentVersion] =
     useState<LanguageLessonContentVersion>("original");
   const [deleting, setDeleting] = useState(false);
   const [copiedSection, setCopiedSection] =
     useState<LessonSectionKey | null>(null);
+  const simplifying = simplificationAction !== null;
 
   useEffect(() => {
     if (!authorized) return;
@@ -505,16 +509,21 @@ export function LanguageLessonScreen({
     }
   }
 
-  async function simplifyLesson() {
+  async function simplifyLesson(regenerate = false) {
     if (simplifying) return;
 
-    setSimplifying(true);
+    setSimplificationAction(regenerate ? "regenerate" : "simplify");
     setActionError(null);
 
     try {
       const response = await fetch(
         `/api/languages/projects/${encodeURIComponent(projectId)}/lessons/${encodeURIComponent(lessonId)}/simplify`,
-        { method: "POST", credentials: "include" },
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ regenerate }),
+        },
       );
 
       if (response.status === 401) {
@@ -543,7 +552,7 @@ export function LanguageLessonScreen({
         "No se pudo simplificar la lección. Intenta nuevamente.",
       );
     } finally {
-      setSimplifying(false);
+      setSimplificationAction(null);
     }
   }
 
@@ -689,26 +698,41 @@ export function LanguageLessonScreen({
 
         {lesson.status === "ready" && readyContent ? (
           <div className="lesson-simplification-controls">
-            {lesson.simplifiedStructuredContent ? (
-              <div
-                aria-label="Versión de la lección"
-                className="lesson-version-selector"
-                role="group"
-              >
-                {LANGUAGE_LESSON_CONTENT_VERSION_OPTIONS.map((option) => (
+            {canRegenerateLanguageLesson(lesson) ? (
+              <>
+                <div
+                  aria-label="Versión de la lección"
+                  className="lesson-version-selector"
+                  role="group"
+                >
+                  {LANGUAGE_LESSON_CONTENT_VERSION_OPTIONS.map((option) => (
+                    <button
+                      aria-pressed={contentVersion === option.value}
+                      key={option.value}
+                      type="button"
+                      onClick={() => {
+                        setContentVersion(option.value);
+                        setCopiedSection(null);
+                      }}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="lesson-regeneration-action">
                   <button
-                    aria-pressed={contentVersion === option.value}
-                    key={option.value}
+                    className="lesson-regenerate-button"
+                    disabled={simplifying}
                     type="button"
-                    onClick={() => {
-                      setContentVersion(option.value);
-                      setCopiedSection(null);
-                    }}
+                    onClick={() => void simplifyLesson(true)}
                   >
-                    {option.label}
+                    {simplificationAction === "regenerate"
+                      ? "Regenerando…"
+                      : "Regenerar simplificación"}
                   </button>
-                ))}
-              </div>
+                  <small>Vuelve a generar esta versión con IA.</small>
+                </div>
+              </>
             ) : (
               <button
                 className="lesson-simplify-button"
@@ -716,7 +740,9 @@ export function LanguageLessonScreen({
                 type="button"
                 onClick={() => void simplifyLesson()}
               >
-                {simplifying ? "Simplificando…" : "Simplificar lección"}
+                {simplificationAction === "simplify"
+                  ? "Simplificando…"
+                  : "Simplificar lección"}
               </button>
             )}
           </div>

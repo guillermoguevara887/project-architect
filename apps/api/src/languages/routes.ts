@@ -8,6 +8,7 @@ import {
   languageLessonIdSchema,
   languageProjectIdSchema,
   processLanguageLessonSchema,
+  simplifyLanguageLessonSchema,
   structuredLanguageLessonSchema,
   updateLanguageLessonSchema,
 } from "./contracts.js";
@@ -505,10 +506,22 @@ export function registerLanguageRoutes(
           return reply.code(404).send({ error: "LANGUAGE_LESSON_NOT_FOUND" });
         }
 
+        const parsedInput = simplifyLanguageLessonSchema.safeParse(
+          request.body ?? {},
+        );
+
+        if (!parsedInput.success) {
+          return reply.code(400).send({
+            error: "INVALID_LANGUAGE_LESSON_SIMPLIFICATION",
+            message: "La solicitud de simplificación no es válida.",
+          });
+        }
+
         const claim = await store.claimLessonForSimplification({
           languageProjectId: projectId,
           lessonId,
           userId,
+          regenerate: parsedInput.data.regenerate,
         });
 
         if (claim.kind === "not_found") {

@@ -140,3 +140,9 @@ export const processLanguageLessonSchema = z
       .refine((value) => value.trim().length > 0),
   })
   .strict();
+
+export const simplifyLanguageLessonSchema = z
+  .object({
+    regenerate: z.boolean().default(false),
+  })
+  .strict();

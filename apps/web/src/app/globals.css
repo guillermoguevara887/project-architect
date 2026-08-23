@@ -1101,6 +1101,9 @@ button:disabled {
 .lesson-simplification-controls {
   display: flex;
   min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.85rem;
   margin-top: 2rem;
 }
 
@@ -1145,6 +1148,39 @@ button:disabled {
 .lesson-version-selector button[aria-pressed="true"] {
   background: #0ea5a4;
   color: #fff;
+}
+
+.lesson-regeneration-action {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.55rem 0.75rem;
+}
+
+.lesson-regenerate-button {
+  min-height: 2.5rem;
+  padding: 0.55rem 0.8rem;
+  border: 1px solid #bfe8e4;
+  background: #fff;
+  box-shadow: none;
+  color: #0b7f7e;
+  font-size: 0.82rem;
+}
+
+.lesson-regenerate-button:hover:not(:disabled) {
+  border-color: #0ea5a4;
+  background: #f4fbfa;
+}
+
+.lesson-regenerate-button:focus-visible {
+  outline: 3px solid rgb(14 165 164 / 22%);
+  outline-offset: 0.15rem;
+}
+
+.lesson-regeneration-action small {
+  color: #64748b;
+  font-size: 0.78rem;
 }
 
 .lesson-sections {
@@ -1527,7 +1563,9 @@ button:disabled {
   }
 
   .lesson-simplify-button,
-  .lesson-version-selector {
+  .lesson-version-selector,
+  .lesson-regeneration-action,
+  .lesson-regenerate-button {
     width: 100%;
   }
 

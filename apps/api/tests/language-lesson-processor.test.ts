@@ -73,7 +73,7 @@ test("simplification transforms structured content with the dedicated prompt and
   assert.deepEqual(
     await processor.simplify({
       language: "Francés",
-      level: "Nivel 1",
+      level: "B2",
       structuredContent: validLesson,
     }),
     validLesson,
@@ -81,10 +81,18 @@ test("simplification transforms structured content with the dedicated prompt and
   assert.equal(request?.store, false);
   assert.match(request?.instructions ?? "", /simplificador pedagógico/i);
   assert.match(request?.instructions ?? "", /mismas ocho secciones/i);
-  assert.match(request?.instructions ?? "", /vocabulary:/);
-  assert.match(request?.instructions ?? "", /nextLevelBridge:/);
+  assert.match(request?.instructions ?? "", /vocabulary: 5-7/);
+  assert.match(request?.instructions ?? "", /phrases: 4-6/);
+  assert.match(request?.instructions ?? "", /patterns: 1-2/);
+  assert.match(request?.instructions ?? "", /60-100 palabras/);
+  assert.match(request?.instructions ?? "", /automaticThoughts: 5-8/);
+  assert.match(request?.instructions ?? "", /dialogue: 6-8/);
+  assert.match(request?.instructions ?? "", /nextLevelBridge: 1-2/);
+  assert.match(request?.instructions ?? "", /máximo tres elementos/);
+  assert.match(request?.instructions ?? "", /MATERIALMENTE/);
   assert.match(request?.input ?? "", /Idioma objetivo: Francés/);
-  assert.match(request?.input ?? "", /Nivel del proyecto: Nivel 1/);
+  assert.match(request?.input ?? "", /Nivel del proyecto: B2/);
+  assert.match(request?.input ?? "", /Nivel pedagógico objetivo aproximado: B1/);
   assert.match(request?.input ?? "", /LECCIÓN ESTRUCTURADA ORIGINAL/);
   assert.match(request?.input ?? "", /"miniStory"/);
 });
@@ -106,6 +114,22 @@ test("simplification rejects output that does not match the existing lesson sche
     ),
     "invalid_response",
   );
+});
+
+test("simplification gives internal levels an explicit complexity reduction target", async () => {
+  let requestInput = "";
+  const processor = new OpenAILanguageLessonProcessor(async (received) => {
+    requestInput = received.input;
+    return { status: "completed", output_parsed: validLesson };
+  });
+
+  await processor.simplify({
+    language: "Francés",
+    level: "Nivel 2",
+    structuredContent: validLesson,
+  });
+
+  assert.match(requestInput, /reducir aproximadamente 35-45% la complejidad/);
 });
 
 test("the processor rejects a missing section and arbitrary properties", async () => {

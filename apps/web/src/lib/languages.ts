@@ -120,6 +120,12 @@ export function languageLessonContentForVersion(
   return lesson.structuredContent ?? null;
 }
 
+export function canRegenerateLanguageLesson(
+  lesson: Pick<LanguageLesson, "simplifiedStructuredContent">,
+) {
+  return Boolean(lesson.simplifiedStructuredContent);
+}
+
 export function formatLanguageLessonTitle(
   lesson: Pick<LanguageLesson, "lessonSource" | "sourceLessonNumber">,
   language: string,
