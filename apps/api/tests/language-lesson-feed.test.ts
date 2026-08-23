@@ -6,11 +6,13 @@ import {
   canRegenerateLanguageLesson,
   createLanguageLessonSubmissionGuard,
   DEFAULT_LANGUAGE_AUDIO_PLAYBACK_RATE,
+  DEFAULT_LANGUAGE_STORY_VOICE,
   filterLanguageLessons,
   formatLanguageLessonTitle,
   INITIAL_LANGUAGE_LESSON_CREATION_STATE,
   LANGUAGE_AUDIO_PLAYBACK_RATE_OPTIONS,
   LANGUAGE_LESSON_SOURCE_OPTIONS,
+  LANGUAGE_STORY_VOICE_OPTIONS,
   languageLessonAudioButtonLabel,
   languageLessonAudioErrorMessage,
   languageLessonAudioKey,
@@ -20,6 +22,7 @@ import {
   languageLessonCreationReducer,
   languageLessonContentForVersion,
   languageLessonFilterEmptyMessage,
+  languageStoryVoiceChangeStopsPlayback,
   playExclusiveLanguageAudio,
   stopPlayableLanguageAudio,
   type LanguageLesson,
@@ -38,28 +41,53 @@ test("lesson audio UI builds positional requests without arbitrary text", () => 
     section: "phrases",
     index: 1,
   });
-  assert.deepEqual(languageLessonAudioRequest("original", "miniStory", 0), {
-    version: "original",
-    section: "miniStory",
-    index: 0,
-  });
-  assert.deepEqual(languageLessonAudioRequest("simplified", "miniStory", 0), {
-    version: "simplified",
-    section: "miniStory",
-    index: 0,
-  });
+  assert.deepEqual(
+    languageLessonAudioRequest("original", "miniStory", 0, "female"),
+    {
+      version: "original",
+      section: "miniStory",
+      index: 0,
+      voice: "female",
+    },
+  );
+  assert.deepEqual(
+    languageLessonAudioRequest("simplified", "miniStory", 0, "male"),
+    {
+      version: "simplified",
+      section: "miniStory",
+      index: 0,
+      voice: "male",
+    },
+  );
   assert.equal(
-    "text" in languageLessonAudioRequest("original", "miniStory", 0),
+    "text" in
+      languageLessonAudioRequest("original", "miniStory", 0, "female"),
     false,
   );
   assert.equal(
-    languageLessonAudioKey("original", "miniStory", 0),
-    "original:miniStory:0",
+    languageLessonAudioKey("original", "miniStory", 0, "female"),
+    "original:miniStory:0:female",
   );
   assert.equal(
-    languageLessonAudioKey("simplified", "miniStory", 0),
-    "simplified:miniStory:0",
+    languageLessonAudioKey("simplified", "miniStory", 0, "male"),
+    "simplified:miniStory:0:male",
   );
+  assert.throws(
+    () => languageLessonAudioRequest("original", "miniStory", 0),
+    /requires a voice/,
+  );
+  assert.throws(
+    () => languageLessonAudioRequest("original", "vocabulary", 0, "female"),
+    /only valid for mini story/,
+  );
+});
+
+test("story voice options are centralized and default to female", () => {
+  assert.equal(DEFAULT_LANGUAGE_STORY_VOICE, "female");
+  assert.deepEqual(LANGUAGE_STORY_VOICE_OPTIONS, [
+    { value: "male", label: "Hombre" },
+    { value: "female", label: "Mujer" },
+  ]);
 });
 
 test("mini story has concise accessible labels and a controlled unavailable error", () => {
@@ -89,10 +117,21 @@ test("mini story has concise accessible labels and a controlled unavailable erro
     }),
     "El audio de la mini historia todavía no está disponible para este idioma.",
   );
+  assert.equal(
+    languageLessonAudioErrorMessage(409, {
+      error: "LANGUAGE_STORY_AUDIO_VOICE_UNAVAILABLE",
+    }),
+    "La voz seleccionada todavía no está disponible.",
+  );
 });
 
 test("mini story shares toggle, stop and exclusive playback with vocabulary and phrases", async () => {
-  const miniStoryKey = languageLessonAudioKey("original", "miniStory", 0);
+  const miniStoryKey = languageLessonAudioKey(
+    "original",
+    "miniStory",
+    0,
+    "female",
+  );
   const events: string[] = [];
   const storyAudio = {
     currentTime: 9,
@@ -152,6 +191,49 @@ test("mini story shares toggle, stop and exclusive playback with vocabulary and 
   stopPlayableLanguageAudio(storyAudio);
   assert.equal(storyAudio.currentTime, 0);
   assert.equal(events.at(-1), "pause-story");
+});
+
+test("changing story voice stops only the visible mini story audio", () => {
+  const playingStory = {
+    key: languageLessonAudioKey("original", "miniStory", 0, "female"),
+    status: "playing" as const,
+    error: null,
+  };
+  const playingVocabulary = {
+    key: languageLessonAudioKey("original", "vocabulary", 0),
+    status: "playing" as const,
+    error: null,
+  };
+  const playingPhrase = {
+    key: languageLessonAudioKey("original", "phrases", 0),
+    status: "playing" as const,
+    error: null,
+  };
+
+  assert.equal(
+    languageStoryVoiceChangeStopsPlayback(
+      playingStory,
+      "original",
+      "female",
+    ),
+    true,
+  );
+  assert.equal(
+    languageStoryVoiceChangeStopsPlayback(
+      playingVocabulary,
+      "original",
+      "female",
+    ),
+    false,
+  );
+  assert.equal(
+    languageStoryVoiceChangeStopsPlayback(
+      playingPhrase,
+      "original",
+      "female",
+    ),
+    false,
+  );
 });
 
 test("language audio playback rate defaults to 1x and exposes only supported options", () => {
@@ -314,10 +396,14 @@ test("lesson audio controls use an accessible spinner and non-color playing cue"
   const generalReadyControls = component.match(
     /\{lesson\.status === "ready" && readyContent \? \([\s\S]*?<ReadyLesson/,
   )?.[0];
+  const storyVoiceHandler = component.match(
+    /function updateLanguageStoryVoice\([\s\S]*?\n  }/,
+  )?.[0];
 
   assert.ok(rateHandler);
   assert.ok(miniStorySection);
   assert.ok(generalReadyControls);
+  assert.ok(storyVoiceHandler);
   assert.doesNotMatch(rateHandler, /fetch|\.play\(/);
   assert.match(component, /className="lesson-audio-spinner"/);
   assert.match(component, /<StopIcon \/>/);
@@ -331,6 +417,11 @@ test("lesson audio controls use an accessible spinner and non-color playing cue"
     1,
   );
   assert.match(miniStorySection, /<LanguageAudioRateControl/);
+  assert.match(miniStorySection, /<LanguageStoryVoiceControl/);
+  assert.ok(
+    miniStorySection.indexOf("<LanguageStoryVoiceControl") <
+      miniStorySection.indexOf("<LanguageAudioRateControl"),
+  );
   assert.doesNotMatch(generalReadyControls, /lesson-audio-rate-control/);
   assert.match(component, /aria-pressed=\{playbackRate === option\.value\}/);
   assert.match(component, /audioElementRef\.current, playbackRate/);
@@ -343,6 +434,18 @@ test("lesson audio controls use an accessible spinner and non-color playing cue"
   assert.match(styles, /prefers-reduced-motion: reduce/);
   assert.match(styles, /width: 2\.65rem;[\s\S]*height: 2\.65rem;/);
   assert.match(styles, /\.lesson-section-actions/);
+  assert.equal(
+    component.match(/className="lesson-story-voice-selector"/g)?.length,
+    1,
+  );
+  assert.match(component, /aria-label="Voz de la mini historia"/);
+  assert.match(component, /aria-pressed=\{voice === option\.value\}/);
+  assert.match(
+    component,
+    /useState<LanguageStoryVoice>\(\s*DEFAULT_LANGUAGE_STORY_VOICE/,
+  );
+  assert.doesNotMatch(storyVoiceHandler, /fetch|\.play\(/);
+  assert.match(styles, /\.lesson-story-voice-selector/);
   assert.match(
     component,
     /<Link className="back-link lesson-back-link" href="\/languages">/,

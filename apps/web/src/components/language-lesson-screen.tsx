@@ -13,6 +13,7 @@ import {
   applyLanguageAudioPlaybackRate,
   canRegenerateLanguageLesson,
   DEFAULT_LANGUAGE_AUDIO_PLAYBACK_RATE,
+  DEFAULT_LANGUAGE_STORY_VOICE,
   formatLanguageLessonTitle,
   LANGUAGE_AUDIO_PLAYBACK_RATE_OPTIONS,
   languageLessonAudioButtonLabel,
@@ -22,7 +23,9 @@ import {
   languageLessonAudioStateAfterEnd,
   languageLessonAudioToggleAction,
   languageLessonContentForVersion,
+  languageStoryVoiceChangeStopsPlayback,
   LANGUAGE_LESSON_CONTENT_VERSION_OPTIONS,
+  LANGUAGE_STORY_VOICE_OPTIONS,
   playExclusiveLanguageAudio,
   stopPlayableLanguageAudio,
   type LanguageAudioPlaybackRate,
@@ -31,6 +34,7 @@ import {
   type LanguageLessonAudioSection,
   type LanguageLessonContentVersion,
   type LanguageProject,
+  type LanguageStoryVoice,
   type StructuredLanguageLesson,
 } from "@/lib/languages";
 import { useSessionGuard } from "@/lib/use-session-guard";
@@ -220,6 +224,36 @@ function LanguageAudioRateControl({
   );
 }
 
+function LanguageStoryVoiceControl({
+  voice,
+  onVoiceChange,
+}: {
+  voice: LanguageStoryVoice;
+  onVoiceChange: (voice: LanguageStoryVoice) => void;
+}) {
+  return (
+    <div className="lesson-story-voice-control">
+      <span className="lesson-story-control-label">Voz</span>
+      <div
+        aria-label="Voz de la mini historia"
+        className="lesson-story-voice-selector"
+        role="group"
+      >
+        {LANGUAGE_STORY_VOICE_OPTIONS.map((option) => (
+          <button
+            aria-pressed={voice === option.value}
+            key={option.value}
+            type="button"
+            onClick={() => onVoiceChange(option.value)}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function LessonSection({
   sectionIndex,
   sectionKey,
@@ -325,21 +359,25 @@ function ReadyLesson({
   copiedSection,
   audioPlayback,
   audioPlaybackRate,
+  storyVoice,
   onCopy,
   onPlayAudio,
   onPlaybackRateChange,
+  onStoryVoiceChange,
 }: {
   content: StructuredLanguageLesson;
   contentVersion: LanguageLessonContentVersion;
   copiedSection: LessonSectionKey | null;
   audioPlayback: LanguageLessonAudioPlayback | null;
   audioPlaybackRate: LanguageAudioPlaybackRate;
+  storyVoice: LanguageStoryVoice;
   onCopy: (sectionKey: LessonSectionKey) => void;
   onPlayAudio: (
     section: LanguageLessonAudioSection,
     index: number,
   ) => void;
   onPlaybackRateChange: (playbackRate: LanguageAudioPlaybackRate) => void;
+  onStoryVoiceChange: (voice: LanguageStoryVoice) => void;
 }) {
   return (
     <div className="lesson-sections">
@@ -437,7 +475,12 @@ function ReadyLesson({
             accessibleLabel="mini historia"
             playback={
               audioPlayback?.key ===
-              languageLessonAudioKey(contentVersion, "miniStory", 0)
+              languageLessonAudioKey(
+                contentVersion,
+                "miniStory",
+                0,
+                storyVoice,
+              )
                 ? audioPlayback
                 : null
             }
@@ -445,6 +488,10 @@ function ReadyLesson({
           />
         }
       >
+        <LanguageStoryVoiceControl
+          voice={storyVoice}
+          onVoiceChange={onStoryVoiceChange}
+        />
         <LanguageAudioRateControl
           playbackRate={audioPlaybackRate}
           onPlaybackRateChange={onPlaybackRateChange}
@@ -559,6 +606,9 @@ export function LanguageLessonScreen({
   >(null);
   const [contentVersion, setContentVersion] =
     useState<LanguageLessonContentVersion>("original");
+  const [storyVoice, setStoryVoice] = useState<LanguageStoryVoice>(
+    DEFAULT_LANGUAGE_STORY_VOICE,
+  );
   const [audioPlaybackRate, setAudioPlaybackRate] =
     useState<LanguageAudioPlaybackRate>(
       DEFAULT_LANGUAGE_AUDIO_PLAYBACK_RATE,
@@ -591,6 +641,23 @@ export function LanguageLessonScreen({
     audioPlaybackRateRef.current = playbackRate;
     setAudioPlaybackRate(playbackRate);
     applyLanguageAudioPlaybackRate(audioElementRef.current, playbackRate);
+  }
+
+  function updateLanguageStoryVoice(voice: LanguageStoryVoice) {
+    if (voice === storyVoice) return;
+
+    if (
+      languageStoryVoiceChangeStopsPlayback(
+        audioPlaybackRef.current,
+        contentVersion,
+        storyVoice,
+      )
+    ) {
+      stopLanguageAudio();
+      updateAudioPlayback(null);
+    }
+
+    setStoryVoice(voice);
   }
 
   function stopLanguageAudio() {
@@ -863,7 +930,8 @@ export function LanguageLessonScreen({
     section: LanguageLessonAudioSection,
     index: number,
   ) {
-    const key = languageLessonAudioKey(contentVersion, section, index);
+    const voice = section === "miniStory" ? storyVoice : undefined;
+    const key = languageLessonAudioKey(contentVersion, section, index, voice);
     const toggleAction = languageLessonAudioToggleAction(
       audioPlaybackRef.current,
       key,
@@ -893,7 +961,12 @@ export function LanguageLessonScreen({
           credentials: "include",
           headers: { "content-type": "application/json" },
           body: JSON.stringify(
-            languageLessonAudioRequest(contentVersion, section, index),
+            languageLessonAudioRequest(
+              contentVersion,
+              section,
+              index,
+              voice,
+            ),
           ),
           signal: controller.signal,
         },
@@ -1124,11 +1197,13 @@ export function LanguageLessonScreen({
             copiedSection={copiedSection}
             audioPlayback={audioPlayback}
             audioPlaybackRate={audioPlaybackRate}
+            storyVoice={storyVoice}
             onCopy={(sectionKey) => void copySection(sectionKey)}
             onPlayAudio={(section, index) =>
               void playLanguageAudio(section, index)
             }
             onPlaybackRateChange={updateLanguageAudioPlaybackRate}
+            onStoryVoiceChange={updateLanguageStoryVoice}
           />
         ) : null}
 

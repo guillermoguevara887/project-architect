@@ -5,8 +5,10 @@ import {
   getOrCreateLanguageAudio,
   languageLessonAudioRequestSchema,
   OPENAI_LANGUAGE_AUDIO_CONFIG,
+  isGermanStoryAudioLanguage,
   resolveGermanStoryAudioConfiguration,
   resolveLanguageLessonAudioText,
+  type LanguageAudioConfiguration,
   type LanguageAudioProvider,
 } from "./audio.js";
 import type { LanguageAudioStore } from "./audio-repository.js";
@@ -108,16 +110,28 @@ export function registerLanguageAudioRoutes(
         }
 
         const structuredContent = structuredLanguageLessonSchema.parse(content);
-        const configuration =
-          parsedInput.data.section === "miniStory"
-            ? resolveGermanStoryAudioConfiguration(project.language)
-            : OPENAI_LANGUAGE_AUDIO_CONFIG;
+        let configuration: LanguageAudioConfiguration | null =
+          OPENAI_LANGUAGE_AUDIO_CONFIG;
+
+        if (parsedInput.data.section === "miniStory") {
+          if (!isGermanStoryAudioLanguage(project.language)) {
+            return reply.code(409).send({
+              error: "LANGUAGE_STORY_AUDIO_UNAVAILABLE",
+              message:
+                "El audio de Mini historia no está disponible para este idioma.",
+            });
+          }
+
+          configuration = resolveGermanStoryAudioConfiguration(
+            project.language,
+            parsedInput.data.voice,
+          );
+        }
 
         if (!configuration) {
           return reply.code(409).send({
-            error: "LANGUAGE_STORY_AUDIO_UNAVAILABLE",
-            message:
-              "El audio de Mini historia no está disponible para este idioma.",
+            error: "LANGUAGE_STORY_AUDIO_VOICE_UNAVAILABLE",
+            message: "La voz seleccionada todavía no está disponible.",
           });
         }
 

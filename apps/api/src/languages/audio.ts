@@ -32,40 +32,71 @@ export const LANGUAGE_AUDIO_CONFIG = OPENAI_LANGUAGE_AUDIO_CONFIG;
 const ELEVENLABS_MODEL = "eleven_multilingual_v2";
 const ELEVENLABS_AUDIO_FORMAT = "mp3_44100_128";
 
-export function resolveGermanStoryAudioConfiguration(
-  language: string,
-  voiceId = process.env.ELEVENLABS_VOICE_ID_DE,
-): LanguageAudioConfiguration | null {
+export const languageStoryVoiceSchema = z.enum(["male", "female"]);
+export type LanguageStoryVoice = z.infer<typeof languageStoryVoiceSchema>;
+
+export function isGermanStoryAudioLanguage(language: string) {
   const normalizedLanguage = language
     .normalize("NFD")
     .replace(/\p{Diacritic}/gu, "")
     .trim()
     .toLocaleLowerCase("und");
 
-  if (
-    !["german", "deutsch", "aleman"].includes(normalizedLanguage) ||
-    !voiceId?.trim()
-  ) {
+  return ["german", "deutsch", "aleman"].includes(normalizedLanguage);
+}
+
+export function resolveGermanStoryAudioConfiguration(
+  language: string,
+  voice: LanguageStoryVoice,
+  voiceIds: Record<LanguageStoryVoice, string | undefined> = {
+    female: process.env.ELEVENLABS_VOICE_ID_DE_FEMALE,
+    male: process.env.ELEVENLABS_VOICE_ID_DE_MALE,
+  },
+): LanguageAudioConfiguration | null {
+  const voiceId = voiceIds[voice]?.trim();
+
+  if (!isGermanStoryAudioLanguage(language) || !voiceId) {
     return null;
   }
 
   return {
     provider: "elevenlabs",
     model: ELEVENLABS_MODEL,
-    voice: voiceId.trim(),
+    voice: voiceId,
     audioFormat: ELEVENLABS_AUDIO_FORMAT,
     fileExtension: "mp3",
     contentType: "audio/mpeg",
   };
 }
 
+const languageLessonAudioVersionSchema = z.enum(["original", "simplified"]);
+const languageLessonAudioIndexSchema = z.number().int().min(0);
+
 export const languageLessonAudioRequestSchema = z
-  .object({
-    version: z.enum(["original", "simplified"]),
-    section: z.enum(["vocabulary", "phrases", "miniStory"]),
-    index: z.number().int().min(0),
-  })
-  .strict()
+  .discriminatedUnion("section", [
+    z
+      .object({
+        version: languageLessonAudioVersionSchema,
+        section: z.literal("vocabulary"),
+        index: languageLessonAudioIndexSchema,
+      })
+      .strict(),
+    z
+      .object({
+        version: languageLessonAudioVersionSchema,
+        section: z.literal("phrases"),
+        index: languageLessonAudioIndexSchema,
+      })
+      .strict(),
+    z
+      .object({
+        version: languageLessonAudioVersionSchema,
+        section: z.literal("miniStory"),
+        index: languageLessonAudioIndexSchema,
+        voice: languageStoryVoiceSchema,
+      })
+      .strict(),
+  ])
   .superRefine((input, context) => {
     if (input.section === "miniStory" && input.index !== 0) {
       context.addIssue({

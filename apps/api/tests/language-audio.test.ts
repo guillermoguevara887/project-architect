@@ -4,6 +4,7 @@ import {
   ElevenLabsLanguageAudioProvider,
   languageAudioStorageKey,
   languageLessonAudioRequestSchema,
+  languageStoryVoiceSchema,
   normalizeLanguageAudioText,
   OPENAI_LANGUAGE_AUDIO_CONFIG,
   OpenAILanguageAudioProvider,
@@ -92,6 +93,7 @@ test("mini story is a safe index-zero target resolved from stored content", () =
       version: "original",
       section: "miniStory",
       index: 0,
+      voice: "female",
     }).success,
     true,
   );
@@ -100,6 +102,7 @@ test("mini story is a safe index-zero target resolved from stored content", () =
       version: "original",
       section: "miniStory",
       index: 1,
+      voice: "male",
     }).success,
     false,
   );
@@ -110,12 +113,45 @@ test("mini story is a safe index-zero target resolved from stored content", () =
     }),
     "Eine gespeicherte Geschichte.",
   );
+  assert.equal(languageStoryVoiceSchema.safeParse("male").success, true);
+  assert.equal(languageStoryVoiceSchema.safeParse("female").success, true);
+  assert.equal(languageStoryVoiceSchema.safeParse("other").success, false);
+  assert.equal(
+    languageLessonAudioRequestSchema.safeParse({
+      version: "original",
+      section: "miniStory",
+      index: 0,
+    }).success,
+    false,
+  );
+  assert.equal(
+    languageLessonAudioRequestSchema.safeParse({
+      version: "original",
+      section: "miniStory",
+      index: 0,
+      voice: "other",
+    }).success,
+    false,
+  );
+  assert.equal(
+    languageLessonAudioRequestSchema.safeParse({
+      version: "original",
+      section: "vocabulary",
+      index: 0,
+      voice: "female",
+    }).success,
+    false,
+  );
 });
 
 test("German language variants resolve to one ElevenLabs configuration", () => {
   const variants = ["German", " Deutsch ", "Alemán", "Aleman"];
+  const voiceIds = {
+    female: "female-voice-from-env",
+    male: "male-voice-from-env",
+  };
   const configurations = variants.map((language) =>
-    resolveGermanStoryAudioConfiguration(language, "voice-from-env"),
+    resolveGermanStoryAudioConfiguration(language, "female", voiceIds),
   );
 
   assert.ok(configurations.every(Boolean));
@@ -123,13 +159,72 @@ test("German language variants resolve to one ElevenLabs configuration", () => {
   assert.deepEqual(configurations[0], {
     provider: "elevenlabs",
     model: "eleven_multilingual_v2",
-    voice: "voice-from-env",
+    voice: "female-voice-from-env",
     audioFormat: "mp3_44100_128",
     fileExtension: "mp3",
     contentType: "audio/mpeg",
   });
-  assert.equal(resolveGermanStoryAudioConfiguration("Polaco", "voice"), null);
-  assert.equal(resolveGermanStoryAudioConfiguration("Alemán", "  "), null);
+  assert.equal(
+    resolveGermanStoryAudioConfiguration("Alemán", "male", voiceIds)?.voice,
+    "male-voice-from-env",
+  );
+  assert.equal(
+    resolveGermanStoryAudioConfiguration("Polaco", "female", voiceIds),
+    null,
+  );
+  assert.equal(
+    resolveGermanStoryAudioConfiguration("Alemán", "female", {
+      female: "  ",
+      male: "male-voice",
+    }),
+    null,
+  );
+  assert.equal(
+    resolveGermanStoryAudioConfiguration("Alemán", "male", {
+      female: "female-voice",
+      male: undefined,
+    }),
+    null,
+  );
+});
+
+test("female story cache identity stays historical while male uses another asset", () => {
+  const base = {
+    userId: "user-one",
+    language: "Alemán",
+    normalizedText: "Eine bekannte Geschichte.",
+  };
+  const voiceIds = {
+    female: "historic-female-voice",
+    male: "new-male-voice",
+  };
+  const femaleConfiguration = resolveGermanStoryAudioConfiguration(
+    "Alemán",
+    "female",
+    voiceIds,
+  );
+  const maleConfiguration = resolveGermanStoryAudioConfiguration(
+    "Alemán",
+    "male",
+    voiceIds,
+  );
+  assert.ok(femaleConfiguration);
+  assert.ok(maleConfiguration);
+
+  const femaleKey = languageAudioStorageKey({
+    ...base,
+    configuration: femaleConfiguration,
+  });
+  const maleKey = languageAudioStorageKey({
+    ...base,
+    configuration: maleConfiguration,
+  });
+
+  assert.equal(
+    femaleKey,
+    "language-audio/abc156285876fc490a65598e6eec906a0e8bd62413086e7b0fd1a2caf0f59a96.mp3",
+  );
+  assert.notEqual(maleKey, femaleKey);
 });
 
 test("ElevenLabs adapter sends the required German MP3 request", async () => {
@@ -151,7 +246,8 @@ test("ElevenLabs adapter sends the required German MP3 request", async () => {
   );
   const configuration = resolveGermanStoryAudioConfiguration(
     "Alemán",
-    "voice/from env",
+    "female",
+    { female: "voice/from env", male: "male-voice" },
   );
   assert.ok(configuration);
 
@@ -192,7 +288,11 @@ test("ElevenLabs adapter rejects non-success responses without reading the body"
     }),
     () => "secret-test-key",
   );
-  const configuration = resolveGermanStoryAudioConfiguration("German", "voice");
+  const configuration = resolveGermanStoryAudioConfiguration(
+    "German",
+    "male",
+    { female: "female-voice", male: "voice" },
+  );
   assert.ok(configuration);
 
   await assert.rejects(

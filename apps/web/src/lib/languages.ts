@@ -171,6 +171,16 @@ export type LanguageLessonAudioSection =
   | "phrases"
   | "miniStory";
 
+export const LANGUAGE_STORY_VOICE_OPTIONS = [
+  { value: "male", label: "Hombre" },
+  { value: "female", label: "Mujer" },
+] as const;
+
+export type LanguageStoryVoice =
+  (typeof LANGUAGE_STORY_VOICE_OPTIONS)[number]["value"];
+
+export const DEFAULT_LANGUAGE_STORY_VOICE: LanguageStoryVoice = "female";
+
 export const LANGUAGE_AUDIO_PLAYBACK_RATE_OPTIONS = [
   { value: 0.75, label: "0.75×" },
   { value: 1, label: "1×" },
@@ -194,7 +204,14 @@ export function languageLessonAudioKey(
   version: LanguageLessonContentVersion,
   section: LanguageLessonAudioSection,
   index: number,
+  voice?: LanguageStoryVoice,
 ) {
+  if (section === "miniStory") {
+    if (!voice) throw new Error("Mini story audio requires a voice.");
+    return `${version}:${section}:${index}:${voice}`;
+  }
+
+  if (voice) throw new Error("Voice is only valid for mini story audio.");
   return `${version}:${section}:${index}`;
 }
 
@@ -206,6 +223,16 @@ export function languageLessonAudioToggleAction(
   if (playback.status === "loading") return "ignore";
   if (playback.status === "playing") return "stop";
   return "play";
+}
+
+export function languageStoryVoiceChangeStopsPlayback(
+  playback: LanguageLessonAudioPlayback | null,
+  version: LanguageLessonContentVersion,
+  voice: LanguageStoryVoice,
+) {
+  return (
+    playback?.key === languageLessonAudioKey(version, "miniStory", 0, voice)
+  );
 }
 
 export function languageLessonAudioButtonLabel(
@@ -234,6 +261,13 @@ export function languageLessonAudioErrorMessage(
     return "El audio de la mini historia todavía no está disponible para este idioma.";
   }
 
+  if (
+    status === 409 &&
+    result.error === "LANGUAGE_STORY_AUDIO_VOICE_UNAVAILABLE"
+  ) {
+    return "La voz seleccionada todavía no está disponible.";
+  }
+
   return result.message ?? "No se pudo preparar la pronunciación.";
 }
 
@@ -248,7 +282,14 @@ export function languageLessonAudioRequest(
   version: LanguageLessonContentVersion,
   section: LanguageLessonAudioSection,
   index: number,
+  voice?: LanguageStoryVoice,
 ) {
+  if (section === "miniStory") {
+    if (!voice) throw new Error("Mini story audio requires a voice.");
+    return { version, section, index, voice };
+  }
+
+  if (voice) throw new Error("Voice is only valid for mini story audio.");
   return { version, section, index };
 }
 

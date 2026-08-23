@@ -46,7 +46,8 @@ import type {
 process.env.NODE_ENV = "test";
 process.env.AUTH_COOKIE_SECRET =
   "test-only-cookie-secret-with-more-than-thirty-two-characters";
-process.env.ELEVENLABS_VOICE_ID_DE = "test-german-voice";
+process.env.ELEVENLABS_VOICE_ID_DE_FEMALE = "test-german-female-voice";
+process.env.ELEVENLABS_VOICE_ID_DE_MALE = "test-german-male-voice";
 
 const firstUser: AuthUser = {
   id: "aaec2ea2-9130-4a70-b516-e187c994d119",
@@ -1666,7 +1667,7 @@ test("lesson audio rejects arbitrary text, unsupported sections and invalid inde
       project.id,
       lesson.id,
       cookie,
-      { version: "original", section: "miniStory", index: 1 },
+      { version: "original", section: "miniStory", index: 1, voice: "female" },
     );
     const invalidIndex = await requestLessonAudio(
       server,
@@ -1712,29 +1713,46 @@ test("German mini story uses ElevenLabs for original and simplified content and 
       project.id,
       lesson.id,
       cookie,
-      { version: "original", section: "miniStory", index: 0 },
+      { version: "original", section: "miniStory", index: 0, voice: "female" },
     );
     const cachedOriginal = await requestLessonAudio(
       server,
       project.id,
       lesson.id,
       cookie,
-      { version: "original", section: "miniStory", index: 0 },
+      { version: "original", section: "miniStory", index: 0, voice: "female" },
+    );
+    const maleOriginal = await requestLessonAudio(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      { version: "original", section: "miniStory", index: 0, voice: "male" },
     );
     const simplified = await requestLessonAudio(
       server,
       project.id,
       lesson.id,
       cookie,
-      { version: "simplified", section: "miniStory", index: 0 },
+      {
+        version: "simplified",
+        section: "miniStory",
+        index: 0,
+        voice: "female",
+      },
     );
 
     assert.equal(original.statusCode, 200);
     assert.equal(cachedOriginal.statusCode, 200);
     assert.equal(cachedOriginal.body, "ID3");
+    assert.equal(maleOriginal.statusCode, 200);
     assert.equal(simplified.statusCode, 200);
     assert.equal(audioProvider.calls.length, 0);
     assert.deepEqual(elevenLabsProvider.calls, [
+      {
+        text: "Lukas ist müde, aber morgen muss er früh aufstehen.",
+        language: "Deutsch",
+      },
       {
         text: "Lukas ist müde, aber morgen muss er früh aufstehen.",
         language: "Deutsch",
@@ -1749,20 +1767,24 @@ test("German mini story uses ElevenLabs for original and simplified content and 
         (configuration) =>
           configuration.provider === "elevenlabs" &&
           configuration.model === "eleven_multilingual_v2" &&
-          configuration.voice === "test-german-voice" &&
+          ["test-german-female-voice", "test-german-male-voice"].includes(
+            configuration.voice,
+          ) &&
           configuration.audioFormat === "mp3_44100_128" &&
           configuration.fileExtension === "mp3",
       ),
     );
-    assert.equal(audioStorage.puts.length, 2);
+    assert.equal(audioStorage.puts.length, 3);
     assert.equal(audioStorage.gets.length, 1);
-    assert.equal(audioStore.assets.length, 2);
+    assert.equal(audioStore.assets.length, 3);
     assert.ok(
       audioStore.assets.every(
         (asset) =>
           asset.provider === "elevenlabs" &&
           asset.model === "eleven_multilingual_v2" &&
-          asset.voice === "test-german-voice" &&
+          ["test-german-female-voice", "test-german-male-voice"].includes(
+            asset.voice,
+          ) &&
           asset.audioFormat === "mp3_44100_128" &&
           /^language-audio\/[a-f0-9]{64}\.mp3$/.test(asset.storageKey),
       ),
@@ -1786,7 +1808,7 @@ test("mini story in an unconfigured language returns controlled 409 without prov
       project.id,
       lesson.id,
       cookie,
-      { version: "original", section: "miniStory", index: 0 },
+      { version: "original", section: "miniStory", index: 0, voice: "female" },
     );
 
     assert.equal(response.statusCode, 409);
@@ -1795,6 +1817,63 @@ test("mini story in an unconfigured language returns controlled 409 without prov
     assert.equal(elevenLabsProvider.calls.length, 0);
   } finally {
     await server.close();
+  }
+});
+
+test("missing selected German voice returns controlled 409 without voice or provider fallback", async () => {
+  const dependencies = testServer();
+  const cookie = sessionCookie(firstUser.id);
+  const femaleVoice = process.env.ELEVENLABS_VOICE_ID_DE_FEMALE;
+  const maleVoice = process.env.ELEVENLABS_VOICE_ID_DE_MALE;
+
+  try {
+    const project = await createProject(dependencies.server, cookie, "Alemán");
+    const lesson = await createLesson(
+      dependencies.server,
+      project.id,
+      cookie,
+    );
+    await processLesson(dependencies.server, project.id, lesson.id, cookie);
+
+    delete process.env.ELEVENLABS_VOICE_ID_DE_FEMALE;
+    const unavailableFemale = await requestLessonAudio(
+      dependencies.server,
+      project.id,
+      lesson.id,
+      cookie,
+      { version: "original", section: "miniStory", index: 0, voice: "female" },
+    );
+    process.env.ELEVENLABS_VOICE_ID_DE_FEMALE = femaleVoice;
+    delete process.env.ELEVENLABS_VOICE_ID_DE_MALE;
+    const unavailableMale = await requestLessonAudio(
+      dependencies.server,
+      project.id,
+      lesson.id,
+      cookie,
+      { version: "original", section: "miniStory", index: 0, voice: "male" },
+    );
+
+    assert.equal(unavailableFemale.statusCode, 409);
+    assert.equal(
+      unavailableFemale.json().error,
+      "LANGUAGE_STORY_AUDIO_VOICE_UNAVAILABLE",
+    );
+    assert.equal(unavailableMale.statusCode, 409);
+    assert.equal(
+      unavailableMale.json().error,
+      "LANGUAGE_STORY_AUDIO_VOICE_UNAVAILABLE",
+    );
+    assert.equal(dependencies.audioProvider.calls.length, 0);
+    assert.equal(dependencies.elevenLabsProvider.calls.length, 0);
+    assert.equal(dependencies.audioStore.assets.length, 0);
+  } finally {
+    if (femaleVoice) {
+      process.env.ELEVENLABS_VOICE_ID_DE_FEMALE = femaleVoice;
+    }
+    if (maleVoice) {
+      process.env.ELEVENLABS_VOICE_ID_DE_MALE = maleVoice;
+    }
+    await dependencies.server.close();
   }
 });
 
@@ -1817,7 +1896,7 @@ test("ElevenLabs failure marks mini story audio failed without storing an object
       project.id,
       lesson.id,
       cookie,
-      { version: "original", section: "miniStory", index: 0 },
+      { version: "original", section: "miniStory", index: 0, voice: "male" },
     );
 
     assert.equal(response.statusCode, 502);
