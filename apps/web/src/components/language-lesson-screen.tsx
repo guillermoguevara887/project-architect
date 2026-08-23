@@ -16,6 +16,7 @@ import {
   formatLanguageLessonTitle,
   LANGUAGE_AUDIO_PLAYBACK_RATE_OPTIONS,
   languageLessonAudioButtonLabel,
+  languageLessonAudioErrorMessage,
   languageLessonAudioKey,
   languageLessonAudioRequest,
   languageLessonAudioStateAfterEnd,
@@ -141,10 +142,12 @@ function StopIcon() {
 
 function LessonAudioButton({
   text,
+  accessibleLabel,
   playback,
   onPlay,
 }: {
   text: string;
+  accessibleLabel?: string;
   playback: LanguageLessonAudioPlayback | null;
   onPlay: () => void;
 }) {
@@ -155,7 +158,11 @@ function LessonAudioButton({
   return (
     <>
       <button
-        aria-label={languageLessonAudioButtonLabel(text, status)}
+        aria-label={languageLessonAudioButtonLabel(
+          text,
+          status,
+          accessibleLabel,
+        )}
         aria-pressed={playing}
         aria-busy={loading}
         className="lesson-audio-button"
@@ -187,6 +194,7 @@ function LessonSection({
   title,
   copied,
   onCopy,
+  headerAction,
   children,
 }: {
   sectionIndex: number;
@@ -194,6 +202,7 @@ function LessonSection({
   title: string;
   copied: boolean;
   onCopy: (sectionKey: LessonSectionKey) => void;
+  headerAction?: ReactNode;
   children: ReactNode;
 }) {
   const variant = lessonSectionVariant(sectionIndex);
@@ -209,15 +218,18 @@ function LessonSection({
           {sectionKey === "vocabulary" ? <BookOpenIcon /> : null}
           <span>{title}</span>
         </h2>
-        <button
-          className="copy-button"
-          type="button"
-          onClick={() => onCopy(sectionKey)}
-          aria-label={copied ? `${title} copiado` : `Copiar ${title}`}
-        >
-          <CopyIcon />
-          <span>{copied ? "Copiado" : "Copiar"}</span>
-        </button>
+        <div className="lesson-section-actions">
+          {headerAction}
+          <button
+            className="copy-button"
+            type="button"
+            onClick={() => onCopy(sectionKey)}
+            aria-label={copied ? `${title} copiado` : `Copiar ${title}`}
+          >
+            <CopyIcon />
+            <span>{copied ? "Copiado" : "Copiar"}</span>
+          </button>
+        </div>
       </header>
       <div className="lesson-section-content">{children}</div>
     </section>
@@ -383,6 +395,19 @@ function ReadyLesson({
         title="Mini historia"
         copied={copiedSection === "miniStory"}
         onCopy={onCopy}
+        headerAction={
+          <LessonAudioButton
+            text={content.miniStory.text}
+            accessibleLabel="mini historia"
+            playback={
+              audioPlayback?.key ===
+              languageLessonAudioKey(contentVersion, "miniStory", 0)
+                ? audioPlayback
+                : null
+            }
+            onPlay={() => onPlayAudio("miniStory", 0)}
+          />
+        }
       >
         <p className="lesson-reading-text">{content.miniStory.text}</p>
       </LessonSection>
@@ -842,9 +867,12 @@ export function LanguageLessonScreen({
       }
 
       if (!response.ok) {
-        const result = (await response.json()) as { message?: string };
+        const result = (await response.json()) as {
+          error?: string;
+          message?: string;
+        };
         throw new Error(
-          result.message ?? "No se pudo preparar la pronunciación.",
+          languageLessonAudioErrorMessage(response.status, result),
         );
       }
 

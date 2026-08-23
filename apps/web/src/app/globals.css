@@ -1313,6 +1313,26 @@ button:disabled {
   overflow-wrap: anywhere;
 }
 
+.lesson-section-actions {
+  display: flex;
+  min-width: 0;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.55rem;
+}
+
+.lesson-section-actions .lesson-audio-error {
+  order: 2;
+  width: 100%;
+  flex-basis: 100%;
+  margin: 0;
+  color: #b42318;
+  font-size: 0.78rem;
+  text-align: right;
+}
+
 .lesson-section-icon {
   width: 1.25rem;
   height: 1.25rem;
@@ -1763,6 +1783,16 @@ button:disabled {
   .lesson-section-header {
     align-items: flex-start;
     flex-wrap: wrap;
+  }
+
+  .lesson-section-actions {
+    width: 100%;
+    max-width: 100%;
+    justify-content: flex-start;
+  }
+
+  .lesson-section-actions .lesson-audio-error {
+    text-align: left;
   }
 
   .lesson-section {

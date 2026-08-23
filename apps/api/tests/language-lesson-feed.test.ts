@@ -12,6 +12,7 @@ import {
   LANGUAGE_AUDIO_PLAYBACK_RATE_OPTIONS,
   LANGUAGE_LESSON_SOURCE_OPTIONS,
   languageLessonAudioButtonLabel,
+  languageLessonAudioErrorMessage,
   languageLessonAudioKey,
   languageLessonAudioRequest,
   languageLessonAudioStateAfterEnd,
@@ -37,6 +38,120 @@ test("lesson audio UI builds positional requests without arbitrary text", () => 
     section: "phrases",
     index: 1,
   });
+  assert.deepEqual(languageLessonAudioRequest("original", "miniStory", 0), {
+    version: "original",
+    section: "miniStory",
+    index: 0,
+  });
+  assert.deepEqual(languageLessonAudioRequest("simplified", "miniStory", 0), {
+    version: "simplified",
+    section: "miniStory",
+    index: 0,
+  });
+  assert.equal(
+    "text" in languageLessonAudioRequest("original", "miniStory", 0),
+    false,
+  );
+  assert.equal(
+    languageLessonAudioKey("original", "miniStory", 0),
+    "original:miniStory:0",
+  );
+  assert.equal(
+    languageLessonAudioKey("simplified", "miniStory", 0),
+    "simplified:miniStory:0",
+  );
+});
+
+test("mini story has concise accessible labels and a controlled unavailable error", () => {
+  const story =
+    "Lukas ist müde, aber morgen muss er sehr früh aufstehen und zur Arbeit gehen.";
+
+  assert.equal(
+    languageLessonAudioButtonLabel(story, "idle", "mini historia"),
+    "Reproducir mini historia",
+  );
+  assert.equal(
+    languageLessonAudioButtonLabel(story, "loading", "mini historia"),
+    "Preparando mini historia",
+  );
+  assert.equal(
+    languageLessonAudioButtonLabel(story, "playing", "mini historia"),
+    "Detener mini historia",
+  );
+  assert.doesNotMatch(
+    languageLessonAudioButtonLabel(story, "idle", "mini historia"),
+    /Lukas/,
+  );
+  assert.equal(
+    languageLessonAudioErrorMessage(409, {
+      error: "LANGUAGE_STORY_AUDIO_UNAVAILABLE",
+      message: "Provider message",
+    }),
+    "El audio de la mini historia todavía no está disponible para este idioma.",
+  );
+});
+
+test("mini story shares toggle, stop and exclusive playback with vocabulary and phrases", async () => {
+  const miniStoryKey = languageLessonAudioKey("original", "miniStory", 0);
+  const events: string[] = [];
+  const storyAudio = {
+    currentTime: 9,
+    playbackRate: 1,
+    pause() {
+      events.push("pause-story");
+    },
+    async play() {
+      events.push("play-story");
+    },
+  };
+  const vocabularyAudio = {
+    currentTime: 0,
+    playbackRate: 1,
+    pause() {
+      events.push("pause-vocabulary");
+    },
+    async play() {
+      events.push("play-vocabulary");
+    },
+  };
+  const phraseAudio = {
+    currentTime: 0,
+    playbackRate: 1,
+    pause() {
+      events.push("pause-phrase");
+    },
+    async play() {
+      events.push("play-phrase");
+    },
+  };
+
+  assert.equal(languageLessonAudioToggleAction(null, miniStoryKey), "play");
+  assert.equal(
+    languageLessonAudioToggleAction(
+      { key: miniStoryKey, status: "playing", error: null },
+      miniStoryKey,
+    ),
+    "stop",
+  );
+  await playExclusiveLanguageAudio(null, storyAudio, 0.75);
+  assert.equal(storyAudio.playbackRate, 0.75);
+  await playExclusiveLanguageAudio(storyAudio, vocabularyAudio, 1);
+  await playExclusiveLanguageAudio(vocabularyAudio, storyAudio, 0.75);
+  await playExclusiveLanguageAudio(storyAudio, phraseAudio, 0.75);
+  assert.deepEqual(events, [
+    "play-story",
+    "pause-story",
+    "play-vocabulary",
+    "pause-vocabulary",
+    "play-story",
+    "pause-story",
+    "play-phrase",
+  ]);
+  assert.equal(storyAudio.currentTime, 0);
+
+  stopPlayableLanguageAudio(storyAudio);
+  assert.equal(storyAudio.currentTime, 0);
+  assert.equal(events.at(-1), "pause-story");
 });
 
 test("language audio playback rate defaults to 1x and exposes only supported options", () => {
@@ -199,6 +314,10 @@ test("lesson audio controls use an accessible spinner and non-color playing cue"
   assert.match(component, /className="lesson-audio-spinner"/);
   assert.match(component, /<StopIcon \/>/);
   assert.match(component, /aria-busy=\{loading\}/);
+  assert.match(component, /accessibleLabel="mini historia"/);
+  assert.match(component, /onPlay=\{\(\) => onPlayAudio\("miniStory", 0\)\}/);
+  assert.match(component, /headerAction=\{/);
+  assert.doesNotMatch(component, /autoPlay|autoplay/);
   assert.equal(
     component.match(/className="lesson-audio-rate-selector"/g)?.length,
     1,
@@ -213,6 +332,23 @@ test("lesson audio controls use an accessible spinner and non-color playing cue"
   assert.match(styles, /@keyframes lesson-audio-pulse/);
   assert.match(styles, /prefers-reduced-motion: reduce/);
   assert.match(styles, /width: 2\.65rem;[\s\S]*height: 2\.65rem;/);
+  assert.match(styles, /\.lesson-section-actions/);
+});
+
+test("switching lesson version stops playback without autoplay or generation", async () => {
+  const component = await readFile(
+    new URL(
+      "../../web/src/components/language-lesson-screen.tsx",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  const versionHandler = component.match(
+    /onClick=\{\(\) => \{\s*stopLanguageAudio\(\);\s*updateAudioPlayback\(null\);\s*setContentVersion\(option\.value\);[\s\S]*?\}\}/,
+  )?.[0];
+
+  assert.ok(versionHandler);
+  assert.doesNotMatch(versionHandler, /fetch|playLanguageAudio|\.play\(/);
 });
 
 test("lesson audio UI starts the selected audio and stops the previous one", async () => {

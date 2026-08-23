@@ -166,7 +166,10 @@ export const LANGUAGE_LESSON_CONTENT_VERSION_OPTIONS = [
 export type LanguageLessonContentVersion =
   (typeof LANGUAGE_LESSON_CONTENT_VERSION_OPTIONS)[number]["value"];
 
-export type LanguageLessonAudioSection = "vocabulary" | "phrases";
+export type LanguageLessonAudioSection =
+  | "vocabulary"
+  | "phrases"
+  | "miniStory";
 
 export const LANGUAGE_AUDIO_PLAYBACK_RATE_OPTIONS = [
   { value: 0.75, label: "0.75×" },
@@ -208,16 +211,30 @@ export function languageLessonAudioToggleAction(
 export function languageLessonAudioButtonLabel(
   text: string,
   status: LanguageLessonAudioPlayback["status"] | "idle",
+  accessibleLabel?: string,
 ) {
+  const target = accessibleLabel ?? `pronunciación de ${text}`;
+
   if (status === "loading") {
-    return `Preparando pronunciación de ${text}`;
+    return `Preparando ${target}`;
   }
 
   if (status === "playing") {
-    return `Detener pronunciación de ${text}`;
+    return `Detener ${target}`;
   }
 
-  return `Reproducir pronunciación de ${text}`;
+  return `Reproducir ${target}`;
+}
+
+export function languageLessonAudioErrorMessage(
+  status: number,
+  result: { error?: string; message?: string },
+) {
+  if (status === 409 && result.error === "LANGUAGE_STORY_AUDIO_UNAVAILABLE") {
+    return "El audio de la mini historia todavía no está disponible para este idioma.";
+  }
+
+  return result.message ?? "No se pudo preparar la pronunciación.";
 }
 
 export function languageLessonAudioStateAfterEnd(
