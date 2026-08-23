@@ -91,6 +91,13 @@ export const languageLessonAudioRequestSchema = z
     z
       .object({
         version: languageLessonAudioVersionSchema,
+        section: z.literal("automaticThoughts"),
+        index: languageLessonAudioIndexSchema,
+      })
+      .strict(),
+    z
+      .object({
+        version: languageLessonAudioVersionSchema,
         section: z.literal("miniStory"),
         index: languageLessonAudioIndexSchema,
         voice: languageStoryVoiceSchema,
@@ -135,6 +142,10 @@ export function resolveLanguageLessonAudioText(
 
   if (target.section === "miniStory") {
     return target.index === 0 ? content.miniStory.text : null;
+  }
+
+  if (target.section === "automaticThoughts") {
+    return content.automaticThoughts[target.index]?.text ?? null;
   }
 
   return content.phrases[target.index]?.text ?? null;

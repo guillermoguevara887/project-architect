@@ -7,6 +7,7 @@ import {
   createLanguageLessonSubmissionGuard,
   DEFAULT_LANGUAGE_AUDIO_PLAYBACK_RATE,
   DEFAULT_LANGUAGE_STORY_VOICE,
+  downloadLanguageAudioBlob,
   filterLanguageLessons,
   formatLanguageLessonTitle,
   INITIAL_LANGUAGE_LESSON_CREATION_STATE,
@@ -22,6 +23,8 @@ import {
   languageLessonCreationReducer,
   languageLessonContentForVersion,
   languageLessonFilterEmptyMessage,
+  languageStoryAudioDownloadDisabled,
+  languageStoryAudioDownloadFilename,
   languageStoryVoiceChangeStopsPlayback,
   playExclusiveLanguageAudio,
   stopPlayableLanguageAudio,
@@ -41,6 +44,14 @@ test("lesson audio UI builds positional requests without arbitrary text", () => 
     section: "phrases",
     index: 1,
   });
+  assert.deepEqual(
+    languageLessonAudioRequest("original", "automaticThoughts", 2),
+    {
+      version: "original",
+      section: "automaticThoughts",
+      index: 2,
+    },
+  );
   assert.deepEqual(
     languageLessonAudioRequest("original", "miniStory", 0, "female"),
     {
@@ -72,12 +83,30 @@ test("lesson audio UI builds positional requests without arbitrary text", () => 
     languageLessonAudioKey("simplified", "miniStory", 0, "male"),
     "simplified:miniStory:0:male",
   );
+  assert.equal(
+    languageLessonAudioKey("original", "automaticThoughts", 0),
+    "original:automaticThoughts:0",
+  );
+  assert.equal(
+    languageLessonAudioKey("simplified", "automaticThoughts", 1),
+    "simplified:automaticThoughts:1",
+  );
   assert.throws(
     () => languageLessonAudioRequest("original", "miniStory", 0),
     /requires a voice/,
   );
   assert.throws(
     () => languageLessonAudioRequest("original", "vocabulary", 0, "female"),
+    /only valid for mini story/,
+  );
+  assert.throws(
+    () =>
+      languageLessonAudioRequest(
+        "original",
+        "automaticThoughts",
+        0,
+        "male",
+      ),
     /only valid for mini story/,
   );
 });
@@ -191,6 +220,180 @@ test("mini story shares toggle, stop and exclusive playback with vocabulary and 
   stopPlayableLanguageAudio(storyAudio);
   assert.equal(storyAudio.currentTime, 0);
   assert.equal(events.at(-1), "pause-story");
+});
+
+test("automatic thoughts share play, stop, exclusivity and playback rate", async () => {
+  const thoughtKey = languageLessonAudioKey(
+    "original",
+    "automaticThoughts",
+    1,
+  );
+  const events: string[] = [];
+  const storyAudio = {
+    currentTime: 6,
+    playbackRate: 1,
+    pause() {
+      events.push("pause-story");
+    },
+    async play() {
+      events.push("play-story");
+    },
+  };
+  const thoughtAudio = {
+    currentTime: 4,
+    playbackRate: 1,
+    pause() {
+      events.push("pause-thought");
+    },
+    async play() {
+      events.push("play-thought");
+    },
+  };
+  const vocabularyAudio = {
+    currentTime: 0,
+    playbackRate: 1,
+    pause() {
+      events.push("pause-vocabulary");
+    },
+    async play() {
+      events.push("play-vocabulary");
+    },
+  };
+  const phraseAudio = {
+    currentTime: 0,
+    playbackRate: 1,
+    pause() {
+      events.push("pause-phrase");
+    },
+    async play() {
+      events.push("play-phrase");
+    },
+  };
+
+  await playExclusiveLanguageAudio(storyAudio, thoughtAudio, 0.75);
+  assert.equal(thoughtAudio.playbackRate, 0.75);
+  assert.equal(storyAudio.currentTime, 0);
+  assert.equal(
+    languageLessonAudioToggleAction(
+      { key: thoughtKey, status: "playing", error: null },
+      thoughtKey,
+    ),
+    "stop",
+  );
+  stopPlayableLanguageAudio(thoughtAudio);
+  assert.equal(thoughtAudio.currentTime, 0);
+  await playExclusiveLanguageAudio(thoughtAudio, vocabularyAudio, 1);
+  await playExclusiveLanguageAudio(vocabularyAudio, thoughtAudio, 0.75);
+  await playExclusiveLanguageAudio(thoughtAudio, phraseAudio, 1);
+  assert.deepEqual(events, [
+    "pause-story",
+    "play-thought",
+    "pause-thought",
+    "pause-thought",
+    "play-vocabulary",
+    "pause-vocabulary",
+    "play-thought",
+    "pause-thought",
+    "play-phrase",
+  ]);
+});
+
+test("mini story download uses a safe filename and revokes its object URL", () => {
+  const filename = languageStoryAudioDownloadFilename(
+    "Alemán avanzado",
+    "simplified",
+    "female",
+  );
+  const events: string[] = [];
+  const anchor = {
+    href: "",
+    download: "",
+    click() {
+      events.push("click");
+    },
+    remove() {
+      events.push("remove");
+    },
+  };
+
+  downloadLanguageAudioBlob(new Blob(["ID3"], { type: "audio/mpeg" }), filename, {
+    createObjectURL() {
+      events.push("create");
+      return "blob:private-audio";
+    },
+    revokeObjectURL(url) {
+      events.push(`revoke:${url}`);
+    },
+    createAnchor() {
+      return anchor;
+    },
+    appendAnchor() {
+      events.push("append");
+    },
+    scheduleCleanup(callback) {
+      events.push("schedule");
+      callback();
+    },
+  });
+
+  assert.equal(
+    filename,
+    "memoos-aleman-avanzado-mini-historia-simplificada-mujer.mp3",
+  );
+  assert.doesNotMatch(filename, /[0-9a-f]{8}-[0-9a-f-]{27,}|voice/i);
+  assert.equal(anchor.href, "blob:private-audio");
+  assert.equal(anchor.download, filename);
+  assert.deepEqual(events, [
+    "create",
+    "append",
+    "click",
+    "remove",
+    "schedule",
+    "revoke:blob:private-audio",
+  ]);
+  assert.equal(
+    languageStoryAudioDownloadFilename("Deutsch", "original", "male"),
+    "memoos-deutsch-mini-historia-original-hombre.mp3",
+  );
+});
+
+test("story download blocks duplicate loading and only matching story generation", () => {
+  const storyKey = languageLessonAudioKey(
+    "original",
+    "miniStory",
+    0,
+    "female",
+  );
+
+  assert.equal(languageStoryAudioDownloadDisabled(true, null, storyKey), true);
+  assert.equal(
+    languageStoryAudioDownloadDisabled(
+      false,
+      { key: storyKey, status: "loading", error: null },
+      storyKey,
+    ),
+    true,
+  );
+  assert.equal(
+    languageStoryAudioDownloadDisabled(
+      false,
+      {
+        key: languageLessonAudioKey("original", "vocabulary", 0),
+        status: "loading",
+        error: null,
+      },
+      storyKey,
+    ),
+    false,
+  );
+  assert.equal(
+    languageStoryAudioDownloadDisabled(
+      false,
+      { key: storyKey, status: "playing", error: null },
+      storyKey,
+    ),
+    false,
+  );
 });
 
 test("changing story voice stops only the visible mini story audio", () => {
@@ -393,17 +596,25 @@ test("lesson audio controls use an accessible spinner and non-color playing cue"
   const miniStorySection = component.match(
     /sectionKey="miniStory"[\s\S]*?<\/LessonSection>/,
   )?.[0];
+  const automaticThoughtsSection = component.match(
+    /sectionKey="automaticThoughts"[\s\S]*?<\/LessonSection>/,
+  )?.[0];
   const generalReadyControls = component.match(
     /\{lesson\.status === "ready" && readyContent \? \([\s\S]*?<ReadyLesson/,
   )?.[0];
   const storyVoiceHandler = component.match(
     /function updateLanguageStoryVoice\([\s\S]*?\n  }/,
   )?.[0];
+  const storyDownloadHandler = component.match(
+    /async function downloadMiniStoryAudio\([\s\S]*?\n  }/,
+  )?.[0];
 
   assert.ok(rateHandler);
   assert.ok(miniStorySection);
+  assert.ok(automaticThoughtsSection);
   assert.ok(generalReadyControls);
   assert.ok(storyVoiceHandler);
+  assert.ok(storyDownloadHandler);
   assert.doesNotMatch(rateHandler, /fetch|\.play\(/);
   assert.match(component, /className="lesson-audio-spinner"/);
   assert.match(component, /<StopIcon \/>/);
@@ -418,6 +629,20 @@ test("lesson audio controls use an accessible spinner and non-color playing cue"
   );
   assert.match(miniStorySection, /<LanguageAudioRateControl/);
   assert.match(miniStorySection, /<LanguageStoryVoiceControl/);
+  assert.equal(
+    component.match(/className="lesson-story-download-button"/g)?.length,
+    1,
+  );
+  assert.match(miniStorySection, /Descargar MP3/);
+  assert.match(miniStorySection, /Preparando descarga…/);
+  assert.match(miniStorySection, /onClick=\{onDownloadStory\}/);
+  assert.doesNotMatch(automaticThoughtsSection, /Descargar MP3|DownloadIcon/);
+  assert.doesNotMatch(component.match(/sectionKey="vocabulary"[\s\S]*?<\/LessonSection>/)?.[0] ?? "", /Descargar MP3/);
+  assert.doesNotMatch(component.match(/sectionKey="phrases"[\s\S]*?<\/LessonSection>/)?.[0] ?? "", /Descargar MP3/);
+  assert.match(
+    automaticThoughtsSection,
+    /onPlay=\{\(\) => onPlayAudio\("automaticThoughts", index\)\}/,
+  );
   assert.ok(
     miniStorySection.indexOf("<LanguageStoryVoiceControl") <
       miniStorySection.indexOf("<LanguageAudioRateControl"),
@@ -445,7 +670,21 @@ test("lesson audio controls use an accessible spinner and non-color playing cue"
     /useState<LanguageStoryVoice>\(\s*DEFAULT_LANGUAGE_STORY_VOICE/,
   );
   assert.doesNotMatch(storyVoiceHandler, /fetch|\.play\(/);
+  assert.match(
+    storyDownloadHandler,
+    /languageLessonAudioRequest\(version, "miniStory", 0, voice\)/,
+  );
+  assert.match(storyDownloadHandler, /response\.blob\(\)/);
+  assert.match(storyDownloadHandler, /storyDownloadLoadingRef\.current/);
+  assert.match(storyDownloadHandler, /languageStoryAudioDownloadDisabled/);
+  assert.match(storyDownloadHandler, /languageLessonAudioErrorMessage/);
+  assert.doesNotMatch(
+    storyDownloadHandler,
+    /\.play\(|playLanguageAudio|stopLanguageAudio|playbackRate|storageKey|VOICE_ID|ELEVENLABS|text:/,
+  );
   assert.match(styles, /\.lesson-story-voice-selector/);
+  assert.match(styles, /\.lesson-story-download-button/);
+  assert.match(styles, /\.lesson-thought-audio-item/);
   assert.match(
     component,
     /<Link className="back-link lesson-back-link" href="\/languages">/,

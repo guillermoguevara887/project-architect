@@ -169,6 +169,7 @@ export type LanguageLessonContentVersion =
 export type LanguageLessonAudioSection =
   | "vocabulary"
   | "phrases"
+  | "automaticThoughts"
   | "miniStory";
 
 export const LANGUAGE_STORY_VOICE_OPTIONS = [
@@ -291,6 +292,72 @@ export function languageLessonAudioRequest(
 
   if (voice) throw new Error("Voice is only valid for mini story audio.");
   return { version, section, index };
+}
+
+export function languageStoryAudioDownloadFilename(
+  language: string,
+  version: LanguageLessonContentVersion,
+  voice: LanguageStoryVoice,
+) {
+  const languageSlug = language
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLocaleLowerCase("und")
+    .replace(/[^a-z0-9]+/gu, "-")
+    .replace(/^-+|-+$/gu, "");
+  const versionLabel = version === "simplified" ? "simplificada" : "original";
+  const voiceLabel = voice === "female" ? "mujer" : "hombre";
+
+  return `memoos-${languageSlug || "idioma"}-mini-historia-${versionLabel}-${voiceLabel}.mp3`;
+}
+
+export function languageStoryAudioDownloadDisabled(
+  downloadLoading: boolean,
+  playback: LanguageLessonAudioPlayback | null,
+  storyKey: string,
+) {
+  return (
+    downloadLoading ||
+    (playback?.key === storyKey && playback.status === "loading")
+  );
+}
+
+type LanguageAudioDownloadAnchor = {
+  href: string;
+  download: string;
+  click(): void;
+  remove(): void;
+};
+
+export function downloadLanguageAudioBlob(
+  blob: Blob,
+  filename: string,
+  environment: {
+    createObjectURL(blob: Blob): string;
+    revokeObjectURL(url: string): void;
+    createAnchor(): LanguageAudioDownloadAnchor;
+    appendAnchor(anchor: LanguageAudioDownloadAnchor): void;
+    scheduleCleanup(callback: () => void): void;
+  } = {
+    createObjectURL: (audioBlob) => URL.createObjectURL(audioBlob),
+    revokeObjectURL: (url) => URL.revokeObjectURL(url),
+    createAnchor: () => document.createElement("a"),
+    appendAnchor: (anchor) => document.body.append(anchor as HTMLAnchorElement),
+    scheduleCleanup: (callback) => window.setTimeout(callback, 1_000),
+  },
+) {
+  const objectUrl = environment.createObjectURL(blob);
+  const anchor = environment.createAnchor();
+  anchor.href = objectUrl;
+  anchor.download = filename;
+  environment.appendAnchor(anchor);
+
+  try {
+    anchor.click();
+  } finally {
+    anchor.remove();
+    environment.scheduleCleanup(() => environment.revokeObjectURL(objectUrl));
+  }
 }
 
 export type PlayableLanguageAudio = {

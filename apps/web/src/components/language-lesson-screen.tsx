@@ -14,6 +14,7 @@ import {
   canRegenerateLanguageLesson,
   DEFAULT_LANGUAGE_AUDIO_PLAYBACK_RATE,
   DEFAULT_LANGUAGE_STORY_VOICE,
+  downloadLanguageAudioBlob,
   formatLanguageLessonTitle,
   LANGUAGE_AUDIO_PLAYBACK_RATE_OPTIONS,
   languageLessonAudioButtonLabel,
@@ -23,6 +24,8 @@ import {
   languageLessonAudioStateAfterEnd,
   languageLessonAudioToggleAction,
   languageLessonContentForVersion,
+  languageStoryAudioDownloadDisabled,
+  languageStoryAudioDownloadFilename,
   languageStoryVoiceChangeStopsPlayback,
   LANGUAGE_LESSON_CONTENT_VERSION_OPTIONS,
   LANGUAGE_STORY_VOICE_OPTIONS,
@@ -140,6 +143,26 @@ function StopIcon() {
       viewBox="0 0 20 20"
     >
       <rect fill="currentColor" height="7" rx="1.4" width="7" x="6.5" y="6.5" />
+    </svg>
+  );
+}
+
+function DownloadIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="lesson-story-download-icon"
+      fill="none"
+      focusable="false"
+      viewBox="0 0 20 20"
+    >
+      <path
+        d="M10 3.5v8m0 0 3-3m-3 3-3-3M4 13.5v1.25A1.75 1.75 0 0 0 5.75 16.5h8.5A1.75 1.75 0 0 0 16 14.75V13.5"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.5"
+      />
     </svg>
   );
 }
@@ -360,7 +383,9 @@ function ReadyLesson({
   audioPlayback,
   audioPlaybackRate,
   storyVoice,
+  storyDownload,
   onCopy,
+  onDownloadStory,
   onPlayAudio,
   onPlaybackRateChange,
   onStoryVoiceChange,
@@ -371,7 +396,9 @@ function ReadyLesson({
   audioPlayback: LanguageLessonAudioPlayback | null;
   audioPlaybackRate: LanguageAudioPlaybackRate;
   storyVoice: LanguageStoryVoice;
+  storyDownload: { loading: boolean; error: string | null };
   onCopy: (sectionKey: LessonSectionKey) => void;
+  onDownloadStory: () => void;
   onPlayAudio: (
     section: LanguageLessonAudioSection,
     index: number,
@@ -379,6 +406,20 @@ function ReadyLesson({
   onPlaybackRateChange: (playbackRate: LanguageAudioPlaybackRate) => void;
   onStoryVoiceChange: (voice: LanguageStoryVoice) => void;
 }) {
+  const storyAudioKey = languageLessonAudioKey(
+    contentVersion,
+    "miniStory",
+    0,
+    storyVoice,
+  );
+  const storyPlayback =
+    audioPlayback?.key === storyAudioKey ? audioPlayback : null;
+  const storyDownloadDisabled = languageStoryAudioDownloadDisabled(
+    storyDownload.loading,
+    audioPlayback,
+    storyAudioKey,
+  );
+
   return (
     <div className="lesson-sections">
       <LessonSection
@@ -470,22 +511,28 @@ function ReadyLesson({
         copied={copiedSection === "miniStory"}
         onCopy={onCopy}
         headerAction={
-          <LessonAudioButton
-            text={content.miniStory.text}
-            accessibleLabel="mini historia"
-            playback={
-              audioPlayback?.key ===
-              languageLessonAudioKey(
-                contentVersion,
-                "miniStory",
-                0,
-                storyVoice,
-              )
-                ? audioPlayback
-                : null
-            }
-            onPlay={() => onPlayAudio("miniStory", 0)}
-          />
+          <>
+            <LessonAudioButton
+              text={content.miniStory.text}
+              accessibleLabel="mini historia"
+              playback={storyPlayback}
+              onPlay={() => onPlayAudio("miniStory", 0)}
+            />
+            <button
+              aria-busy={storyDownload.loading}
+              className="lesson-story-download-button"
+              disabled={storyDownloadDisabled}
+              type="button"
+              onClick={onDownloadStory}
+            >
+              <DownloadIcon />
+              <span>
+                {storyDownload.loading
+                  ? "Preparando descarga…"
+                  : "Descargar MP3"}
+              </span>
+            </button>
+          </>
         }
       >
         <LanguageStoryVoiceControl
@@ -496,6 +543,11 @@ function ReadyLesson({
           playbackRate={audioPlaybackRate}
           onPlaybackRateChange={onPlaybackRateChange}
         />
+        {storyDownload.error ? (
+          <p className="lesson-story-download-error" role="alert">
+            {storyDownload.error}
+          </p>
+        ) : null}
         <p className="lesson-reading-text">{content.miniStory.text}</p>
       </LessonSection>
 
@@ -508,7 +560,25 @@ function ReadyLesson({
       >
         <ol className="lesson-numbered-list">
           {content.automaticThoughts.map((thought, index) => (
-            <li key={`${thought.text}-${index}`}>{thought.text}</li>
+            <li key={`${thought.text}-${index}`}>
+              <div className="lesson-thought-audio-item">
+                <span>{thought.text}</span>
+                <LessonAudioButton
+                  text={thought.text}
+                  playback={
+                    audioPlayback?.key ===
+                    languageLessonAudioKey(
+                      contentVersion,
+                      "automaticThoughts",
+                      index,
+                    )
+                      ? audioPlayback
+                      : null
+                  }
+                  onPlay={() => onPlayAudio("automaticThoughts", index)}
+                />
+              </div>
+            </li>
           ))}
         </ol>
       </LessonSection>
@@ -621,6 +691,11 @@ export function LanguageLessonScreen({
     useState<LessonSectionKey | null>(null);
   const [audioPlayback, setAudioPlayback] =
     useState<LanguageLessonAudioPlayback | null>(null);
+  const [storyDownload, setStoryDownload] = useState<{
+    loading: boolean;
+    error: string | null;
+  }>({ loading: false, error: null });
+  const storyDownloadLoadingRef = useRef(false);
   const audioPlaybackRef = useRef<LanguageLessonAudioPlayback | null>(null);
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
   const audioObjectUrlRef = useRef<string | null>(null);
@@ -1049,6 +1124,73 @@ export function LanguageLessonScreen({
     }
   }
 
+  async function downloadMiniStoryAudio() {
+    if (storyDownloadLoadingRef.current || !project) return;
+
+    const version = contentVersion;
+    const voice = storyVoice;
+    const storyKey = languageLessonAudioKey(version, "miniStory", 0, voice);
+
+    if (
+      languageStoryAudioDownloadDisabled(
+        false,
+        audioPlaybackRef.current,
+        storyKey,
+      )
+    ) {
+      return;
+    }
+
+    storyDownloadLoadingRef.current = true;
+    setStoryDownload({ loading: true, error: null });
+
+    try {
+      const response = await fetch(
+        `/api/languages/projects/${encodeURIComponent(projectId)}/lessons/${encodeURIComponent(lessonId)}/audio`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(
+            languageLessonAudioRequest(version, "miniStory", 0, voice),
+          ),
+        },
+      );
+
+      if (response.status === 401) {
+        setStoryDownload({ loading: false, error: null });
+        router.replace("/");
+        return;
+      }
+
+      if (!response.ok) {
+        const result = (await response.json()) as {
+          error?: string;
+          message?: string;
+        };
+        throw new Error(
+          languageLessonAudioErrorMessage(response.status, result),
+        );
+      }
+
+      downloadLanguageAudioBlob(
+        await response.blob(),
+        languageStoryAudioDownloadFilename(project.language, version, voice),
+      );
+      setStoryDownload({ loading: false, error: null });
+    } catch (error) {
+      setStoryDownload({
+        loading: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "No se pudo descargar el audio. Intenta nuevamente.",
+      });
+    } finally {
+      storyDownloadLoadingRef.current = false;
+    }
+  }
+
   if (!authorized || (!lesson && !loadError)) {
     return (
       <main className="flow-shell">
@@ -1198,7 +1340,9 @@ export function LanguageLessonScreen({
             audioPlayback={audioPlayback}
             audioPlaybackRate={audioPlaybackRate}
             storyVoice={storyVoice}
+            storyDownload={storyDownload}
             onCopy={(sectionKey) => void copySection(sectionKey)}
+            onDownloadStory={() => void downloadMiniStoryAudio()}
             onPlayAudio={(section, index) =>
               void playLanguageAudio(section, index)
             }

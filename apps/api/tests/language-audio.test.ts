@@ -144,6 +144,78 @@ test("mini story is a safe index-zero target resolved from stored content", () =
   );
 });
 
+test("automatic thoughts are strict positional OpenAI targets", () => {
+  const content = {
+    vocabulary: [],
+    phrases: [],
+    patterns: [],
+    miniStory: { text: "Eine gespeicherte Geschichte." },
+    automaticThoughts: [
+      { text: "Ich muss heute früh anfangen." },
+      { text: "Ich habe genug Zeit." },
+    ],
+    dialogue: [],
+    nextLevelBridge: [],
+    review: { keyVocabulary: [], keyPatterns: [] },
+  } satisfies StructuredLanguageLesson;
+
+  assert.equal(
+    languageLessonAudioRequestSchema.safeParse({
+      version: "original",
+      section: "automaticThoughts",
+      index: 0,
+    }).success,
+    true,
+  );
+  assert.equal(
+    languageLessonAudioRequestSchema.safeParse({
+      version: "simplified",
+      section: "automaticThoughts",
+      index: 1,
+    }).success,
+    true,
+  );
+  assert.equal(
+    languageLessonAudioRequestSchema.safeParse({
+      version: "original",
+      section: "automaticThoughts",
+      index: 0,
+      voice: "female",
+    }).success,
+    false,
+  );
+  assert.equal(
+    languageLessonAudioRequestSchema.safeParse({
+      version: "original",
+      section: "automaticThoughts",
+      index: 0,
+      text: "Texto arbitrario",
+    }).success,
+    false,
+  );
+  assert.equal(
+    resolveLanguageLessonAudioText(content, {
+      section: "automaticThoughts",
+      index: 0,
+    }),
+    "Ich muss heute früh anfangen.",
+  );
+  assert.equal(
+    resolveLanguageLessonAudioText(content, {
+      section: "automaticThoughts",
+      index: 1,
+    }),
+    "Ich habe genug Zeit.",
+  );
+  assert.equal(
+    resolveLanguageLessonAudioText(content, {
+      section: "automaticThoughts",
+      index: 2,
+    }),
+    null,
+  );
+});
+
 test("German language variants resolve to one ElevenLabs configuration", () => {
   const variants = ["German", " Deutsch ", "Alemán", "Aleman"];
   const voiceIds = {

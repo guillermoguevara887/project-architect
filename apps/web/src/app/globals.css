@@ -1142,7 +1142,8 @@ button:disabled {
 .lesson-simplify-button:focus-visible,
 .lesson-version-selector button:focus-visible,
 .lesson-audio-rate-selector button:focus-visible,
-.lesson-story-voice-selector button:focus-visible {
+.lesson-story-voice-selector button:focus-visible,
+.lesson-story-download-button:focus-visible {
   outline: 3px solid rgb(14 165 164 / 22%);
   outline-offset: 0.15rem;
 }
@@ -1420,6 +1421,41 @@ button:disabled {
   flex: 0 0 auto;
 }
 
+.lesson-story-download-button {
+  display: inline-flex;
+  min-height: 2.75rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.75rem;
+  border: 1px solid var(--lesson-section-border);
+  background: #fff;
+  box-shadow: none;
+  color: var(--lesson-section-accent);
+  font-size: 0.82rem;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.lesson-story-download-button:hover:not(:disabled) {
+  border-color: var(--lesson-section-accent);
+  background: color-mix(in srgb, var(--lesson-section-accent) 8%, #fff);
+}
+
+.lesson-story-download-icon {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
+}
+
+.lesson-story-download-error {
+  margin: -0.2rem 0 0.9rem;
+  color: #b42318;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
 .lesson-section-content {
   min-width: 0;
   margin-top: 1.25rem;
@@ -1649,6 +1685,27 @@ button:disabled {
   margin-top: 0;
 }
 
+.lesson-thought-audio-item {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.55rem 0.75rem;
+}
+
+.lesson-thought-audio-item > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.lesson-thought-audio-item .lesson-audio-error {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #b42318;
+  font-size: 0.78rem;
+}
+
 .lesson-dialogue {
   display: grid;
   gap: 0.75rem;
@@ -1843,6 +1900,10 @@ button:disabled {
 
   .lesson-section-actions .lesson-audio-error {
     text-align: left;
+  }
+
+  .lesson-story-download-button {
+    flex: 1 1 auto;
   }
 
   .lesson-section {

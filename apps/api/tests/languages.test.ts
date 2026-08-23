@@ -1585,14 +1585,18 @@ test("regeneration errors preserve the original and previous simplification", as
   }
 });
 
-test("lesson audio resolves only vocabulary terms and phrase text using the project language", async () => {
-  const { audioProvider, server } = testServer();
+test("lesson audio resolves vocabulary, phrases and automatic thoughts using OpenAI", async () => {
+  const { store, audioProvider, elevenLabsProvider, server } = testServer();
   const cookie = sessionCookie(firstUser.id);
 
   try {
     const project = await createProject(server, cookie);
     const lesson = await createLesson(server, project.id, cookie);
     await processLesson(server, project.id, lesson.id, cookie);
+    const storedLesson = store.lessons.find(({ id }) => id === lesson.id);
+    assert.ok(storedLesson);
+    storedLesson.simplifiedStructuredContent = simplifiedLesson;
+    storedLesson.simplifiedAt = new Date();
 
     const vocabulary = await requestLessonAudio(
       server,
@@ -1608,20 +1612,93 @@ test("lesson audio resolves only vocabulary terms and phrase text using the proj
       cookie,
       { version: "original", section: "phrases", index: 0 },
     );
+    const automaticThought = await requestLessonAudio(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      { version: "original", section: "automaticThoughts", index: 0 },
+    );
+    const simplifiedAutomaticThought = await requestLessonAudio(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      { version: "simplified", section: "automaticThoughts", index: 0 },
+    );
 
     assert.equal(vocabulary.statusCode, 200);
     assert.equal(phrase.statusCode, 200);
+    assert.equal(automaticThought.statusCode, 200);
+    assert.equal(simplifiedAutomaticThought.statusCode, 200);
     assert.deepEqual(audioProvider.calls, [
       { text: "müde", language: "Alemán" },
       { text: "Ich muss früh aufstehen.", language: "Alemán" },
+      { text: "Ich bin sehr müde.", language: "Alemán" },
+      { text: "Ich bin müde.", language: "Alemán" },
     ]);
+    assert.ok(
+      audioProvider.configurations.every(
+        (configuration) =>
+          configuration.provider === "openai" &&
+          configuration.model === "gpt-4o-mini-tts" &&
+          configuration.voice === "coral" &&
+          configuration.audioFormat === "mp3" &&
+          configuration.fileExtension === "mp3",
+      ),
+    );
+    assert.equal(elevenLabsProvider.calls.length, 0);
     assert.ok(
       audioProvider.calls.every(
         ({ text }) =>
           text !== "cansado" &&
-          text !== "Ich bin müde." &&
           text !== "Tengo que levantarme temprano.",
       ),
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("automatic thoughts reuse the existing OpenAI cache and private storage", async () => {
+  const { store, audioStore, audioProvider, audioStorage, server } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+
+  try {
+    const project = await createProject(server, cookie);
+    const lesson = await createLesson(server, project.id, cookie);
+    await processLesson(server, project.id, lesson.id, cookie);
+    const storedLesson = store.lessons.find(({ id }) => id === lesson.id);
+    assert.ok(storedLesson?.structuredContent);
+    storedLesson.structuredContent.automaticThoughts[0] = {
+      text: storedLesson.structuredContent.phrases[0]?.text ?? "",
+    };
+
+    const phrase = await requestLessonAudio(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      { version: "original", section: "phrases", index: 0 },
+    );
+    const cachedThought = await requestLessonAudio(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      { version: "original", section: "automaticThoughts", index: 0 },
+    );
+
+    assert.equal(phrase.statusCode, 200);
+    assert.equal(cachedThought.statusCode, 200);
+    assert.equal(audioProvider.calls.length, 1);
+    assert.equal(audioStorage.puts.length, 1);
+    assert.equal(audioStorage.gets.length, 1);
+    assert.equal(audioStore.assets.length, 1);
+    assert.equal(audioStore.assets[0]?.provider, "openai");
+    assert.match(
+      audioStore.assets[0]?.storageKey ?? "",
+      /^language-audio\/[a-f0-9]{64}\.mp3$/,
     );
   } finally {
     await server.close();
@@ -1676,12 +1753,37 @@ test("lesson audio rejects arbitrary text, unsupported sections and invalid inde
       cookie,
       { version: "original", section: "phrases", index: 99 },
     );
+    const automaticThoughtWithVoice = await requestLessonAudio(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      {
+        version: "original",
+        section: "automaticThoughts",
+        index: 0,
+        voice: "female",
+      },
+    );
+    const missingAutomaticThought = await requestLessonAudio(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      { version: "original", section: "automaticThoughts", index: 99 },
+    );
 
     assert.equal(unauthenticated.statusCode, 401);
     assert.equal(arbitraryText.statusCode, 400);
     assert.equal(unsupportedSection.statusCode, 400);
     assert.equal(invalidMiniStoryIndex.statusCode, 400);
     assert.equal(invalidIndex.statusCode, 400);
+    assert.equal(automaticThoughtWithVoice.statusCode, 400);
+    assert.equal(missingAutomaticThought.statusCode, 400);
+    assert.equal(
+      missingAutomaticThought.json().error,
+      "INVALID_LANGUAGE_AUDIO_TARGET",
+    );
     assert.equal(audioProvider.calls.length, 0);
   } finally {
     await server.close();
