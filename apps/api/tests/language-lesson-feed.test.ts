@@ -2,11 +2,14 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
+  applyLanguageAudioPlaybackRate,
   canRegenerateLanguageLesson,
   createLanguageLessonSubmissionGuard,
+  DEFAULT_LANGUAGE_AUDIO_PLAYBACK_RATE,
   filterLanguageLessons,
   formatLanguageLessonTitle,
   INITIAL_LANGUAGE_LESSON_CREATION_STATE,
+  LANGUAGE_AUDIO_PLAYBACK_RATE_OPTIONS,
   LANGUAGE_LESSON_SOURCE_OPTIONS,
   languageLessonAudioButtonLabel,
   languageLessonAudioKey,
@@ -34,6 +37,72 @@ test("lesson audio UI builds positional requests without arbitrary text", () => 
     section: "phrases",
     index: 1,
   });
+});
+
+test("language audio playback rate defaults to 1x and exposes only supported options", () => {
+  assert.equal(DEFAULT_LANGUAGE_AUDIO_PLAYBACK_RATE, 1);
+  assert.deepEqual(LANGUAGE_AUDIO_PLAYBACK_RATE_OPTIONS, [
+    { value: 0.75, label: "0.75×" },
+    { value: 1, label: "1×" },
+  ]);
+});
+
+test("changing playback rate updates current audio without fetching or playing", () => {
+  let playCalls = 0;
+  const audio = {
+    currentTime: 4,
+    playbackRate: 1,
+    pause() {},
+    async play() {
+      playCalls += 1;
+    },
+  };
+
+  applyLanguageAudioPlaybackRate(audio, 0.75);
+
+  assert.equal(audio.playbackRate, 0.75);
+  assert.equal(audio.currentTime, 4);
+  assert.equal(playCalls, 0);
+});
+
+test("new original and simplified audio use the shared selected rate", async () => {
+  const observedRates: number[] = [];
+  const selectedRate = 0.75;
+  const original = {
+    currentTime: 0,
+    playbackRate: 1,
+    pause() {},
+    async play() {
+      observedRates.push(this.playbackRate);
+    },
+  };
+  const simplified = {
+    currentTime: 0,
+    playbackRate: 1,
+    pause() {},
+    async play() {
+      observedRates.push(this.playbackRate);
+    },
+  };
+
+  await playExclusiveLanguageAudio(null, original, selectedRate);
+  assert.equal(
+    languageLessonAudioStateAfterEnd(
+      {
+        key: languageLessonAudioKey("original", "vocabulary", 0),
+        status: "playing",
+        error: null,
+      },
+      languageLessonAudioKey("original", "vocabulary", 0),
+    ),
+    null,
+  );
+  stopPlayableLanguageAudio(original);
+  await playExclusiveLanguageAudio(null, simplified, selectedRate);
+
+  assert.deepEqual(observedRates, [0.75, 0.75]);
+  assert.equal(original.currentTime, 0);
+  assert.equal(simplified.playbackRate, selectedRate);
 });
 
 test("lesson audio idle, loading and playing states expose the correct action", () => {
@@ -65,6 +134,7 @@ test("a second click stops the same audio without requesting it again", () => {
   const key = languageLessonAudioKey("original", "phrases", 0);
   const audio = {
     currentTime: 7,
+    playbackRate: 0.75,
     paused: false,
     pause() {
       this.paused = true;
@@ -120,10 +190,25 @@ test("lesson audio controls use an accessible spinner and non-color playing cue"
     new URL("../../web/src/app/globals.css", import.meta.url),
     "utf8",
   );
+  const rateHandler = component.match(
+    /function updateLanguageAudioPlaybackRate\([\s\S]*?\n  }/,
+  )?.[0];
 
+  assert.ok(rateHandler);
+  assert.doesNotMatch(rateHandler, /fetch|\.play\(/);
   assert.match(component, /className="lesson-audio-spinner"/);
   assert.match(component, /<StopIcon \/>/);
   assert.match(component, /aria-busy=\{loading\}/);
+  assert.equal(
+    component.match(/className="lesson-audio-rate-selector"/g)?.length,
+    1,
+  );
+  assert.match(component, /aria-pressed=\{audioPlaybackRate === option\.value\}/);
+  assert.match(component, /audioElementRef\.current, playbackRate/);
+  assert.match(
+    component,
+    /useState<LanguageAudioPlaybackRate>\(\s*DEFAULT_LANGUAGE_AUDIO_PLAYBACK_RATE/,
+  );
   assert.match(styles, /@keyframes lesson-audio-spin/);
   assert.match(styles, /@keyframes lesson-audio-pulse/);
   assert.match(styles, /prefers-reduced-motion: reduce/);
@@ -134,6 +219,7 @@ test("lesson audio UI starts the selected audio and stops the previous one", asy
   const events: string[] = [];
   const previous = {
     currentTime: 8,
+    playbackRate: 1,
     pause() {
       events.push("pause-previous");
     },
@@ -143,6 +229,7 @@ test("lesson audio UI starts the selected audio and stops the previous one", asy
   };
   const next = {
     currentTime: 0,
+    playbackRate: 1,
     pause() {
       events.push("pause-next");
     },
@@ -151,8 +238,9 @@ test("lesson audio UI starts the selected audio and stops the previous one", asy
     },
   };
 
-  assert.equal(await playExclusiveLanguageAudio(previous, next), next);
+  assert.equal(await playExclusiveLanguageAudio(previous, next, 0.75), next);
   assert.equal(previous.currentTime, 0);
+  assert.equal(next.playbackRate, 0.75);
   assert.deepEqual(events, ["pause-previous", "play-next"]);
   assert.equal(
     languageLessonAudioToggleAction(

@@ -10,8 +10,11 @@ import {
   type ReactNode,
 } from "react";
 import {
+  applyLanguageAudioPlaybackRate,
   canRegenerateLanguageLesson,
+  DEFAULT_LANGUAGE_AUDIO_PLAYBACK_RATE,
   formatLanguageLessonTitle,
+  LANGUAGE_AUDIO_PLAYBACK_RATE_OPTIONS,
   languageLessonAudioButtonLabel,
   languageLessonAudioKey,
   languageLessonAudioRequest,
@@ -21,6 +24,7 @@ import {
   LANGUAGE_LESSON_CONTENT_VERSION_OPTIONS,
   playExclusiveLanguageAudio,
   stopPlayableLanguageAudio,
+  type LanguageAudioPlaybackRate,
   type LanguageLesson,
   type LanguageLessonAudioPlayback,
   type LanguageLessonAudioSection,
@@ -490,6 +494,13 @@ export function LanguageLessonScreen({
   >(null);
   const [contentVersion, setContentVersion] =
     useState<LanguageLessonContentVersion>("original");
+  const [audioPlaybackRate, setAudioPlaybackRate] =
+    useState<LanguageAudioPlaybackRate>(
+      DEFAULT_LANGUAGE_AUDIO_PLAYBACK_RATE,
+    );
+  const audioPlaybackRateRef = useRef<LanguageAudioPlaybackRate>(
+    DEFAULT_LANGUAGE_AUDIO_PLAYBACK_RATE,
+  );
   const [deleting, setDeleting] = useState(false);
   const [copiedSection, setCopiedSection] =
     useState<LessonSectionKey | null>(null);
@@ -507,6 +518,14 @@ export function LanguageLessonScreen({
   ) {
     audioPlaybackRef.current = playback;
     setAudioPlayback(playback);
+  }
+
+  function updateLanguageAudioPlaybackRate(
+    playbackRate: LanguageAudioPlaybackRate,
+  ) {
+    audioPlaybackRateRef.current = playbackRate;
+    setAudioPlaybackRate(playbackRate);
+    applyLanguageAudioPlaybackRate(audioElementRef.current, playbackRate);
   }
 
   function stopLanguageAudio() {
@@ -857,7 +876,11 @@ export function LanguageLessonScreen({
           });
         }
       };
-      await playExclusiveLanguageAudio(previousAudio, audio);
+      await playExclusiveLanguageAudio(
+        previousAudio,
+        audio,
+        audioPlaybackRateRef.current,
+      );
 
       if (requestId === audioRequestIdRef.current) {
         updateAudioPlayback({ key, status: "playing", error: null });
@@ -1017,6 +1040,32 @@ export function LanguageLessonScreen({
                   : "Simplificar lección"}
               </button>
             )}
+          </div>
+        ) : null}
+
+        {lesson.status === "ready" && readyContent ? (
+          <div className="lesson-audio-rate-control">
+            <span className="lesson-audio-rate-label" id="audio-rate-label">
+              Velocidad
+            </span>
+            <div
+              aria-labelledby="audio-rate-label"
+              className="lesson-audio-rate-selector"
+              role="group"
+            >
+              {LANGUAGE_AUDIO_PLAYBACK_RATE_OPTIONS.map((option) => (
+                <button
+                  aria-pressed={audioPlaybackRate === option.value}
+                  key={option.value}
+                  type="button"
+                  onClick={() =>
+                    updateLanguageAudioPlaybackRate(option.value)
+                  }
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
           </div>
         ) : null}
 

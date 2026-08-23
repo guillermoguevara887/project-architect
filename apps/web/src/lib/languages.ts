@@ -168,6 +168,17 @@ export type LanguageLessonContentVersion =
 
 export type LanguageLessonAudioSection = "vocabulary" | "phrases";
 
+export const LANGUAGE_AUDIO_PLAYBACK_RATE_OPTIONS = [
+  { value: 0.75, label: "0.75×" },
+  { value: 1, label: "1×" },
+] as const;
+
+export type LanguageAudioPlaybackRate =
+  (typeof LANGUAGE_AUDIO_PLAYBACK_RATE_OPTIONS)[number]["value"];
+
+export const DEFAULT_LANGUAGE_AUDIO_PLAYBACK_RATE: LanguageAudioPlaybackRate =
+  1;
+
 export type LanguageLessonAudioPlayback = {
   key: string;
   status: "loading" | "playing" | "error";
@@ -226,9 +237,18 @@ export function languageLessonAudioRequest(
 
 export type PlayableLanguageAudio = {
   currentTime: number;
+  playbackRate: number;
   pause(): void;
   play(): Promise<void>;
 };
+
+export function applyLanguageAudioPlaybackRate(
+  audio: Pick<PlayableLanguageAudio, "playbackRate"> | null,
+  playbackRate: LanguageAudioPlaybackRate,
+) {
+  if (!audio) return;
+  audio.playbackRate = playbackRate;
+}
 
 export function stopPlayableLanguageAudio(
   audio: PlayableLanguageAudio | null,
@@ -241,11 +261,14 @@ export function stopPlayableLanguageAudio(
 export async function playExclusiveLanguageAudio(
   current: PlayableLanguageAudio | null,
   next: PlayableLanguageAudio,
+  playbackRate: LanguageAudioPlaybackRate =
+    DEFAULT_LANGUAGE_AUDIO_PLAYBACK_RATE,
 ) {
   if (current && current !== next) {
     stopPlayableLanguageAudio(current);
   }
 
+  applyLanguageAudioPlaybackRate(next, playbackRate);
   await next.play();
   return next;
 }
