@@ -5,8 +5,8 @@ import {
   getOrCreateLanguageAudio,
   languageLessonAudioRequestSchema,
   OPENAI_LANGUAGE_AUDIO_CONFIG,
-  isGermanStoryAudioLanguage,
-  resolveGermanStoryAudioConfiguration,
+  resolveLanguageStoryAudioConfiguration,
+  resolveLanguageStoryAudioLanguage,
   resolveLanguageLessonAudioText,
   type LanguageAudioConfiguration,
   type LanguageAudioProvider,
@@ -114,7 +114,7 @@ export function registerLanguageAudioRoutes(
           OPENAI_LANGUAGE_AUDIO_CONFIG;
 
         if (parsedInput.data.section === "miniStory") {
-          if (!isGermanStoryAudioLanguage(project.language)) {
+          if (!resolveLanguageStoryAudioLanguage(project.language)) {
             return reply.code(409).send({
               error: "LANGUAGE_STORY_AUDIO_UNAVAILABLE",
               message:
@@ -122,7 +122,7 @@ export function registerLanguageAudioRoutes(
             });
           }
 
-          configuration = resolveGermanStoryAudioConfiguration(
+          configuration = resolveLanguageStoryAudioConfiguration(
             project.language,
             parsedInput.data.voice,
           );

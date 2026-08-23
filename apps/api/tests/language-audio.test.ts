@@ -8,8 +8,9 @@ import {
   normalizeLanguageAudioText,
   OPENAI_LANGUAGE_AUDIO_CONFIG,
   OpenAILanguageAudioProvider,
-  resolveGermanStoryAudioConfiguration,
   resolveLanguageLessonAudioText,
+  resolveLanguageStoryAudioConfiguration,
+  resolveLanguageStoryAudioLanguage,
 } from "../src/languages/audio.js";
 import type { StructuredLanguageLesson } from "../src/languages/contracts.js";
 import {
@@ -216,69 +217,106 @@ test("automatic thoughts are strict positional OpenAI targets", () => {
   );
 });
 
-test("German language variants resolve to one ElevenLabs configuration", () => {
-  const variants = ["German", " Deutsch ", "Alemán", "Aleman"];
-  const voiceIds = {
-    female: "female-voice-from-env",
-    male: "male-voice-from-env",
-  };
-  const configurations = variants.map((language) =>
-    resolveGermanStoryAudioConfiguration(language, "female", voiceIds),
+test("story audio language aliases resolve to canonical codes", () => {
+  const aliases = [
+    ["de", ["German", " Deutsch ", "Alemán", "Aleman"]],
+    ["en", ["English", "Inglés", "Ingles"]],
+    ["fr", ["French", "Français", "Francais", "Francés", "Frances"]],
+    ["pl", ["Polish", "Polski", "Polaco"]],
+    ["ja", ["Japanese", "Japonés", "Japones", "日本語"]],
+    ["it", ["Italian", "Italiano"]],
+    ["pt", ["Portuguese", "Português", "Portugues", "Portugués"]],
+    ["tr", ["Turkish", "Türkçe", "Turkce", "Turco"]],
+    ["vi", ["Vietnamese", "Tiếng Việt", "Tieng Viet", "Vietnamita"]],
+    ["no", ["Norwegian", "Norsk", "Noruego"]],
+  ] as const;
+
+  for (const [expectedCode, languageAliases] of aliases) {
+    for (const alias of languageAliases) {
+      assert.equal(resolveLanguageStoryAudioLanguage(alias), expectedCode);
+    }
+  }
+
+  assert.equal(resolveLanguageStoryAudioLanguage("Klingon"), null);
+});
+
+test("story audio configuration maps every language and gender at runtime", () => {
+  const languages = [
+    ["de", "Alemán", "eleven_multilingual_v2", undefined],
+    ["en", "English", "eleven_multilingual_v2", undefined],
+    ["fr", "Français", "eleven_multilingual_v2", undefined],
+    ["pl", "Polski", "eleven_multilingual_v2", undefined],
+    ["ja", "日本語", "eleven_multilingual_v2", undefined],
+    ["it", "Italiano", "eleven_multilingual_v2", undefined],
+    ["pt", "Português", "eleven_multilingual_v2", undefined],
+    ["tr", "Türkçe", "eleven_multilingual_v2", undefined],
+    ["vi", "Tiếng Việt", "eleven_flash_v2_5", "vi"],
+    ["no", "Norsk", "eleven_flash_v2_5", "no"],
+  ] as const;
+
+  for (const [code, language, model, languageCode] of languages) {
+    for (const voice of ["male", "female"] as const) {
+      const expectedEnvironment = `ELEVENLABS_VOICE_ID_${code.toUpperCase()}_${voice.toUpperCase()}`;
+      const configuration = resolveLanguageStoryAudioConfiguration(
+        language,
+        voice,
+        (name) => (name === expectedEnvironment ? `${code}-${voice}-voice` : undefined),
+      );
+
+      assert.deepEqual(configuration, {
+        provider: "elevenlabs",
+        model,
+        voice: `${code}-${voice}-voice`,
+        audioFormat: "mp3_44100_128",
+        fileExtension: "mp3",
+        contentType: "audio/mpeg",
+        ...(languageCode ? { languageCode } : {}),
+      });
+    }
+  }
+});
+
+test("story audio voices never fall back across gender, language or provider", () => {
+  const requested: string[] = [];
+  const configuration = resolveLanguageStoryAudioConfiguration(
+    "French",
+    "female",
+    (name) => {
+      requested.push(name);
+      if (name === "ELEVENLABS_VOICE_ID_FR_MALE") return "male-voice";
+      if (name === "ELEVENLABS_VOICE_ID_DE_FEMALE") return "german-voice";
+      return undefined;
+    },
   );
 
-  assert.ok(configurations.every(Boolean));
-  assert.deepEqual(configurations, configurations.map(() => configurations[0]));
-  assert.deepEqual(configurations[0], {
-    provider: "elevenlabs",
-    model: "eleven_multilingual_v2",
-    voice: "female-voice-from-env",
-    audioFormat: "mp3_44100_128",
-    fileExtension: "mp3",
-    contentType: "audio/mpeg",
-  });
+  assert.equal(configuration, null);
+  assert.deepEqual(requested, ["ELEVENLABS_VOICE_ID_FR_FEMALE"]);
   assert.equal(
-    resolveGermanStoryAudioConfiguration("Alemán", "male", voiceIds)?.voice,
-    "male-voice-from-env",
-  );
-  assert.equal(
-    resolveGermanStoryAudioConfiguration("Polaco", "female", voiceIds),
-    null,
-  );
-  assert.equal(
-    resolveGermanStoryAudioConfiguration("Alemán", "female", {
-      female: "  ",
-      male: "male-voice",
-    }),
-    null,
-  );
-  assert.equal(
-    resolveGermanStoryAudioConfiguration("Alemán", "male", {
-      female: "female-voice",
-      male: undefined,
-    }),
+    resolveLanguageStoryAudioConfiguration("Klingon", "female", () => "voice"),
     null,
   );
 });
 
-test("female story cache identity stays historical while male uses another asset", () => {
+test("German story cache identities stay historical across the resolver refactor", () => {
   const base = {
     userId: "user-one",
     language: "Alemán",
     normalizedText: "Eine bekannte Geschichte.",
   };
-  const voiceIds = {
-    female: "historic-female-voice",
-    male: "new-male-voice",
-  };
-  const femaleConfiguration = resolveGermanStoryAudioConfiguration(
+  const readEnvironment = (name: string) =>
+    ({
+      ELEVENLABS_VOICE_ID_DE_FEMALE: "historic-female-voice",
+      ELEVENLABS_VOICE_ID_DE_MALE: "new-male-voice",
+    })[name];
+  const femaleConfiguration = resolveLanguageStoryAudioConfiguration(
     "Alemán",
     "female",
-    voiceIds,
+    readEnvironment,
   );
-  const maleConfiguration = resolveGermanStoryAudioConfiguration(
+  const maleConfiguration = resolveLanguageStoryAudioConfiguration(
     "Alemán",
     "male",
-    voiceIds,
+    readEnvironment,
   );
   assert.ok(femaleConfiguration);
   assert.ok(maleConfiguration);
@@ -291,15 +329,27 @@ test("female story cache identity stays historical while male uses another asset
     ...base,
     configuration: maleConfiguration,
   });
+  const anotherModelKey = languageAudioStorageKey({
+    ...base,
+    configuration: {
+      ...femaleConfiguration,
+      model: "eleven_flash_v2_5",
+      languageCode: "vi",
+    },
+  });
 
   assert.equal(
     femaleKey,
     "language-audio/abc156285876fc490a65598e6eec906a0e8bd62413086e7b0fd1a2caf0f59a96.mp3",
   );
-  assert.notEqual(maleKey, femaleKey);
+  assert.equal(
+    maleKey,
+    "language-audio/91872e1ce255c842c2ad5f6dbc3e2755d74ae12b1e3b248af1222e4bc6b9195f.mp3",
+  );
+  assert.notEqual(anotherModelKey, femaleKey);
 });
 
-test("ElevenLabs adapter sends the required German MP3 request", async () => {
+test("ElevenLabs adapter uses multilingual configuration without a hardcoded language", async () => {
   let receivedUrl = "";
   let receivedInit: RequestInit | undefined;
   const provider = new ElevenLabsLanguageAudioProvider(
@@ -316,10 +366,11 @@ test("ElevenLabs adapter sends the required German MP3 request", async () => {
     },
     () => "secret-test-key",
   );
-  const configuration = resolveGermanStoryAudioConfiguration(
+  const configuration = resolveLanguageStoryAudioConfiguration(
     "Alemán",
     "female",
-    { female: "voice/from env", male: "male-voice" },
+    (name) =>
+      name === "ELEVENLABS_VOICE_ID_DE_FEMALE" ? "voice/from env" : undefined,
   );
   assert.ok(configuration);
 
@@ -343,8 +394,50 @@ test("ElevenLabs adapter sends the required German MP3 request", async () => {
   assert.deepEqual(JSON.parse(String(receivedInit?.body)), {
     text: "Eine kleine Geschichte.",
     model_id: "eleven_multilingual_v2",
-    language_code: "de",
   });
+});
+
+test("ElevenLabs adapter sends Flash language codes from configuration", async () => {
+  const bodies: Array<Record<string, unknown>> = [];
+  const provider = new ElevenLabsLanguageAudioProvider(
+    async (_url, init) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return {
+        ok: true,
+        status: 200,
+        async arrayBuffer() {
+          return Uint8Array.from([73, 68, 51]).buffer;
+        },
+      };
+    },
+    () => "secret-test-key",
+  );
+
+  for (const [language, voice, code] of [
+    ["Vietnamita", "female", "vi"],
+    ["Noruego", "male", "no"],
+  ] as const) {
+    const configuration = resolveLanguageStoryAudioConfiguration(
+      language,
+      voice,
+      () => `${code}-${voice}-voice`,
+    );
+    assert.ok(configuration);
+    await provider.generate({ text: "Historia", language, configuration });
+  }
+
+  assert.deepEqual(bodies, [
+    {
+      text: "Historia",
+      model_id: "eleven_flash_v2_5",
+      language_code: "vi",
+    },
+    {
+      text: "Historia",
+      model_id: "eleven_flash_v2_5",
+      language_code: "no",
+    },
+  ]);
 });
 
 test("ElevenLabs adapter rejects non-success responses without reading the body", async () => {
@@ -360,10 +453,10 @@ test("ElevenLabs adapter rejects non-success responses without reading the body"
     }),
     () => "secret-test-key",
   );
-  const configuration = resolveGermanStoryAudioConfiguration(
+  const configuration = resolveLanguageStoryAudioConfiguration(
     "German",
     "male",
-    { female: "female-voice", male: "voice" },
+    (name) => (name === "ELEVENLABS_VOICE_ID_DE_MALE" ? "voice" : undefined),
   );
   assert.ok(configuration);
 

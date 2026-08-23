@@ -48,6 +48,12 @@ process.env.AUTH_COOKIE_SECRET =
   "test-only-cookie-secret-with-more-than-thirty-two-characters";
 process.env.ELEVENLABS_VOICE_ID_DE_FEMALE = "test-german-female-voice";
 process.env.ELEVENLABS_VOICE_ID_DE_MALE = "test-german-male-voice";
+for (const code of ["EN", "FR", "PL", "JA", "IT", "PT", "TR", "VI", "NO"]) {
+  process.env[`ELEVENLABS_VOICE_ID_${code}_FEMALE`] =
+    `test-${code.toLowerCase()}-female-voice`;
+  process.env[`ELEVENLABS_VOICE_ID_${code}_MALE`] =
+    `test-${code.toLowerCase()}-male-voice`;
+}
 
 const firstUser: AuthUser = {
   id: "aaec2ea2-9130-4a70-b516-e187c994d119",
@@ -1896,12 +1902,60 @@ test("German mini story uses ElevenLabs for original and simplified content and 
   }
 });
 
-test("mini story in an unconfigured language returns controlled 409 without provider fallback", async () => {
+test("configured story languages select their own ElevenLabs voice and model", async () => {
+  const { audioProvider, elevenLabsProvider, server } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+  const languages = [
+    ["English", "en", "male", "eleven_multilingual_v2", undefined],
+    ["Français", "fr", "female", "eleven_multilingual_v2", undefined],
+    ["Polski", "pl", "male", "eleven_multilingual_v2", undefined],
+    ["日本語", "ja", "female", "eleven_multilingual_v2", undefined],
+    ["Italiano", "it", "male", "eleven_multilingual_v2", undefined],
+    ["Português", "pt", "female", "eleven_multilingual_v2", undefined],
+    ["Türkçe", "tr", "male", "eleven_multilingual_v2", undefined],
+    ["Tiếng Việt", "vi", "female", "eleven_flash_v2_5", "vi"],
+    ["Norsk", "no", "male", "eleven_flash_v2_5", "no"],
+  ] as const;
+
+  try {
+    for (const [language, code, voice] of languages) {
+      const project = await createProject(server, cookie, language);
+      const lesson = await createLesson(server, project.id, cookie);
+      await processLesson(server, project.id, lesson.id, cookie);
+      const response = await requestLessonAudio(
+        server,
+        project.id,
+        lesson.id,
+        cookie,
+        { version: "original", section: "miniStory", index: 0, voice },
+      );
+      assert.equal(response.statusCode, 200, `${code} ${voice}`);
+    }
+
+    assert.equal(audioProvider.calls.length, 0);
+    assert.deepEqual(
+      elevenLabsProvider.configurations.map((configuration) => ({
+        model: configuration.model,
+        voice: configuration.voice,
+        languageCode: configuration.languageCode,
+      })),
+      languages.map(([, code, voice, model, languageCode]) => ({
+        model,
+        voice: `test-${code}-${voice}-voice`,
+        languageCode,
+      })),
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("mini story in an unsupported language returns controlled 409 without provider fallback", async () => {
   const { audioProvider, elevenLabsProvider, server } = testServer();
   const cookie = sessionCookie(firstUser.id);
 
   try {
-    const project = await createProject(server, cookie, "Polaco");
+    const project = await createProject(server, cookie, "Klingon");
     const lesson = await createLesson(server, project.id, cookie);
     await processLesson(server, project.id, lesson.id, cookie);
 

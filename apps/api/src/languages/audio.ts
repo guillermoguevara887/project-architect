@@ -15,6 +15,7 @@ export type LanguageAudioConfiguration = {
   audioFormat: string;
   fileExtension: string;
   contentType: string;
+  languageCode?: LanguageStoryAudioLanguage;
 };
 
 export const OPENAI_LANGUAGE_AUDIO_CONFIG = {
@@ -29,43 +30,167 @@ export const OPENAI_LANGUAGE_AUDIO_CONFIG = {
 // Keep the original export for callers that use the existing OpenAI defaults.
 export const LANGUAGE_AUDIO_CONFIG = OPENAI_LANGUAGE_AUDIO_CONFIG;
 
-const ELEVENLABS_MODEL = "eleven_multilingual_v2";
 const ELEVENLABS_AUDIO_FORMAT = "mp3_44100_128";
 
 export const languageStoryVoiceSchema = z.enum(["male", "female"]);
 export type LanguageStoryVoice = z.infer<typeof languageStoryVoiceSchema>;
 
-export function isGermanStoryAudioLanguage(language: string) {
-  const normalizedLanguage = language
+export type LanguageStoryAudioLanguage =
+  | "de"
+  | "en"
+  | "fr"
+  | "pl"
+  | "ja"
+  | "it"
+  | "pt"
+  | "tr"
+  | "vi"
+  | "no";
+
+type LanguageStoryAudioDefinition = {
+  aliases: readonly string[];
+  model: "eleven_multilingual_v2" | "eleven_flash_v2_5";
+  languageCode?: LanguageStoryAudioLanguage;
+  voiceEnvironment: Record<LanguageStoryVoice, string>;
+};
+
+const LANGUAGE_STORY_AUDIO_DEFINITIONS: Record<
+  LanguageStoryAudioLanguage,
+  LanguageStoryAudioDefinition
+> = {
+  de: {
+    aliases: ["german", "deutsch", "aleman"],
+    model: "eleven_multilingual_v2",
+    voiceEnvironment: {
+      male: "ELEVENLABS_VOICE_ID_DE_MALE",
+      female: "ELEVENLABS_VOICE_ID_DE_FEMALE",
+    },
+  },
+  en: {
+    aliases: ["english", "ingles"],
+    model: "eleven_multilingual_v2",
+    voiceEnvironment: {
+      male: "ELEVENLABS_VOICE_ID_EN_MALE",
+      female: "ELEVENLABS_VOICE_ID_EN_FEMALE",
+    },
+  },
+  fr: {
+    aliases: ["french", "francais", "frances"],
+    model: "eleven_multilingual_v2",
+    voiceEnvironment: {
+      male: "ELEVENLABS_VOICE_ID_FR_MALE",
+      female: "ELEVENLABS_VOICE_ID_FR_FEMALE",
+    },
+  },
+  pl: {
+    aliases: ["polish", "polski", "polaco"],
+    model: "eleven_multilingual_v2",
+    voiceEnvironment: {
+      male: "ELEVENLABS_VOICE_ID_PL_MALE",
+      female: "ELEVENLABS_VOICE_ID_PL_FEMALE",
+    },
+  },
+  ja: {
+    aliases: ["japanese", "japones", "日本語"],
+    model: "eleven_multilingual_v2",
+    voiceEnvironment: {
+      male: "ELEVENLABS_VOICE_ID_JA_MALE",
+      female: "ELEVENLABS_VOICE_ID_JA_FEMALE",
+    },
+  },
+  it: {
+    aliases: ["italian", "italiano"],
+    model: "eleven_multilingual_v2",
+    voiceEnvironment: {
+      male: "ELEVENLABS_VOICE_ID_IT_MALE",
+      female: "ELEVENLABS_VOICE_ID_IT_FEMALE",
+    },
+  },
+  pt: {
+    aliases: ["portuguese", "portugues"],
+    model: "eleven_multilingual_v2",
+    voiceEnvironment: {
+      male: "ELEVENLABS_VOICE_ID_PT_MALE",
+      female: "ELEVENLABS_VOICE_ID_PT_FEMALE",
+    },
+  },
+  tr: {
+    aliases: ["turkish", "turkce", "turco"],
+    model: "eleven_multilingual_v2",
+    voiceEnvironment: {
+      male: "ELEVENLABS_VOICE_ID_TR_MALE",
+      female: "ELEVENLABS_VOICE_ID_TR_FEMALE",
+    },
+  },
+  vi: {
+    aliases: ["vietnamese", "tieng viet", "vietnamita"],
+    model: "eleven_flash_v2_5",
+    languageCode: "vi",
+    voiceEnvironment: {
+      male: "ELEVENLABS_VOICE_ID_VI_MALE",
+      female: "ELEVENLABS_VOICE_ID_VI_FEMALE",
+    },
+  },
+  no: {
+    aliases: ["norwegian", "norsk", "noruego"],
+    model: "eleven_flash_v2_5",
+    languageCode: "no",
+    voiceEnvironment: {
+      male: "ELEVENLABS_VOICE_ID_NO_MALE",
+      female: "ELEVENLABS_VOICE_ID_NO_FEMALE",
+    },
+  },
+};
+
+function normalizeLanguageStoryAudioAlias(language: string) {
+  return language
     .normalize("NFD")
     .replace(/\p{Diacritic}/gu, "")
     .trim()
     .toLocaleLowerCase("und");
-
-  return ["german", "deutsch", "aleman"].includes(normalizedLanguage);
 }
 
-export function resolveGermanStoryAudioConfiguration(
+export function resolveLanguageStoryAudioLanguage(
+  language: string,
+): LanguageStoryAudioLanguage | null {
+  const normalizedLanguage = normalizeLanguageStoryAudioAlias(language);
+
+  for (const [code, definition] of Object.entries(
+    LANGUAGE_STORY_AUDIO_DEFINITIONS,
+  ) as Array<[LanguageStoryAudioLanguage, LanguageStoryAudioDefinition]>) {
+    if (definition.aliases.includes(normalizedLanguage)) {
+      return code;
+    }
+  }
+
+  return null;
+}
+
+export function resolveLanguageStoryAudioConfiguration(
   language: string,
   voice: LanguageStoryVoice,
-  voiceIds: Record<LanguageStoryVoice, string | undefined> = {
-    female: process.env.ELEVENLABS_VOICE_ID_DE_FEMALE,
-    male: process.env.ELEVENLABS_VOICE_ID_DE_MALE,
-  },
+  readEnvironment: (name: string) => string | undefined = (name) =>
+    process.env[name],
 ): LanguageAudioConfiguration | null {
-  const voiceId = voiceIds[voice]?.trim();
+  const languageCode = resolveLanguageStoryAudioLanguage(language);
 
-  if (!isGermanStoryAudioLanguage(language) || !voiceId) {
-    return null;
-  }
+  if (!languageCode) return null;
+
+  const definition = LANGUAGE_STORY_AUDIO_DEFINITIONS[languageCode];
+  const voiceId = readEnvironment(definition.voiceEnvironment[voice])?.trim();
+
+  if (!voiceId) return null;
 
   return {
     provider: "elevenlabs",
-    model: ELEVENLABS_MODEL,
+    model: definition.model,
     voice: voiceId,
     audioFormat: ELEVENLABS_AUDIO_FORMAT,
     fileExtension: "mp3",
     contentType: "audio/mpeg",
+    ...(definition.languageCode
+      ? { languageCode: definition.languageCode }
+      : {}),
   };
 }
 
@@ -240,7 +365,9 @@ export class ElevenLabsLanguageAudioProvider implements LanguageAudioProvider {
         body: JSON.stringify({
           text: input.text,
           model_id: configuration.model,
-          language_code: "de",
+          ...(configuration.languageCode
+            ? { language_code: configuration.languageCode }
+            : {}),
         }),
       },
     );

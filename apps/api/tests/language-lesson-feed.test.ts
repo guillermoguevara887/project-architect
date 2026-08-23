@@ -590,6 +590,10 @@ test("lesson audio controls use an accessible spinner and non-color playing cue"
     new URL("../../web/src/app/globals.css", import.meta.url),
     "utf8",
   );
+  const languageHelpers = await readFile(
+    new URL("../../web/src/lib/languages.ts", import.meta.url),
+    "utf8",
+  );
   const rateHandler = component.match(
     /function updateLanguageAudioPlaybackRate\([\s\S]*?\n  }/,
   )?.[0];
@@ -685,6 +689,10 @@ test("lesson audio controls use an accessible spinner and non-color playing cue"
   assert.match(styles, /\.lesson-story-voice-selector/);
   assert.match(styles, /\.lesson-story-download-button/);
   assert.match(styles, /\.lesson-thought-audio-item/);
+  assert.doesNotMatch(
+    `${component}\n${languageHelpers}`,
+    /ELEVENLABS|VOICE_ID|eleven_multilingual|eleven_flash|languageCode|language_code/,
+  );
   assert.match(
     component,
     /<Link className="back-link lesson-back-link" href="\/languages">/,
