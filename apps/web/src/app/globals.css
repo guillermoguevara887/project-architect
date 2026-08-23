@@ -1178,7 +1178,9 @@ button:disabled {
   align-items: center;
   flex-wrap: wrap;
   gap: 0.55rem 0.7rem;
-  margin-top: 1rem;
+  margin: 0 0 1rem;
+  padding-bottom: 0.9rem;
+  border-bottom: 1px solid var(--lesson-section-divider);
 }
 
 .lesson-audio-rate-label {

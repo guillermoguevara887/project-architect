@@ -308,8 +308,16 @@ test("lesson audio controls use an accessible spinner and non-color playing cue"
   const rateHandler = component.match(
     /function updateLanguageAudioPlaybackRate\([\s\S]*?\n  }/,
   )?.[0];
+  const miniStorySection = component.match(
+    /sectionKey="miniStory"[\s\S]*?<\/LessonSection>/,
+  )?.[0];
+  const generalReadyControls = component.match(
+    /\{lesson\.status === "ready" && readyContent \? \([\s\S]*?<ReadyLesson/,
+  )?.[0];
 
   assert.ok(rateHandler);
+  assert.ok(miniStorySection);
+  assert.ok(generalReadyControls);
   assert.doesNotMatch(rateHandler, /fetch|\.play\(/);
   assert.match(component, /className="lesson-audio-spinner"/);
   assert.match(component, /<StopIcon \/>/);
@@ -322,7 +330,9 @@ test("lesson audio controls use an accessible spinner and non-color playing cue"
     component.match(/className="lesson-audio-rate-selector"/g)?.length,
     1,
   );
-  assert.match(component, /aria-pressed=\{audioPlaybackRate === option\.value\}/);
+  assert.match(miniStorySection, /<LanguageAudioRateControl/);
+  assert.doesNotMatch(generalReadyControls, /lesson-audio-rate-control/);
+  assert.match(component, /aria-pressed=\{playbackRate === option\.value\}/);
   assert.match(component, /audioElementRef\.current, playbackRate/);
   assert.match(
     component,
@@ -333,6 +343,10 @@ test("lesson audio controls use an accessible spinner and non-color playing cue"
   assert.match(styles, /prefers-reduced-motion: reduce/);
   assert.match(styles, /width: 2\.65rem;[\s\S]*height: 2\.65rem;/);
   assert.match(styles, /\.lesson-section-actions/);
+  assert.match(
+    component,
+    /<Link className="back-link lesson-back-link" href="\/languages">/,
+  );
 });
 
 test("switching lesson version stops playback without autoplay or generation", async () => {

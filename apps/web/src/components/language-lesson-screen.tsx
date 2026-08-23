@@ -188,6 +188,38 @@ function LessonAudioButton({
   );
 }
 
+function LanguageAudioRateControl({
+  playbackRate,
+  onPlaybackRateChange,
+}: {
+  playbackRate: LanguageAudioPlaybackRate;
+  onPlaybackRateChange: (playbackRate: LanguageAudioPlaybackRate) => void;
+}) {
+  return (
+    <div className="lesson-audio-rate-control">
+      <span className="lesson-audio-rate-label" id="audio-rate-label">
+        Velocidad
+      </span>
+      <div
+        aria-labelledby="audio-rate-label"
+        className="lesson-audio-rate-selector"
+        role="group"
+      >
+        {LANGUAGE_AUDIO_PLAYBACK_RATE_OPTIONS.map((option) => (
+          <button
+            aria-pressed={playbackRate === option.value}
+            key={option.value}
+            type="button"
+            onClick={() => onPlaybackRateChange(option.value)}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function LessonSection({
   sectionIndex,
   sectionKey,
@@ -292,18 +324,22 @@ function ReadyLesson({
   contentVersion,
   copiedSection,
   audioPlayback,
+  audioPlaybackRate,
   onCopy,
   onPlayAudio,
+  onPlaybackRateChange,
 }: {
   content: StructuredLanguageLesson;
   contentVersion: LanguageLessonContentVersion;
   copiedSection: LessonSectionKey | null;
   audioPlayback: LanguageLessonAudioPlayback | null;
+  audioPlaybackRate: LanguageAudioPlaybackRate;
   onCopy: (sectionKey: LessonSectionKey) => void;
   onPlayAudio: (
     section: LanguageLessonAudioSection,
     index: number,
   ) => void;
+  onPlaybackRateChange: (playbackRate: LanguageAudioPlaybackRate) => void;
 }) {
   return (
     <div className="lesson-sections">
@@ -409,6 +445,10 @@ function ReadyLesson({
           />
         }
       >
+        <LanguageAudioRateControl
+          playbackRate={audioPlaybackRate}
+          onPlaybackRateChange={onPlaybackRateChange}
+        />
         <p className="lesson-reading-text">{content.miniStory.text}</p>
       </LessonSection>
 
@@ -1071,32 +1111,6 @@ export function LanguageLessonScreen({
           </div>
         ) : null}
 
-        {lesson.status === "ready" && readyContent ? (
-          <div className="lesson-audio-rate-control">
-            <span className="lesson-audio-rate-label" id="audio-rate-label">
-              Velocidad
-            </span>
-            <div
-              aria-labelledby="audio-rate-label"
-              className="lesson-audio-rate-selector"
-              role="group"
-            >
-              {LANGUAGE_AUDIO_PLAYBACK_RATE_OPTIONS.map((option) => (
-                <button
-                  aria-pressed={audioPlaybackRate === option.value}
-                  key={option.value}
-                  type="button"
-                  onClick={() =>
-                    updateLanguageAudioPlaybackRate(option.value)
-                  }
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : null}
-
         {lesson.status === "ready" && actionError ? (
           <p className="form-error lesson-action-error" role="alert">
             {actionError}
@@ -1109,10 +1123,12 @@ export function LanguageLessonScreen({
             contentVersion={contentVersion}
             copiedSection={copiedSection}
             audioPlayback={audioPlayback}
+            audioPlaybackRate={audioPlaybackRate}
             onCopy={(sectionKey) => void copySection(sectionKey)}
             onPlayAudio={(section, index) =>
               void playLanguageAudio(section, index)
             }
+            onPlaybackRateChange={updateLanguageAudioPlaybackRate}
           />
         ) : null}
 
