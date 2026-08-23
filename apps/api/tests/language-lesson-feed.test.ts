@@ -16,6 +16,7 @@ import {
   LANGUAGE_AUDIO_PLAYBACK_RATE_OPTIONS,
   LANGUAGE_LESSON_SOURCE_OPTIONS,
   LANGUAGE_STORY_VOICE_OPTIONS,
+  languageDialogueLineIsActive,
   languageLessonAudioButtonLabel,
   languageAudioPlaybackErrorMessage,
   languageLessonAudioErrorMessage,
@@ -148,6 +149,92 @@ test("dialogue voices stay consistent by normalized speaker order", () => {
       { speaker: "mika" },
     ]),
     ["female", "male", "female", "male", "female", "male", "female"],
+  );
+});
+
+test("dialogue line activity derives only from matching key and active playback status", () => {
+  const key = languageLessonAudioKey("original", "dialogue", 0, "female");
+
+  for (const status of ["loading", "playing"] as const) {
+    assert.equal(
+      languageDialogueLineIsActive(
+        { key, status, error: null },
+        "original",
+        0,
+        "female",
+      ),
+      true,
+    );
+  }
+
+  assert.equal(
+    languageDialogueLineIsActive(null, "original", 0, "female"),
+    false,
+  );
+  assert.equal(
+    languageDialogueLineIsActive(
+      { key, status: "error", error: "Error" },
+      "original",
+      0,
+      "female",
+    ),
+    false,
+  );
+  assert.equal(
+    languageDialogueLineIsActive(
+      {
+        key: languageLessonAudioKey("original", "dialogue", 1, "male"),
+        status: "playing",
+        error: null,
+      },
+      "original",
+      0,
+      "female",
+    ),
+    false,
+  );
+  assert.equal(
+    languageDialogueLineIsActive(
+      { key, status: "playing", error: null },
+      "simplified",
+      0,
+      "female",
+    ),
+    false,
+  );
+});
+
+test("dialogue sequence moves its derived highlight and stop clears it", () => {
+  const first = {
+    key: languageLessonAudioKey("original", "dialogue", 0, "female"),
+    status: "playing" as const,
+    error: null,
+  };
+  const second = {
+    key: languageLessonAudioKey("original", "dialogue", 1, "male"),
+    status: "loading" as const,
+    error: null,
+  };
+
+  assert.equal(
+    languageDialogueLineIsActive(first, "original", 0, "female"),
+    true,
+  );
+  assert.equal(
+    languageDialogueLineIsActive(first, "original", 1, "male"),
+    false,
+  );
+  assert.equal(
+    languageDialogueLineIsActive(second, "original", 0, "female"),
+    false,
+  );
+  assert.equal(
+    languageDialogueLineIsActive(second, "original", 1, "male"),
+    true,
+  );
+  assert.equal(
+    languageDialogueLineIsActive(null, "original", 1, "male"),
+    false,
   );
 });
 
@@ -784,7 +871,7 @@ test("lesson audio controls use an accessible spinner and non-color playing cue"
   assert.match(dialogueSection, /accessibleLabel=\{`intervención de \$\{line\.speaker\}`\}/);
   assert.match(
     dialogueSection,
-    /onPlayAudio\("dialogue", index, dialogueVoices\[index\]\)/,
+    /onPlayAudio\("dialogue", index, voice\)/,
   );
   assert.match(component, /assignLanguageDialogueVoices\(content\.dialogue\)/);
   assert.match(component, /Reproducir diálogo/);
@@ -859,6 +946,10 @@ test("lesson audio controls use an accessible spinner and non-color playing cue"
   assert.match(styles, /\.lesson-thought-audio-item/);
   assert.match(styles, /\.lesson-dialogue-play-button/);
   assert.match(styles, /\.lesson-dialogue-line/);
+  assert.match(styles, /\.lesson-dialogue-line\[data-active="true"\]/);
+  assert.match(component, /data-active=\{active \? "true" : undefined\}/);
+  assert.match(component, /languageDialogueLineIsActive\(/);
+  assert.doesNotMatch(component, /useState<[^>]*DialogueLine|activeDialogueLine/);
   assert.doesNotMatch(
     `${component}\n${languageHelpers}`,
     /ELEVENLABS|VOICE_ID|eleven_multilingual|eleven_flash|languageCode|language_code/,

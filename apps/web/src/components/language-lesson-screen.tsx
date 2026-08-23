@@ -19,6 +19,7 @@ import {
   formatLanguageLessonTitle,
   getOrCreateLanguageAudioElement,
   LANGUAGE_AUDIO_PLAYBACK_RATE_OPTIONS,
+  languageDialogueLineIsActive,
   languageLessonAudioButtonLabel,
   languageLessonAudioErrorMessage,
   languageLessonAudioKey,
@@ -651,32 +652,42 @@ function ReadyLesson({
         }
       >
         <div className="lesson-dialogue">
-          {content.dialogue.map((line, index) => (
-            <div className="lesson-dialogue-line" key={`${line.speaker}-${index}`}>
-              <p>
-                <strong>{line.speaker}:</strong>
-                <span>{line.text}</span>
-              </p>
-              <LessonAudioButton
-                text={line.text}
-                accessibleLabel={`intervención de ${line.speaker}`}
-                playback={
-                  audioPlayback?.key ===
-                  languageLessonAudioKey(
-                    contentVersion,
-                    "dialogue",
-                    index,
-                    dialogueVoices[index],
-                  )
-                    ? audioPlayback
-                    : null
-                }
-                onPlay={() =>
-                  onPlayAudio("dialogue", index, dialogueVoices[index])
-                }
-              />
-            </div>
-          ))}
+          {content.dialogue.map((line, index) => {
+            const voice = dialogueVoices[index]!;
+            const lineKey = languageLessonAudioKey(
+              contentVersion,
+              "dialogue",
+              index,
+              voice,
+            );
+            const linePlayback =
+              audioPlayback?.key === lineKey ? audioPlayback : null;
+            const active = languageDialogueLineIsActive(
+              audioPlayback,
+              contentVersion,
+              index,
+              voice,
+            );
+
+            return (
+              <div
+                className="lesson-dialogue-line"
+                data-active={active ? "true" : undefined}
+                key={`${line.speaker}-${index}`}
+              >
+                <p>
+                  <strong>{line.speaker}:</strong>
+                  <span>{line.text}</span>
+                </p>
+                <LessonAudioButton
+                  text={line.text}
+                  accessibleLabel={`intervención de ${line.speaker}`}
+                  playback={linePlayback}
+                  onPlay={() => onPlayAudio("dialogue", index, voice)}
+                />
+              </div>
+            );
+          })}
         </div>
       </LessonSection>
 

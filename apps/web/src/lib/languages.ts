@@ -235,6 +235,18 @@ export function languageLessonAudioKey(
   return `${version}:${section}:${index}`;
 }
 
+export function languageDialogueLineIsActive(
+  playback: LanguageLessonAudioPlayback | null,
+  version: LanguageLessonContentVersion,
+  index: number,
+  voice: LanguageStoryVoice,
+) {
+  return (
+    playback?.key === languageLessonAudioKey(version, "dialogue", index, voice) &&
+    (playback.status === "loading" || playback.status === "playing")
+  );
+}
+
 function normalizeLanguageDialogueSpeaker(speaker: string) {
   return speaker.trim().toLocaleLowerCase("und");
 }

@@ -1751,6 +1751,20 @@ button:disabled {
   gap: 0.55rem 0.75rem;
   padding: 0.7rem 0;
   border-bottom: 1px solid var(--lesson-section-divider);
+  background: transparent;
+  transition:
+    background-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.lesson-dialogue-line[data-active="true"] {
+  background: color-mix(in srgb, #2563eb 7%, transparent);
+  box-shadow: inset 0.2rem 0 0 color-mix(in srgb, #2563eb 68%, #0ea5a4);
+}
+
+.lesson-dialogue-line[data-active="true"] strong {
+  color: #0f2147;
+  font-weight: 800;
 }
 
 .lesson-dialogue-line:first-child {
@@ -1777,6 +1791,12 @@ button:disabled {
   margin: 0;
   color: #b42318;
   font-size: 0.78rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lesson-dialogue-line {
+    transition: none;
+  }
 }
 
 .lesson-bridge {
