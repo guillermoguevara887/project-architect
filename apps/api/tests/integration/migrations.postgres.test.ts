@@ -630,11 +630,17 @@ test("language lesson simplification columns are nullable and preserve existing 
   const originalContent = { version: "original", sectionCount: 8 };
 
   try {
-    assert.equal(migrations.at(-1)?.id, simplificationMigrationId);
-    assert.equal(simplificationMigrationIndex, migrations.length - 1);
+    assert.equal(
+      migrations[simplificationMigrationIndex + 1]?.id,
+      "0010_create_language_audio_assets.sql",
+    );
     const migrationsBeforeSimplification = migrations.slice(
       0,
       simplificationMigrationIndex,
+    );
+    const migrationsThroughSimplification = migrations.slice(
+      0,
+      simplificationMigrationIndex + 1,
     );
     assert.deepEqual(
       await migratePending(database, migrationsBeforeSimplification),
@@ -674,9 +680,10 @@ test("language lesson simplification columns are nullable and preserve existing 
       `;
     });
 
-    assert.deepEqual(await migratePending(database, migrations), [
-      simplificationMigrationId,
-    ]);
+    assert.deepEqual(
+      await migratePending(database, migrationsThroughSimplification),
+      [simplificationMigrationId],
+    );
 
     const state = await withSql(isolatedUrl, async (sql) => {
       const [lesson] = await sql<
@@ -746,9 +753,143 @@ test("language lesson simplification columns are nullable and preserve existing 
       [{ name: "language_lessons_simplified_content_check" }],
     );
 
-    const report = await getMigrationStatus(database, migrations);
+    const report = await getMigrationStatus(
+      database,
+      migrationsThroughSimplification,
+    );
     assert.equal(report.historyMode, "current");
     assert.ok(report.migrations.every(({ state }) => state === "applied"));
+  } finally {
+    await database.close();
+  }
+});
+
+test("language audio migration persists metadata with a unique private cache identity", async () => {
+  const isolatedUrl = await createIsolatedDatabase("language_audio_assets");
+  const database = createPostgresMigrationDatabase(isolatedUrl);
+  const migrations = await loadMigrationFiles(migrationDirectory);
+  const audioMigrationId = "0010_create_language_audio_assets.sql";
+  const userId = "71000000-0000-4000-8000-000000000001";
+
+  try {
+    assert.equal(migrations.at(-1)?.id, audioMigrationId);
+    assert.deepEqual(
+      await migratePending(database, migrations),
+      migrations.map(({ id }) => id),
+    );
+
+    const state = await withSql(isolatedUrl, async (sql) => {
+      await sql`
+        INSERT INTO users (id, username, password_hash)
+        VALUES (${userId}, 'audio-user', 'not-a-real-hash')
+      `;
+      await sql`
+        INSERT INTO language_audio_assets (
+          user_id,
+          language,
+          normalized_text,
+          original_text,
+          provider,
+          model,
+          voice,
+          audio_format,
+          storage_key,
+          status,
+          generation_started_at
+        )
+        VALUES (
+          ${userId},
+          'Polaco',
+          'Dzień dobry',
+          'Dzień   dobry',
+          'openai',
+          'gpt-4o-mini-tts',
+          'coral',
+          'mp3',
+          'language-audio/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.mp3',
+          'generating',
+          now()
+        )
+      `;
+      await sql`
+        UPDATE language_audio_assets
+        SET status = 'ready', generation_started_at = NULL
+        WHERE user_id = ${userId}
+      `;
+      const [asset] = await sql<
+        Array<{
+          language: string;
+          normalizedText: string;
+          originalText: string;
+          provider: string;
+          model: string;
+          voice: string;
+          audioFormat: string;
+          storageKey: string;
+          status: string;
+        }>
+      >`
+        SELECT language,
+               normalized_text AS "normalizedText",
+               original_text AS "originalText",
+               provider,
+               model,
+               voice,
+               audio_format AS "audioFormat",
+               storage_key AS "storageKey",
+               status
+        FROM language_audio_assets
+        WHERE user_id = ${userId}
+      `;
+
+      await assert.rejects(
+        sql`
+          INSERT INTO language_audio_assets (
+            user_id,
+            language,
+            normalized_text,
+            original_text,
+            provider,
+            model,
+            voice,
+            audio_format,
+            storage_key,
+            status
+          )
+          VALUES (
+            ${userId},
+            'Polaco',
+            'Dzień dobry',
+            'Dzień dobry',
+            'openai',
+            'gpt-4o-mini-tts',
+            'coral',
+            'mp3',
+            'language-audio/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.mp3',
+            'ready'
+          )
+        `,
+        /language_audio_assets_cache_unique/i,
+      );
+
+      return asset;
+    });
+
+    assert.deepEqual(state, {
+      language: "Polaco",
+      normalizedText: "Dzień dobry",
+      originalText: "Dzień   dobry",
+      provider: "openai",
+      model: "gpt-4o-mini-tts",
+      voice: "coral",
+      audioFormat: "mp3",
+      storageKey:
+        "language-audio/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.mp3",
+      status: "ready",
+    });
+    const report = await getMigrationStatus(database, migrations);
+    assert.equal(report.historyMode, "current");
+    assert.ok(report.migrations.every(({ state: status }) => status === "applied"));
   } finally {
     await database.close();
   }

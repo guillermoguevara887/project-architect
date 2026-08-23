@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   useEffect,
+  useRef,
   useState,
   type FormEvent,
   type ReactNode,
@@ -11,9 +12,12 @@ import {
 import {
   canRegenerateLanguageLesson,
   formatLanguageLessonTitle,
+  languageLessonAudioRequest,
   languageLessonContentForVersion,
   LANGUAGE_LESSON_CONTENT_VERSION_OPTIONS,
+  playExclusiveLanguageAudio,
   type LanguageLesson,
+  type LanguageLessonAudioSection,
   type LanguageLessonContentVersion,
   type LanguageProject,
   type StructuredLanguageLesson,
@@ -33,6 +37,20 @@ type LessonSectionKey =
   | "review";
 
 const LESSON_SECTION_VARIANTS = ["a", "b", "c"] as const;
+
+type LessonAudioPlayback = {
+  key: string;
+  status: "loading" | "playing" | "error";
+  error: string | null;
+};
+
+function lessonAudioKey(
+  version: LanguageLessonContentVersion,
+  section: LanguageLessonAudioSection,
+  index: number,
+) {
+  return `${version}:${section}:${index}`;
+}
 
 function lessonSectionVariant(sectionIndex: number) {
   return LESSON_SECTION_VARIANTS[
@@ -85,6 +103,69 @@ function CopyIcon() {
         strokeWidth="1.5"
       />
     </svg>
+  );
+}
+
+function SpeakerIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="lesson-audio-icon"
+      fill="none"
+      focusable="false"
+      viewBox="0 0 20 20"
+    >
+      <path
+        d="M3.5 8h3L10 5v10l-3.5-3h-3V8Z"
+        fill="currentColor"
+      />
+      <path
+        d="M12.75 7.25a4 4 0 0 1 0 5.5M14.75 5.5a6.4 6.4 0 0 1 0 9"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.5"
+      />
+    </svg>
+  );
+}
+
+function LessonAudioButton({
+  text,
+  playback,
+  onPlay,
+}: {
+  text: string;
+  playback: LessonAudioPlayback | null;
+  onPlay: () => void;
+}) {
+  const loading = playback?.status === "loading";
+  const playing = playback?.status === "playing";
+
+  return (
+    <>
+      <button
+        aria-label={
+          loading
+            ? `Preparando pronunciación de ${text}`
+            : playing
+              ? `Reproduciendo pronunciación de ${text}`
+              : `Reproducir pronunciación de ${text}`
+        }
+        aria-pressed={playing}
+        className="lesson-audio-button"
+        data-state={playback?.status ?? "idle"}
+        disabled={loading}
+        type="button"
+        onClick={onPlay}
+      >
+        {loading ? <span aria-hidden="true">•••</span> : <SpeakerIcon />}
+      </button>
+      {playback?.status === "error" && playback.error ? (
+        <small className="lesson-audio-error" role="alert">
+          {playback.error}
+        </small>
+      ) : null}
+    </>
   );
 }
 
@@ -184,12 +265,21 @@ function sectionText(
 
 function ReadyLesson({
   content,
+  contentVersion,
   copiedSection,
+  audioPlayback,
   onCopy,
+  onPlayAudio,
 }: {
   content: StructuredLanguageLesson;
+  contentVersion: LanguageLessonContentVersion;
   copiedSection: LessonSectionKey | null;
+  audioPlayback: LessonAudioPlayback | null;
   onCopy: (sectionKey: LessonSectionKey) => void;
+  onPlayAudio: (
+    section: LanguageLessonAudioSection,
+    index: number,
+  ) => void;
 }) {
   return (
     <div className="lesson-sections">
@@ -203,7 +293,19 @@ function ReadyLesson({
         <div className="lesson-item-list">
           {content.vocabulary.map((item, index) => (
             <article className="lesson-item" key={`${item.term}-${index}`}>
-              <h3>{item.term}</h3>
+              <div className="lesson-audio-heading">
+                <h3>{item.term}</h3>
+                <LessonAudioButton
+                  text={item.term}
+                  playback={
+                    audioPlayback?.key ===
+                    lessonAudioKey(contentVersion, "vocabulary", index)
+                      ? audioPlayback
+                      : null
+                  }
+                  onPlay={() => onPlayAudio("vocabulary", index)}
+                />
+              </div>
               <p>{item.meaning}</p>
               {item.example ? <em>{item.example}</em> : null}
             </article>
@@ -221,7 +323,19 @@ function ReadyLesson({
         <div className="lesson-item-list">
           {content.phrases.map((item, index) => (
             <article className="lesson-item" key={`${item.text}-${index}`}>
-              <h3>{item.text}</h3>
+              <div className="lesson-audio-heading">
+                <h3>{item.text}</h3>
+                <LessonAudioButton
+                  text={item.text}
+                  playback={
+                    audioPlayback?.key ===
+                    lessonAudioKey(contentVersion, "phrases", index)
+                      ? audioPlayback
+                      : null
+                  }
+                  onPlay={() => onPlayAudio("phrases", index)}
+                />
+              </div>
               <p>{item.translation}</p>
               {item.note ? <small>{item.note}</small> : null}
             </article>
@@ -371,7 +485,41 @@ export function LanguageLessonScreen({
   const [deleting, setDeleting] = useState(false);
   const [copiedSection, setCopiedSection] =
     useState<LessonSectionKey | null>(null);
+  const [audioPlayback, setAudioPlayback] =
+    useState<LessonAudioPlayback | null>(null);
+  const audioElementRef = useRef<HTMLAudioElement | null>(null);
+  const audioObjectUrlRef = useRef<string | null>(null);
+  const audioAbortControllerRef = useRef<AbortController | null>(null);
+  const audioRequestIdRef = useRef(0);
   const simplifying = simplificationAction !== null;
+
+  function stopLanguageAudio() {
+    audioRequestIdRef.current += 1;
+    audioAbortControllerRef.current?.abort();
+    audioAbortControllerRef.current = null;
+    audioElementRef.current?.pause();
+
+    if (audioElementRef.current) {
+      audioElementRef.current.currentTime = 0;
+      audioElementRef.current = null;
+    }
+
+    if (audioObjectUrlRef.current) {
+      URL.revokeObjectURL(audioObjectUrlRef.current);
+      audioObjectUrlRef.current = null;
+    }
+  }
+
+  useEffect(() => {
+    return () => {
+      audioAbortControllerRef.current?.abort();
+      audioElementRef.current?.pause();
+
+      if (audioObjectUrlRef.current) {
+        URL.revokeObjectURL(audioObjectUrlRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!authorized) return;
@@ -615,6 +763,98 @@ export function LanguageLessonScreen({
     }
   }
 
+  async function playLanguageAudio(
+    section: LanguageLessonAudioSection,
+    index: number,
+  ) {
+    const key = lessonAudioKey(contentVersion, section, index);
+    const previousAudio = audioElementRef.current;
+
+    stopLanguageAudio();
+    const requestId = audioRequestIdRef.current;
+    const controller = new AbortController();
+    audioAbortControllerRef.current = controller;
+    setAudioPlayback({ key, status: "loading", error: null });
+
+    try {
+      const response = await fetch(
+        `/api/languages/projects/${encodeURIComponent(projectId)}/lessons/${encodeURIComponent(lessonId)}/audio`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(
+            languageLessonAudioRequest(contentVersion, section, index),
+          ),
+          signal: controller.signal,
+        },
+      );
+
+      if (response.status === 401) {
+        router.replace("/");
+        return;
+      }
+
+      if (!response.ok) {
+        const result = (await response.json()) as { message?: string };
+        throw new Error(
+          result.message ?? "No se pudo preparar la pronunciación.",
+        );
+      }
+
+      const audioUrl = URL.createObjectURL(await response.blob());
+
+      if (requestId !== audioRequestIdRef.current) {
+        URL.revokeObjectURL(audioUrl);
+        return;
+      }
+
+      const audio = new Audio(audioUrl);
+      audioObjectUrlRef.current = audioUrl;
+      audioElementRef.current = audio;
+      audio.onended = () => {
+        if (audioElementRef.current === audio) {
+          stopLanguageAudio();
+          setAudioPlayback(null);
+        }
+      };
+      audio.onerror = () => {
+        if (audioElementRef.current === audio) {
+          stopLanguageAudio();
+          setAudioPlayback({
+            key,
+            status: "error",
+            error: "No se pudo reproducir la pronunciación.",
+          });
+        }
+      };
+      await playExclusiveLanguageAudio(previousAudio, audio);
+
+      if (requestId === audioRequestIdRef.current) {
+        setAudioPlayback({ key, status: "playing", error: null });
+      }
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return;
+      }
+
+      if (requestId === audioRequestIdRef.current) {
+        setAudioPlayback({
+          key,
+          status: "error",
+          error:
+            error instanceof Error
+              ? error.message
+              : "No se pudo preparar la pronunciación.",
+        });
+      }
+    } finally {
+      if (audioAbortControllerRef.current === controller) {
+        audioAbortControllerRef.current = null;
+      }
+    }
+  }
+
   if (!authorized || (!lesson && !loadError)) {
     return (
       <main className="flow-shell">
@@ -711,6 +951,8 @@ export function LanguageLessonScreen({
                       key={option.value}
                       type="button"
                       onClick={() => {
+                        stopLanguageAudio();
+                        setAudioPlayback(null);
                         setContentVersion(option.value);
                         setCopiedSection(null);
                       }}
@@ -757,8 +999,13 @@ export function LanguageLessonScreen({
         {lesson.status === "ready" && readyContent ? (
           <ReadyLesson
             content={readyContent}
+            contentVersion={contentVersion}
             copiedSection={copiedSection}
+            audioPlayback={audioPlayback}
             onCopy={(sectionKey) => void copySection(sectionKey)}
+            onPlayAudio={(section, index) =>
+              void playLanguageAudio(section, index)
+            }
           />
         ) : null}
 
@@ -773,7 +1020,10 @@ export function LanguageLessonScreen({
             className="lesson-delete-button"
             type="button"
             disabled={deleting || processing || simplifying}
-            onClick={() => void deleteLesson()}
+            onClick={() => {
+              stopLanguageAudio();
+              void deleteLesson();
+            }}
           >
             {deleting ? "Eliminando…" : "Eliminar lección"}
           </button>

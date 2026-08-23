@@ -6,6 +6,19 @@ import type { AuthStore, AuthUser } from "../src/auth/repository.js";
 import { createSessionCookie } from "../src/auth/session.js";
 import { createServer } from "../src/create-server.js";
 import type {
+  GenerateLanguageAudioInput,
+  LanguageAudioProvider,
+} from "../src/languages/audio.js";
+import type {
+  ClaimLanguageAudioInput,
+  LanguageAudioAsset,
+  LanguageAudioStore,
+} from "../src/languages/audio-repository.js";
+import type {
+  LanguageAudioStorage,
+  PutLanguageAudioInput,
+} from "../src/languages/audio-storage.js";
+import type {
   LanguageLessonSource,
   StructuredLanguageLesson,
 } from "../src/languages/contracts.js";
@@ -517,6 +530,132 @@ class FakeLanguageLessonProcessor implements LanguageLessonProcessor {
   }
 }
 
+class MemoryLanguageAudioStore implements LanguageAudioStore {
+  readonly assets: LanguageAudioAsset[] = [];
+  private timestamp = Date.parse("2026-08-16T16:00:00.000Z");
+
+  private now() {
+    this.timestamp += 1_000;
+    return new Date(this.timestamp);
+  }
+
+  private matchingAsset(input: ClaimLanguageAudioInput) {
+    return this.assets.find(
+      (asset) =>
+        asset.userId === input.userId &&
+        asset.language === input.language &&
+        asset.normalizedText === input.normalizedText &&
+        asset.provider === input.provider &&
+        asset.model === input.model &&
+        asset.voice === input.voice &&
+        asset.audioFormat === input.audioFormat,
+    );
+  }
+
+  async claim(input: ClaimLanguageAudioInput) {
+    const existing = this.matchingAsset(input);
+
+    if (existing?.status === "ready") {
+      return { kind: "ready" as const, asset: existing };
+    }
+
+    if (existing?.status === "generating") {
+      return { kind: "processing" as const };
+    }
+
+    const generationStartedAt = this.now();
+    const now = this.now();
+    const asset: LanguageAudioAsset = existing ?? {
+      id: randomUUID(),
+      ...input,
+      status: "generating",
+      generationStartedAt,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    Object.assign(asset, input, {
+      status: "generating",
+      generationStartedAt,
+      updatedAt: now,
+    });
+
+    if (!existing) this.assets.push(asset);
+
+    return { kind: "claimed" as const, asset, generationStartedAt };
+  }
+
+  async complete(input: { assetId: string; generationStartedAt: Date }) {
+    const asset = this.assets.find(({ id }) => id === input.assetId);
+
+    if (
+      !asset ||
+      asset.status !== "generating" ||
+      asset.generationStartedAt?.getTime() !==
+        input.generationStartedAt.getTime()
+    ) {
+      return null;
+    }
+
+    asset.status = "ready";
+    asset.generationStartedAt = null;
+    asset.updatedAt = this.now();
+    return asset;
+  }
+
+  async fail(input: { assetId: string; generationStartedAt: Date }) {
+    const asset = this.assets.find(({ id }) => id === input.assetId);
+
+    if (
+      !asset ||
+      asset.status !== "generating" ||
+      asset.generationStartedAt?.getTime() !==
+        input.generationStartedAt.getTime()
+    ) {
+      return null;
+    }
+
+    asset.status = "failed";
+    asset.generationStartedAt = null;
+    asset.updatedAt = this.now();
+    return asset;
+  }
+}
+
+class FakeLanguageAudioProvider implements LanguageAudioProvider {
+  readonly calls: GenerateLanguageAudioInput[] = [];
+  result = new Uint8Array([73, 68, 51]);
+  error: Error | null = null;
+  wait: Promise<void> | null = null;
+
+  async generate(input: GenerateLanguageAudioInput) {
+    this.calls.push(input);
+    if (this.wait) await this.wait;
+    if (this.error) throw this.error;
+    return this.result;
+  }
+}
+
+class MemoryLanguageAudioStorage implements LanguageAudioStorage {
+  readonly objects = new Map<string, Uint8Array>();
+  readonly puts: PutLanguageAudioInput[] = [];
+  readonly gets: string[] = [];
+  putError: Error | null = null;
+
+  async put(input: PutLanguageAudioInput) {
+    this.puts.push(input);
+    if (this.putError) throw this.putError;
+    this.objects.set(input.key, input.body);
+  }
+
+  async get(key: string) {
+    this.gets.push(key);
+    const object = this.objects.get(key);
+    if (!object) throw new Error("Audio object missing.");
+    return object;
+  }
+}
+
 function sessionCookie(userId: string) {
   return createSessionCookie(userId).split(";", 1)[0];
 }
@@ -524,16 +663,25 @@ function sessionCookie(userId: string) {
 function testServer(
   store = new MemoryLanguageStore(),
   processor = new FakeLanguageLessonProcessor(),
+  audioStore = new MemoryLanguageAudioStore(),
+  audioProvider = new FakeLanguageAudioProvider(),
+  audioStorage = new MemoryLanguageAudioStorage(),
 ) {
   return {
     store,
     processor,
+    audioStore,
+    audioProvider,
+    audioStorage,
     server: createServer(
       {},
       {
         authStore: new MemoryAuthStore(),
         languageStore: store,
         languageLessonProcessor: processor,
+        languageAudioStore: audioStore,
+        languageAudioProvider: audioProvider,
+        languageAudioStorage: audioStorage,
       },
     ),
   };
@@ -542,12 +690,14 @@ function testServer(
 async function createProject(
   server: ReturnType<typeof createServer>,
   cookie: string,
+  language = "Alemán",
+  level = "Nivel 2",
 ) {
   const response = await server.inject({
     method: "POST",
     url: "/languages/projects",
     headers: { cookie },
-    payload: { language: "  Alemán  ", level: "  Nivel 2  " },
+    payload: { language: `  ${language}  `, level: `  ${level}  ` },
   });
 
   assert.equal(response.statusCode, 201);
@@ -607,6 +757,21 @@ async function simplifyLesson(
     url: `/languages/projects/${projectId}/lessons/${lessonId}/simplify`,
     headers: { cookie },
     ...(regenerate ? { payload: { regenerate: true } } : {}),
+  });
+}
+
+async function requestLessonAudio(
+  server: ReturnType<typeof createServer>,
+  projectId: string,
+  lessonId: string,
+  cookie: string,
+  payload: unknown,
+) {
+  return server.inject({
+    method: "POST",
+    url: `/languages/projects/${projectId}/lessons/${lessonId}/audio`,
+    headers: { cookie },
+    payload,
   });
 }
 
@@ -906,8 +1071,8 @@ test("empty input is rejected before processing", async () => {
   }
 });
 
-test("another user cannot read, process, simplify, update or delete a lesson", async () => {
-  const { processor, server } = testServer();
+test("another user cannot read, process, simplify, play, update or delete a lesson", async () => {
+  const { processor, audioProvider, server } = testServer();
   const ownerCookie = sessionCookie(firstUser.id);
   const otherCookie = sessionCookie(secondUser.id);
 
@@ -931,6 +1096,13 @@ test("another user cannot read, process, simplify, update or delete a lesson", a
       lesson.id,
       otherCookie,
     );
+    const audio = await requestLessonAudio(
+      server,
+      project.id,
+      lesson.id,
+      otherCookie,
+      { version: "original", section: "vocabulary", index: 0 },
+    );
     const update = await server.inject({
       method: "PATCH",
       url: `/languages/projects/${project.id}/lessons/${lesson.id}`,
@@ -946,9 +1118,11 @@ test("another user cannot read, process, simplify, update or delete a lesson", a
     assert.equal(detail.statusCode, 404);
     assert.equal(processing.statusCode, 404);
     assert.equal(simplification.statusCode, 404);
+    assert.equal(audio.statusCode, 404);
     assert.equal(update.statusCode, 404);
     assert.equal(deletion.statusCode, 404);
     assert.equal(processor.calls.length, 0);
+    assert.equal(audioProvider.calls.length, 0);
     assert.equal(processor.simplificationCalls.length, 0);
   } finally {
     await server.close();
@@ -1197,6 +1371,7 @@ test("a persisted simplification makes the endpoint idempotent", async () => {
     const project = await createProject(server, cookie);
     const lesson = await createLesson(server, project.id, cookie);
     await processLesson(server, project.id, lesson.id, cookie);
+
     processor.simplificationResult = simplifiedLesson;
 
     const first = await simplifyLesson(
@@ -1401,6 +1576,375 @@ test("regeneration errors preserve the original and previous simplification", as
   } finally {
     await server.close();
   }
+});
+
+test("lesson audio resolves only vocabulary terms and phrase text using the project language", async () => {
+  const { audioProvider, server } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+
+  try {
+    const project = await createProject(server, cookie);
+    const lesson = await createLesson(server, project.id, cookie);
+    await processLesson(server, project.id, lesson.id, cookie);
+
+    const vocabulary = await requestLessonAudio(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      { version: "original", section: "vocabulary", index: 0 },
+    );
+    const phrase = await requestLessonAudio(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      { version: "original", section: "phrases", index: 0 },
+    );
+
+    assert.equal(vocabulary.statusCode, 200);
+    assert.equal(phrase.statusCode, 200);
+    assert.deepEqual(audioProvider.calls, [
+      { text: "müde", language: "Alemán" },
+      { text: "Ich muss früh aufstehen.", language: "Alemán" },
+    ]);
+    assert.ok(
+      audioProvider.calls.every(
+        ({ text }) =>
+          text !== "cansado" &&
+          text !== "Ich bin müde." &&
+          text !== "Tengo que levantarme temprano.",
+      ),
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("lesson audio rejects arbitrary text, unsupported sections and invalid indexes", async () => {
+  const { audioProvider, server } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+
+  try {
+    const project = await createProject(server, cookie);
+    const lesson = await createLesson(server, project.id, cookie);
+    await processLesson(server, project.id, lesson.id, cookie);
+
+    const unauthenticated = await server.inject({
+      method: "POST",
+      url: `/languages/projects/${project.id}/lessons/${lesson.id}/audio`,
+      payload: { version: "original", section: "vocabulary", index: 0 },
+    });
+
+    const arbitraryText = await requestLessonAudio(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      {
+        version: "original",
+        section: "vocabulary",
+        index: 0,
+        text: "Texto elegido por el navegador",
+      },
+    );
+    const unsupportedSection = await requestLessonAudio(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      { version: "original", section: "miniStory", index: 0 },
+    );
+    const invalidIndex = await requestLessonAudio(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      { version: "original", section: "phrases", index: 99 },
+    );
+
+    assert.equal(unauthenticated.statusCode, 401);
+    assert.equal(arbitraryText.statusCode, 400);
+    assert.equal(unsupportedSection.statusCode, 400);
+    assert.equal(invalidIndex.statusCode, 400);
+    assert.equal(audioProvider.calls.length, 0);
+  } finally {
+    await server.close();
+  }
+});
+
+test("first audio access stores private cache metadata and later accesses reuse it", async () => {
+  const { audioStore, audioProvider, audioStorage, server } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+
+  try {
+    const project = await createProject(server, cookie);
+    const firstLesson = await createLesson(server, project.id, cookie);
+    const secondLesson = await createLesson(server, project.id, cookie);
+    await processLesson(server, project.id, firstLesson.id, cookie);
+    await processLesson(server, project.id, secondLesson.id, cookie);
+    const payload = { version: "original", section: "vocabulary", index: 0 };
+
+    const first = await requestLessonAudio(
+      server,
+      project.id,
+      firstLesson.id,
+      cookie,
+      payload,
+    );
+    const second = await requestLessonAudio(
+      server,
+      project.id,
+      firstLesson.id,
+      cookie,
+      payload,
+    );
+    const anotherLesson = await requestLessonAudio(
+      server,
+      project.id,
+      secondLesson.id,
+      cookie,
+      payload,
+    );
+
+    assert.equal(first.statusCode, 200);
+    assert.equal(first.body, "ID3");
+    assert.match(first.headers["content-type"] ?? "", /^audio\/mpeg/);
+    assert.equal(second.statusCode, 200);
+    assert.equal(anotherLesson.statusCode, 200);
+    assert.equal(audioProvider.calls.length, 1);
+    assert.equal(audioStorage.puts.length, 1);
+    assert.equal(audioStorage.gets.length, 2);
+    assert.equal(audioStore.assets.length, 1);
+    assert.deepEqual(
+      {
+        userId: audioStore.assets[0]?.userId,
+        language: audioStore.assets[0]?.language,
+        normalizedText: audioStore.assets[0]?.normalizedText,
+        originalText: audioStore.assets[0]?.originalText,
+        provider: audioStore.assets[0]?.provider,
+        model: audioStore.assets[0]?.model,
+        voice: audioStore.assets[0]?.voice,
+        audioFormat: audioStore.assets[0]?.audioFormat,
+        status: audioStore.assets[0]?.status,
+      },
+      {
+        userId: firstUser.id,
+        language: "Alemán",
+        normalizedText: "müde",
+        originalText: "müde",
+        provider: "openai",
+        model: "gpt-4o-mini-tts",
+        voice: "coral",
+        audioFormat: "mp3",
+        status: "ready",
+      },
+    );
+    assert.match(
+      audioStore.assets[0]?.storageKey ?? "",
+      /^language-audio\/[a-f0-9]{64}\.mp3$/,
+    );
+    assert.doesNotMatch(audioStore.assets[0]?.storageKey ?? "", /müde/);
+    const responses = `${first.body}${second.body}${anotherLesson.body}`;
+    assert.doesNotMatch(
+      responses,
+      /R2_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY|ENDPOINT|BUCKET_NAME|REGION)/,
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("audio cache separates languages and supports original and simplified versions", async () => {
+  const { store, audioProvider, server } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+
+  try {
+    const germanProject = await createProject(server, cookie, "Alemán");
+    const germanLesson = await createLesson(server, germanProject.id, cookie);
+    await processLesson(server, germanProject.id, germanLesson.id, cookie);
+    const storedGermanLesson = store.lessons.find(
+      ({ id }) => id === germanLesson.id,
+    );
+    assert.ok(storedGermanLesson);
+    storedGermanLesson.simplifiedStructuredContent = simplifiedLesson;
+    storedGermanLesson.simplifiedAt = new Date();
+
+    const polishProject = await createProject(server, cookie, "Polaco");
+    const polishLesson = await createLesson(server, polishProject.id, cookie);
+    await processLesson(server, polishProject.id, polishLesson.id, cookie);
+
+    const original = await requestLessonAudio(
+      server,
+      germanProject.id,
+      germanLesson.id,
+      cookie,
+      { version: "original", section: "phrases", index: 0 },
+    );
+    const simplified = await requestLessonAudio(
+      server,
+      germanProject.id,
+      germanLesson.id,
+      cookie,
+      { version: "simplified", section: "phrases", index: 0 },
+    );
+    const otherLanguage = await requestLessonAudio(
+      server,
+      polishProject.id,
+      polishLesson.id,
+      cookie,
+      { version: "original", section: "vocabulary", index: 0 },
+    );
+    const germanVocabulary = await requestLessonAudio(
+      server,
+      germanProject.id,
+      germanLesson.id,
+      cookie,
+      { version: "original", section: "vocabulary", index: 0 },
+    );
+
+    assert.equal(original.statusCode, 200);
+    assert.equal(simplified.statusCode, 200);
+    assert.equal(otherLanguage.statusCode, 200);
+    assert.equal(germanVocabulary.statusCode, 200);
+    assert.deepEqual(audioProvider.calls, [
+      { text: "Ich muss früh aufstehen.", language: "Alemán" },
+      { text: "Ich stehe früh auf.", language: "Alemán" },
+      { text: "müde", language: "Polaco" },
+      { text: "müde", language: "Alemán" },
+    ]);
+  } finally {
+    await server.close();
+  }
+});
+
+test("concurrent audio requests make only one TTS call", async () => {
+  const { audioProvider, server } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+  let release = () => {};
+
+  try {
+    const project = await createProject(server, cookie);
+    const lesson = await createLesson(server, project.id, cookie);
+    await processLesson(server, project.id, lesson.id, cookie);
+    audioProvider.wait = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const payload = { version: "original", section: "vocabulary", index: 0 };
+    const first = requestLessonAudio(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      payload,
+    );
+
+    for (
+      let attempt = 0;
+      attempt < 20 && audioProvider.calls.length === 0;
+      attempt += 1
+    ) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+
+    const second = await requestLessonAudio(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      payload,
+    );
+    release();
+    const completed = await first;
+
+    assert.equal(completed.statusCode, 200);
+    assert.equal(second.statusCode, 409);
+    assert.equal(
+      second.json().error,
+      "LANGUAGE_AUDIO_GENERATION_PROCESSING",
+    );
+    assert.equal(audioProvider.calls.length, 1);
+  } finally {
+    release();
+    await server.close();
+  }
+});
+
+test("TTS and storage failures never leave an audio asset ready", async () => {
+  const ttsDependencies = testServer();
+  const storageDependencies = testServer();
+  const cookie = sessionCookie(firstUser.id);
+
+  try {
+    const ttsProject = await createProject(ttsDependencies.server, cookie);
+    const ttsLesson = await createLesson(
+      ttsDependencies.server,
+      ttsProject.id,
+      cookie,
+    );
+    await processLesson(
+      ttsDependencies.server,
+      ttsProject.id,
+      ttsLesson.id,
+      cookie,
+    );
+    ttsDependencies.audioProvider.error = new Error("Provider unavailable");
+    const failedTts = await requestLessonAudio(
+      ttsDependencies.server,
+      ttsProject.id,
+      ttsLesson.id,
+      cookie,
+      { version: "original", section: "vocabulary", index: 0 },
+    );
+
+    const storageProject = await createProject(storageDependencies.server, cookie);
+    const storageLesson = await createLesson(
+      storageDependencies.server,
+      storageProject.id,
+      cookie,
+    );
+    await processLesson(
+      storageDependencies.server,
+      storageProject.id,
+      storageLesson.id,
+      cookie,
+    );
+    storageDependencies.audioStorage.putError = new Error("Storage unavailable");
+    const failedStorage = await requestLessonAudio(
+      storageDependencies.server,
+      storageProject.id,
+      storageLesson.id,
+      cookie,
+      { version: "original", section: "vocabulary", index: 0 },
+    );
+
+    assert.equal(failedTts.statusCode, 502);
+    assert.equal(ttsDependencies.audioStorage.puts.length, 0);
+    assert.equal(ttsDependencies.audioStore.assets[0]?.status, "failed");
+    assert.equal(failedStorage.statusCode, 502);
+    assert.equal(storageDependencies.audioStorage.puts.length, 1);
+    assert.equal(storageDependencies.audioStore.assets[0]?.status, "failed");
+  } finally {
+    await ttsDependencies.server.close();
+    await storageDependencies.server.close();
+  }
+});
+
+test("language audio migration is additive and contains only private cache metadata", async () => {
+  const migration = await readFile(
+    new URL(
+      "../drizzle/0010_create_language_audio_assets.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+
+  assert.match(migration, /CREATE TABLE "language_audio_assets"/);
+  assert.match(migration, /language_audio_assets_cache_unique/);
+  assert.match(migration, /"generation_started_at" timestamp with time zone/);
+  assert.match(migration, /'generating', 'ready', 'failed'/);
+  assert.doesNotMatch(migration, /(?:audio_data|bytea|R2_SECRET|OPENAI_API_KEY)/i);
+  assert.doesNotMatch(migration, /\b(?:DROP|TRUNCATE)\b|\bDELETE\s+FROM\b/i);
 });
 
 test("Idiomas Phase 2 migration is additive and keeps existing lessons as draft", async () => {

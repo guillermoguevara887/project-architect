@@ -166,6 +166,35 @@ export const LANGUAGE_LESSON_CONTENT_VERSION_OPTIONS = [
 export type LanguageLessonContentVersion =
   (typeof LANGUAGE_LESSON_CONTENT_VERSION_OPTIONS)[number]["value"];
 
+export type LanguageLessonAudioSection = "vocabulary" | "phrases";
+
+export function languageLessonAudioRequest(
+  version: LanguageLessonContentVersion,
+  section: LanguageLessonAudioSection,
+  index: number,
+) {
+  return { version, section, index };
+}
+
+export type PlayableLanguageAudio = {
+  currentTime: number;
+  pause(): void;
+  play(): Promise<void>;
+};
+
+export async function playExclusiveLanguageAudio(
+  current: PlayableLanguageAudio | null,
+  next: PlayableLanguageAudio,
+) {
+  if (current && current !== next) {
+    current.pause();
+    current.currentTime = 0;
+  }
+
+  await next.play();
+  return next;
+}
+
 export function languageLessonContentForVersion(
   lesson: Pick<
     LanguageLesson,

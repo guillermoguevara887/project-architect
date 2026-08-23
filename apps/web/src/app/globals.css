@@ -1357,6 +1357,61 @@ button:disabled {
   font-weight: 750;
 }
 
+.lesson-audio-heading {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.55rem 0.75rem;
+}
+
+.lesson-audio-button {
+  display: inline-flex;
+  width: 2.65rem;
+  min-width: 2.65rem;
+  min-height: 2.65rem;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--lesson-section-border);
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: none;
+  color: var(--lesson-section-accent);
+}
+
+.lesson-audio-button:hover:not(:disabled) {
+  border-color: var(--lesson-section-accent);
+  background: color-mix(in srgb, var(--lesson-section-accent) 8%, #fff);
+}
+
+.lesson-audio-button:focus-visible {
+  outline: 3px solid rgb(14 165 164 / 22%);
+  outline-offset: 0.15rem;
+}
+
+.lesson-audio-button[data-state="playing"] {
+  border-color: var(--lesson-section-accent);
+  background: var(--lesson-section-accent);
+  color: #fff;
+}
+
+.lesson-audio-button[data-state="loading"] {
+  letter-spacing: 0.08em;
+}
+
+.lesson-audio-icon {
+  width: 1.15rem;
+  height: 1.15rem;
+}
+
+.lesson-audio-heading .lesson-audio-error {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #b42318;
+  font-size: 0.78rem;
+}
+
 .lesson-item p,
 .lesson-item em,
 .lesson-item small {

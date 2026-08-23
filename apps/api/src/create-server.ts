@@ -18,6 +18,19 @@ import {
   languageLessonProcessor,
   type LanguageLessonProcessor,
 } from "./languages/lesson-processor.js";
+import {
+  languageAudioProvider,
+  type LanguageAudioProvider,
+} from "./languages/audio.js";
+import {
+  languageAudioStore,
+  type LanguageAudioStore,
+} from "./languages/audio-repository.js";
+import {
+  languageAudioStorage,
+  type LanguageAudioStorage,
+} from "./languages/audio-storage.js";
+import { registerLanguageAudioRoutes } from "./languages/audio-routes.js";
 import { languageStore, type LanguageStore } from "./languages/repository.js";
 import { registerLanguageRoutes } from "./languages/routes.js";
 
@@ -27,6 +40,9 @@ type ServerDependencies = {
   journeyStore?: JourneyStore;
   languageStore?: LanguageStore;
   languageLessonProcessor?: LanguageLessonProcessor;
+  languageAudioStore?: LanguageAudioStore;
+  languageAudioProvider?: LanguageAudioProvider;
+  languageAudioStorage?: LanguageAudioStorage;
 };
 
 function databaseFailureReason(error: unknown) {
@@ -127,6 +143,13 @@ export function configureServer(
     configuredAuthStore,
     dependencies.languageLessonProcessor ?? languageLessonProcessor,
   );
+  registerLanguageAudioRoutes(server, {
+    authStore: configuredAuthStore,
+    languageStore: dependencies.languageStore ?? languageStore,
+    audioStore: dependencies.languageAudioStore ?? languageAudioStore,
+    provider: dependencies.languageAudioProvider ?? languageAudioProvider,
+    storage: dependencies.languageAudioStorage ?? languageAudioStorage,
+  });
 
   server.addHook("onClose", async () => {
     await closeDbConnection();

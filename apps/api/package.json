@@ -19,6 +19,7 @@
     "db:migrate:bootstrap": "tsx src/db/migration-bootstrap.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1116.0",
     "dotenv": "^16.4.7",
     "drizzle-orm": "^0.44.2",
     "fastify": "^5.4.0",

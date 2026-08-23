@@ -7,13 +7,54 @@ import {
   formatLanguageLessonTitle,
   INITIAL_LANGUAGE_LESSON_CREATION_STATE,
   LANGUAGE_LESSON_SOURCE_OPTIONS,
+  languageLessonAudioRequest,
   languageLessonCreationReducer,
   languageLessonContentForVersion,
   languageLessonFilterEmptyMessage,
+  playExclusiveLanguageAudio,
   type LanguageLesson,
   type LanguageLessonSource,
   type StructuredLanguageLesson,
 } from "../../web/src/lib/languages.js";
+
+test("lesson audio UI builds positional requests without arbitrary text", () => {
+  assert.deepEqual(languageLessonAudioRequest("original", "vocabulary", 2), {
+    version: "original",
+    section: "vocabulary",
+    index: 2,
+  });
+  assert.deepEqual(languageLessonAudioRequest("simplified", "phrases", 1), {
+    version: "simplified",
+    section: "phrases",
+    index: 1,
+  });
+});
+
+test("lesson audio UI starts the selected audio and stops the previous one", async () => {
+  const events: string[] = [];
+  const previous = {
+    currentTime: 8,
+    pause() {
+      events.push("pause-previous");
+    },
+    async play() {
+      events.push("play-previous");
+    },
+  };
+  const next = {
+    currentTime: 0,
+    pause() {
+      events.push("pause-next");
+    },
+    async play() {
+      events.push("play-next");
+    },
+  };
+
+  assert.equal(await playExclusiveLanguageAudio(previous, next), next);
+  assert.equal(previous.currentTime, 0);
+  assert.deepEqual(events, ["pause-previous", "play-next"]);
+});
 
 test("lesson creation source stays hidden until the primary action opens it", () => {
   assert.equal(INITIAL_LANGUAGE_LESSON_CREATION_STATE.status, "closed");

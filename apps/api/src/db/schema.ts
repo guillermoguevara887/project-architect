@@ -401,3 +401,61 @@ export const languageLessons = pgTable(
     ),
   }),
 );
+
+export type LanguageAudioAssetStatus = "generating" | "ready" | "failed";
+
+export const languageAudioAssets = pgTable(
+  "language_audio_assets",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    language: text("language").notNull(),
+    normalizedText: text("normalized_text").notNull(),
+    originalText: text("original_text").notNull(),
+    provider: text("provider").notNull(),
+    model: text("model").notNull(),
+    voice: text("voice").notNull(),
+    audioFormat: text("audio_format").notNull(),
+    storageKey: text("storage_key").notNull(),
+    status: text("status")
+      .$type<LanguageAudioAssetStatus>()
+      .default("generating")
+      .notNull(),
+    generationStartedAt: timestamp("generation_started_at", {
+      withTimezone: true,
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    cacheUnique: uniqueIndex("language_audio_assets_cache_unique").on(
+      table.userId,
+      table.language,
+      table.normalizedText,
+      table.provider,
+      table.model,
+      table.voice,
+      table.audioFormat,
+    ),
+    storageKeyUnique: uniqueIndex(
+      "language_audio_assets_storage_key_unique",
+    ).on(table.storageKey),
+    userCreatedAtIdx: index(
+      "language_audio_assets_user_created_at_idx",
+    ).on(table.userId, table.createdAt.desc()),
+    statusCheck: check(
+      "language_audio_assets_status_check",
+      sql`${table.status} in ('generating', 'ready', 'failed')`,
+    ),
+    generationStateCheck: check(
+      "language_audio_assets_generation_state_check",
+      sql`(${table.status} = 'generating' and ${table.generationStartedAt} is not null) or (${table.status} <> 'generating' and ${table.generationStartedAt} is null)`,
+    ),
+  }),
+);
