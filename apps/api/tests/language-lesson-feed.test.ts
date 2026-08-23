@@ -2,14 +2,68 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   canRegenerateLanguageLesson,
+  createLanguageLessonSubmissionGuard,
   filterLanguageLessons,
   formatLanguageLessonTitle,
+  INITIAL_LANGUAGE_LESSON_CREATION_STATE,
+  LANGUAGE_LESSON_SOURCE_OPTIONS,
+  languageLessonCreationReducer,
   languageLessonContentForVersion,
   languageLessonFilterEmptyMessage,
   type LanguageLesson,
   type LanguageLessonSource,
   type StructuredLanguageLesson,
 } from "../../web/src/lib/languages.js";
+
+test("lesson creation source stays hidden until the primary action opens it", () => {
+  assert.equal(INITIAL_LANGUAGE_LESSON_CREATION_STATE.status, "closed");
+
+  const opened = languageLessonCreationReducer(
+    INITIAL_LANGUAGE_LESSON_CREATION_STATE,
+    { type: "open" },
+  );
+
+  assert.equal(opened.status, "choosing");
+  assert.equal(opened.lessonSource, "free");
+  assert.deepEqual(
+    LANGUAGE_LESSON_SOURCE_OPTIONS.map(({ label }) => label),
+    ["Assimil", "Marco de idiomas", "Lección libre"],
+  );
+});
+
+test("cancelling lesson creation closes the source step without submitting", () => {
+  const opened = languageLessonCreationReducer(
+    INITIAL_LANGUAGE_LESSON_CREATION_STATE,
+    { type: "open" },
+  );
+  const cancelled = languageLessonCreationReducer(opened, { type: "cancel" });
+
+  assert.deepEqual(cancelled, INITIAL_LANGUAGE_LESSON_CREATION_STATE);
+});
+
+test("continuing lesson creation keeps the selected source and blocks duplicate submissions", () => {
+  const opened = languageLessonCreationReducer(
+    INITIAL_LANGUAGE_LESSON_CREATION_STATE,
+    { type: "open" },
+  );
+  const selected = languageLessonCreationReducer(opened, {
+    type: "select-source",
+    lessonSource: "language_framework",
+  });
+  const creating = languageLessonCreationReducer(selected, { type: "start" });
+  const guard = createLanguageLessonSubmissionGuard();
+
+  assert.equal(creating.status, "creating");
+  assert.equal(creating.lessonSource, "language_framework");
+  assert.deepEqual(
+    languageLessonCreationReducer(creating, { type: "failed" }),
+    { status: "choosing", lessonSource: "language_framework" },
+  );
+  assert.equal(guard.start(), true);
+  assert.equal(guard.start(), false);
+  guard.finish();
+  assert.equal(guard.start(), true);
+});
 
 function lesson(
   id: string,

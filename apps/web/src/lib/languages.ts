@@ -33,6 +33,66 @@ export const LANGUAGE_LESSON_SOURCE_OPTIONS = [
 export type LanguageLessonSource =
   (typeof LANGUAGE_LESSON_SOURCE_OPTIONS)[number]["value"];
 
+export type LanguageLessonCreationState = {
+  status: "closed" | "choosing" | "creating";
+  lessonSource: LanguageLessonSource;
+};
+
+export type LanguageLessonCreationAction =
+  | { type: "open" }
+  | { type: "select-source"; lessonSource: LanguageLessonSource }
+  | { type: "start" }
+  | { type: "cancel" }
+  | { type: "failed" };
+
+export const INITIAL_LANGUAGE_LESSON_CREATION_STATE = {
+  status: "closed",
+  lessonSource: "free",
+} satisfies LanguageLessonCreationState;
+
+export function languageLessonCreationReducer(
+  state: LanguageLessonCreationState,
+  action: LanguageLessonCreationAction,
+): LanguageLessonCreationState {
+  switch (action.type) {
+    case "open":
+      return { status: "choosing", lessonSource: "free" };
+    case "select-source":
+      return state.status === "choosing"
+        ? { ...state, lessonSource: action.lessonSource }
+        : state;
+    case "start":
+      return state.status === "choosing"
+        ? { ...state, status: "creating" }
+        : state;
+    case "cancel":
+      return state.status === "creating"
+        ? state
+        : INITIAL_LANGUAGE_LESSON_CREATION_STATE;
+    case "failed":
+      return state.status === "creating"
+        ? { ...state, status: "choosing" }
+        : state;
+  }
+
+  return state;
+}
+
+export function createLanguageLessonSubmissionGuard() {
+  let submitting = false;
+
+  return {
+    start() {
+      if (submitting) return false;
+      submitting = true;
+      return true;
+    },
+    finish() {
+      submitting = false;
+    },
+  };
+}
+
 export const LANGUAGE_LESSON_FILTER_OPTIONS = [
   {
     value: "all",

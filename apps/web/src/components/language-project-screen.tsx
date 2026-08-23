@@ -2,17 +2,19 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import {
+  createLanguageLessonSubmissionGuard,
   filterLanguageLessons,
   formatLanguageDate,
   formatLanguageLessonTitle,
+  INITIAL_LANGUAGE_LESSON_CREATION_STATE,
   LANGUAGE_LESSON_FILTER_OPTIONS,
   LANGUAGE_LESSON_SOURCE_OPTIONS,
+  languageLessonCreationReducer,
   languageLessonFilterEmptyMessage,
   type LanguageLesson,
   type LanguageLessonFilter,
-  type LanguageLessonSource,
   type LanguageProject,
 } from "@/lib/languages";
 import { useSessionGuard } from "@/lib/use-session-guard";
@@ -24,11 +26,16 @@ export function LanguageProjectScreen({ projectId }: { projectId: string }) {
   const [lessons, setLessons] = useState<LanguageLesson[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
-  const [lessonSource, setLessonSource] =
-    useState<LanguageLessonSource>("free");
+  const [creation, dispatchCreation] = useReducer(
+    languageLessonCreationReducer,
+    INITIAL_LANGUAGE_LESSON_CREATION_STATE,
+  );
+  const creationSubmissionGuard = useRef(
+    createLanguageLessonSubmissionGuard(),
+  );
   const [lessonFilter, setLessonFilter] =
     useState<LanguageLessonFilter>("all");
+  const creating = creation.status === "creating";
 
   useEffect(() => {
     if (!authorized) return;
@@ -81,7 +88,9 @@ export function LanguageProjectScreen({ projectId }: { projectId: string }) {
   }, [authorized, projectId, router]);
 
   async function createLesson() {
-    setCreating(true);
+    if (!creationSubmissionGuard.current.start()) return;
+
+    dispatchCreation({ type: "start" });
     setActionError(null);
     try {
       const response = await fetch(
@@ -90,7 +99,7 @@ export function LanguageProjectScreen({ projectId }: { projectId: string }) {
           method: "POST",
           credentials: "include",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ lessonSource }),
+          body: JSON.stringify({ lessonSource: creation.lessonSource }),
         },
       );
       if (response.status === 401) {
@@ -103,13 +112,15 @@ export function LanguageProjectScreen({ projectId }: { projectId: string }) {
       };
       if (!response.ok || !result.lesson) {
         setActionError(result.message ?? "No se pudo crear la lección.");
+        dispatchCreation({ type: "failed" });
         return;
       }
       router.push(`/languages/${projectId}/lessons/${result.lesson.id}`);
     } catch {
       setActionError("No se pudo crear la lección.");
+      dispatchCreation({ type: "failed" });
     } finally {
-      setCreating(false);
+      creationSubmissionGuard.current.finish();
     }
   }
 
@@ -142,35 +153,71 @@ export function LanguageProjectScreen({ projectId }: { projectId: string }) {
         <header className="language-heading">
           <h1 id="language-project-title">{project.language} — {project.level}</h1>
         </header>
-        <form
-          className="lesson-create-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void createLesson();
-          }}
-        >
-          <fieldset className="lesson-source-fieldset">
-            <legend>Procedencia de la lección</legend>
-            <div className="lesson-source-options">
-              {LANGUAGE_LESSON_SOURCE_OPTIONS.map((option) => (
-                <label className="lesson-source-option" key={option.value}>
-                  <input
-                    checked={lessonSource === option.value}
-                    name="lesson-source"
-                    type="radio"
-                    value={option.value}
-                    onChange={() => setLessonSource(option.value)}
-                  />
-                  <span>{option.label}</span>
-                </label>
-              ))}
+        {creation.status === "closed" ? (
+          <div className="lesson-create-launch">
+            <button
+              type="button"
+              onClick={() => {
+                setActionError(null);
+                dispatchCreation({ type: "open" });
+              }}
+            >
+              Crear lección
+            </button>
+          </div>
+        ) : (
+          <form
+            className="lesson-create-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void createLesson();
+            }}
+          >
+            <fieldset className="lesson-source-fieldset" disabled={creating}>
+              <legend>¿De dónde viene esta lección?</legend>
+              <div className="lesson-source-options">
+                {LANGUAGE_LESSON_SOURCE_OPTIONS.map((option) => (
+                  <label className="lesson-source-option" key={option.value}>
+                    <input
+                      checked={creation.lessonSource === option.value}
+                      name="lesson-source"
+                      type="radio"
+                      value={option.value}
+                      onChange={() =>
+                        dispatchCreation({
+                          type: "select-source",
+                          lessonSource: option.value,
+                        })
+                      }
+                    />
+                    <span>{option.label}</span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+            <div className="lesson-create-actions">
+              <button type="submit" disabled={creating}>
+                {creating ? "Creando…" : "Continuar"}
+              </button>
+              <button
+                className="secondary-button"
+                disabled={creating}
+                type="button"
+                onClick={() => {
+                  setActionError(null);
+                  dispatchCreation({ type: "cancel" });
+                }}
+              >
+                Cancelar
+              </button>
             </div>
-          </fieldset>
-          <button type="submit" disabled={creating}>
-            {creating ? "Creando…" : "Crear lección"}
-          </button>
-        </form>
-        {actionError ? <p className="form-error language-error" role="alert">{actionError}</p> : null}
+            {actionError ? (
+              <p className="form-error language-error" role="alert">
+                {actionError}
+              </p>
+            ) : null}
+          </form>
+        )}
         <section className="language-lessons" aria-labelledby="lessons-title">
           <h2 id="lessons-title">Lecciones</h2>
           <div

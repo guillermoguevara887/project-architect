@@ -860,12 +860,23 @@ button:disabled {
 }
 
 .lesson-create-form {
-  display: flex;
+  display: grid;
   min-width: 0;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 1.5rem;
+  gap: 1.15rem;
   margin-top: 2rem;
+  padding: 1.15rem;
+  border: 1px solid #bfe8e4;
+  border-radius: 0.9rem;
+  background: #f4fbfa;
+}
+
+.lesson-create-launch {
+  display: flex;
+  margin-top: 2rem;
+}
+
+.lesson-create-launch > button {
+  flex: 0 0 auto;
 }
 
 .lesson-source-fieldset {
@@ -922,12 +933,22 @@ button:disabled {
   overflow-wrap: anywhere;
 }
 
-.lesson-create-form > button {
-  flex: 0 0 auto;
+.lesson-create-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.lesson-create-actions > button {
+  min-width: 7rem;
 }
 
 .language-error {
   margin-top: 2rem;
+}
+
+.lesson-create-form .language-error {
+  margin: 0;
 }
 
 .language-list,
@@ -1543,19 +1564,27 @@ button:disabled {
 
   .language-heading > button,
   .language-heading .primary-link,
-  .lesson-create-form > button,
+  .lesson-create-launch > button,
   .language-form > button,
   .lesson-form > button {
     width: 100%;
   }
 
   .lesson-create-form {
-    align-items: stretch;
-    flex-direction: column;
+    padding: 1rem;
   }
 
   .lesson-source-options {
     grid-template-columns: 1fr;
+  }
+
+  .lesson-create-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .lesson-create-actions > button {
+    width: 100%;
   }
 
   .lesson-filter-button {
