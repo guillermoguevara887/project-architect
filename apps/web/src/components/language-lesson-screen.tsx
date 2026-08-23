@@ -18,6 +18,7 @@ import {
   downloadLanguageAudioBlob,
   formatLanguageLessonTitle,
   getOrCreateLanguageAudioElement,
+  isJapaneseLanguage,
   LANGUAGE_AUDIO_PLAYBACK_RATE_OPTIONS,
   languageDialogueLineIsActive,
   languageLessonAudioButtonLabel,
@@ -28,6 +29,7 @@ import {
   languageLessonAudioToggleAction,
   languageAudioPlaybackErrorMessage,
   languageLessonContentForVersion,
+  languageLessonKanjiCopyText,
   languageStoryAudioDownloadDisabled,
   languageStoryAudioDownloadFilename,
   languageStoryVoiceChangeStopsPlayback,
@@ -52,6 +54,7 @@ const SOURCE_CONTENT_MAX_LENGTH = 100_000;
 
 type LessonSectionKey =
   | "vocabulary"
+  | "kanji"
   | "phrases"
   | "patterns"
   | "miniStory"
@@ -382,6 +385,8 @@ function sectionText(
           [term, meaning, example].filter(Boolean).join("\n"),
         )
         .join("\n\n");
+    case "kanji":
+      return languageLessonKanjiCopyText(lesson.kanji ?? []);
     case "phrases":
       return lesson.phrases
         .map(({ text, translation, note }) =>
@@ -424,6 +429,7 @@ function sectionText(
 
 function ReadyLesson({
   content,
+  language,
   contentVersion,
   copiedSection,
   audioPlayback,
@@ -439,6 +445,7 @@ function ReadyLesson({
   onStoryVoiceChange,
 }: {
   content: StructuredLanguageLesson;
+  language: string;
   contentVersion: LanguageLessonContentVersion;
   copiedSection: LessonSectionKey | null;
   audioPlayback: LanguageLessonAudioPlayback | null;
@@ -474,6 +481,10 @@ function ReadyLesson({
     storyAudioKey,
   );
   const dialogueVoices = assignLanguageDialogueVoices(content.dialogue);
+  const showKanji =
+    isJapaneseLanguage(language) && Boolean(content.kanji?.length);
+  const sectionIndexAfterVocabulary = (baseIndex: number) =>
+    baseIndex + (showKanji ? 1 : 0);
 
   return (
     <div className="lesson-sections">
@@ -507,8 +518,47 @@ function ReadyLesson({
         </div>
       </LessonSection>
 
+      {showKanji ? (
+        <LessonSection
+          sectionIndex={1}
+          sectionKey="kanji"
+          title="Kanji de la lección"
+          copied={copiedSection === "kanji"}
+          onCopy={onCopy}
+        >
+          <div className="lesson-kanji-list">
+            {content.kanji!.slice(0, 4).map((item, index) => (
+              <article className="lesson-kanji-card" key={`${item.word}-${index}`}>
+                <h3 lang="ja">{item.word}</h3>
+                <p className="lesson-kanji-summary">
+                  <span lang="ja">{item.reading}</span>
+                  <span aria-hidden="true"> · </span>
+                  <span>{item.meaning}</span>
+                </p>
+                <div className="lesson-kanji-components">
+                  {item.components.map((component, componentIndex) => (
+                    <div
+                      className="lesson-kanji-component"
+                      key={`${component.character}-${componentIndex}`}
+                    >
+                      <p>
+                        <strong lang="ja">{component.character}</strong>
+                        {component.readingInWord ? (
+                          <span lang="ja">{component.readingInWord}</span>
+                        ) : null}
+                      </p>
+                      <small>{component.meaning}</small>
+                    </div>
+                  ))}
+                </div>
+              </article>
+            ))}
+          </div>
+        </LessonSection>
+      ) : null}
+
       <LessonSection
-        sectionIndex={1}
+        sectionIndex={sectionIndexAfterVocabulary(1)}
         sectionKey="phrases"
         title="Frases"
         copied={copiedSection === "phrases"}
@@ -538,7 +588,7 @@ function ReadyLesson({
       </LessonSection>
 
       <LessonSection
-        sectionIndex={2}
+        sectionIndex={sectionIndexAfterVocabulary(2)}
         sectionKey="patterns"
         title="Patrones"
         copied={copiedSection === "patterns"}
@@ -560,7 +610,7 @@ function ReadyLesson({
       </LessonSection>
 
       <LessonSection
-        sectionIndex={3}
+        sectionIndex={sectionIndexAfterVocabulary(3)}
         sectionKey="miniStory"
         title="Mini historia"
         copied={copiedSection === "miniStory"}
@@ -607,7 +657,7 @@ function ReadyLesson({
       </LessonSection>
 
       <LessonSection
-        sectionIndex={4}
+        sectionIndex={sectionIndexAfterVocabulary(4)}
         sectionKey="automaticThoughts"
         title="Pensamientos automáticos"
         copied={copiedSection === "automaticThoughts"}
@@ -639,7 +689,7 @@ function ReadyLesson({
       </LessonSection>
 
       <LessonSection
-        sectionIndex={5}
+        sectionIndex={sectionIndexAfterVocabulary(5)}
         sectionKey="dialogue"
         title="Diálogo"
         copied={copiedSection === "dialogue"}
@@ -692,7 +742,7 @@ function ReadyLesson({
       </LessonSection>
 
       <LessonSection
-        sectionIndex={6}
+        sectionIndex={sectionIndexAfterVocabulary(6)}
         sectionKey="nextLevelBridge"
         title="Puente al siguiente nivel"
         copied={copiedSection === "nextLevelBridge"}
@@ -719,7 +769,7 @@ function ReadyLesson({
       </LessonSection>
 
       <LessonSection
-        sectionIndex={7}
+        sectionIndex={sectionIndexAfterVocabulary(7)}
         sectionKey="review"
         title="Repaso"
         copied={copiedSection === "review"}
@@ -1458,7 +1508,7 @@ export function LanguageLessonScreen({
           <section className="lesson-processing" aria-live="polite">
             <strong>Procesando lección…</strong>
             <p>
-              MemoOS está organizando el material en las ocho secciones.
+              MemoOS está organizando el material en las secciones de la lección.
             </p>
           </section>
         ) : null}
@@ -1552,6 +1602,7 @@ export function LanguageLessonScreen({
         {lesson.status === "ready" && readyContent ? (
           <ReadyLesson
             content={readyContent}
+            language={project.language}
             contentVersion={contentVersion}
             copiedSection={copiedSection}
             audioPlayback={audioPlayback}

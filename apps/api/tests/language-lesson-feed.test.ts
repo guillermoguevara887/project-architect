@@ -13,6 +13,7 @@ import {
   formatLanguageLessonTitle,
   getOrCreateLanguageAudioElement,
   INITIAL_LANGUAGE_LESSON_CREATION_STATE,
+  isJapaneseLanguage,
   LANGUAGE_AUDIO_PLAYBACK_RATE_OPTIONS,
   LANGUAGE_LESSON_SOURCE_OPTIONS,
   LANGUAGE_STORY_VOICE_OPTIONS,
@@ -27,6 +28,7 @@ import {
   languageLessonCreationReducer,
   languageLessonContentForVersion,
   languageLessonFilterEmptyMessage,
+  languageLessonKanjiCopyText,
   languageStoryAudioDownloadDisabled,
   languageStoryAudioDownloadFilename,
   languageStoryVoiceChangeStopsPlayback,
@@ -1105,6 +1107,68 @@ function structuredContent(text: string): StructuredLanguageLesson {
     review: { keyVocabulary: [text], keyPatterns: [text] },
   };
 }
+
+test("frontend historical lessons can omit kanji and Japanese aliases are detected", () => {
+  const historical = structuredContent("歴史");
+  assert.equal(historical.kanji, undefined);
+  for (const language of ["Japanese", "Japonés", "Japones", "日本語"]) {
+    assert.equal(isJapaneseLanguage(language), true);
+  }
+  assert.equal(isJapaneseLanguage("Alemán"), false);
+});
+
+test("kanji copy is readable and omits a missing reading segment", () => {
+  assert.equal(
+    languageLessonKanjiCopyText([
+      {
+        word: "今日",
+        reading: "きょう",
+        meaning: "hoy",
+        components: [
+          { character: "今", readingInWord: null, meaning: "ahora" },
+          { character: "日", readingInWord: null, meaning: "día" },
+        ],
+      },
+    ]),
+    "今日\nLectura: きょう\nSignificado: hoy\n今 — ahora\n日 — día",
+  );
+});
+
+test("Japanese kanji UI is conditional, ordered, bounded and keeps audio fixes intact", async () => {
+  const component = await readFile(
+    new URL(
+      "../../web/src/components/language-lesson-screen.tsx",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  const styles = await readFile(
+    new URL("../../web/src/app/globals.css", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(component, /isJapaneseLanguage\(language\).*Boolean\(content\.kanji\?\.length\)/s);
+  assert.match(component, /title="Kanji de la lección"/);
+  assert.match(component, /content\.kanji!\.slice\(0, 4\)/);
+  assert.ok(component.indexOf('title="Vocabulario"') < component.indexOf('title="Kanji de la lección"'));
+  assert.ok(component.indexOf('title="Kanji de la lección"') < component.indexOf('title="Frases"'));
+  assert.match(component, /sectionIndexAfterVocabulary\(1\)/);
+  assert.match(component, /sectionIndexAfterVocabulary\(7\)/);
+  assert.match(component, /MemoOS está organizando el material en las secciones de la lección/);
+  assert.doesNotMatch(component, /organizando el material en las ocho secciones/);
+  assert.match(styles, /\.lesson-kanji-card/);
+  assert.match(styles, /grid-template-columns: repeat\(auto-fit/);
+
+  const kanjiSection = component.slice(
+    component.indexOf('{showKanji ? ('),
+    component.indexOf('sectionKey="phrases"'),
+  );
+  assert.doesNotMatch(kanjiSection, /LessonAudioButton|onPlayAudio/);
+  assert.match(component, /languageDialogueLineIsActive\(/);
+  assert.match(component, /getOrCreateLanguageAudioElement\(/);
+  assert.match(component, /\(\) => new Audio\(\)/);
+  assert.doesNotMatch(component, /new Audio\(audioUrl\)/);
+});
 
 test("the all filter returns every lesson in its existing order", () => {
   const filtered = filterLanguageLessons(lessons, "all");

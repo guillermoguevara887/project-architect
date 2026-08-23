@@ -24,8 +24,31 @@ export type LanguageLessonSource = z.infer<typeof languageLessonSourceSchema>;
 
 const requiredText = z.string().trim().min(1);
 
-export const structuredLanguageLessonSchema = z
-  .object({
+const languageLessonKanjiSchema = z
+  .array(
+    z
+      .object({
+        word: requiredText,
+        reading: requiredText,
+        meaning: requiredText,
+        components: z
+          .array(
+            z
+              .object({
+                character: requiredText,
+                readingInWord: requiredText.nullable(),
+                meaning: requiredText,
+              })
+              .strict(),
+          )
+          .min(1)
+          .max(4),
+      })
+      .strict(),
+  )
+  .max(4);
+
+const structuredLanguageLessonShape = {
     vocabulary: z
       .array(
         z
@@ -106,11 +129,28 @@ export const structuredLanguageLessonSchema = z
         keyPatterns: z.array(requiredText).min(1).max(5),
       })
       .strict(),
+};
+
+export const structuredLanguageLessonSchema = z
+  .object({
+    ...structuredLanguageLessonShape,
+    kanji: languageLessonKanjiSchema.optional(),
+  })
+  .strict();
+
+export const generatedStructuredLanguageLessonSchema = z
+  .object({
+    ...structuredLanguageLessonShape,
+    kanji: languageLessonKanjiSchema,
   })
   .strict();
 
 export type StructuredLanguageLesson = z.infer<
   typeof structuredLanguageLessonSchema
+>;
+
+export type GeneratedStructuredLanguageLesson = z.infer<
+  typeof generatedStructuredLanguageLessonSchema
 >;
 
 export const createLanguageProjectSchema = z

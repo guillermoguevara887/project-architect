@@ -1258,8 +1258,8 @@ test("deletion removes only the selected lesson and never renumbers others", asy
   }
 });
 
-test("ready lesson detail persists structure without exposing source content", async () => {
-  const { server } = testServer();
+test("public lesson accepts historical German and Japanese content without kanji", async () => {
+  const { store, server } = testServer();
   const cookie = sessionCookie(firstUser.id);
 
   try {
@@ -1276,8 +1276,20 @@ test("ready lesson detail persists structure without exposing source content", a
     assert.equal(detail.json().lesson.status, "ready");
     assert.equal("sourceContent" in detail.json().lesson, false);
     assert.deepEqual(detail.json().lesson.structuredContent, structuredLesson);
+    assert.equal("kanji" in detail.json().lesson.structuredContent, false);
     assert.equal(detail.json().lesson.simplifiedStructuredContent, null);
     assert.equal(detail.json().lesson.simplifiedAt, null);
+
+    const storedProject = store.projects.find(({ id }) => id === project.id);
+    assert.ok(storedProject);
+    storedProject.language = "日本語";
+    const japaneseDetail = await server.inject({
+      method: "GET",
+      url: `/languages/projects/${project.id}/lessons/${lesson.id}`,
+      headers: { cookie },
+    });
+    assert.equal(japaneseDetail.statusCode, 200);
+    assert.equal("kanji" in japaneseDetail.json().lesson.structuredContent, false);
   } finally {
     await server.close();
   }
@@ -1305,7 +1317,7 @@ test("only a ready lesson can be simplified", async () => {
   }
 });
 
-test("simplification uses structured content, persists eight sections and preserves the original", async () => {
+test("historical simplification without kanji persists and preserves the original", async () => {
   const { store, processor, server } = testServer();
   const cookie = sessionCookie(firstUser.id);
 
@@ -1368,6 +1380,10 @@ test("simplification uses structured content, persists eight sections and preser
     assert.deepEqual(
       detail.json().lesson.simplifiedStructuredContent,
       simplifiedLesson,
+    );
+    assert.equal(
+      "kanji" in detail.json().lesson.simplifiedStructuredContent,
+      false,
     );
     assert.ok(detail.json().lesson.simplifiedAt);
     assert.deepEqual(detail.json().lesson.structuredContent, originalBefore);

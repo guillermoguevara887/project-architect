@@ -1494,6 +1494,76 @@ button:disabled {
   padding-bottom: 0;
 }
 
+.lesson-kanji-list {
+  display: grid;
+  min-width: 0;
+  gap: 1rem;
+}
+
+.lesson-kanji-card {
+  min-width: 0;
+  padding: 1rem;
+  border: 1px solid var(--lesson-section-divider);
+  border-radius: 0.85rem;
+  background: color-mix(in srgb, var(--lesson-section-surface) 72%, #fff);
+}
+
+.lesson-kanji-card h3 {
+  margin: 0;
+  color: #0f2147;
+  font-size: clamp(1.65rem, 5vw, 2.1rem);
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.lesson-kanji-summary {
+  margin: 0.35rem 0 0;
+  color: #64748b;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.lesson-kanji-summary span:first-child {
+  color: #0f2147;
+  font-weight: 650;
+}
+
+.lesson-kanji-components {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr));
+  gap: 0.75rem;
+  margin-top: 0.9rem;
+}
+
+.lesson-kanji-component {
+  min-width: 0;
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--lesson-section-divider);
+}
+
+.lesson-kanji-component p {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 0.55rem;
+  margin: 0;
+  color: #0f2147;
+  overflow-wrap: anywhere;
+}
+
+.lesson-kanji-component strong {
+  font-size: 1.35rem;
+}
+
+.lesson-kanji-component small {
+  display: block;
+  margin-top: 0.25rem;
+  color: #64748b;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
 .lesson-item h3,
 .lesson-review-grid h3 {
   margin: 0;

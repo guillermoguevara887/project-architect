@@ -111,6 +111,16 @@ export type StructuredLanguageLesson = {
     meaning: string;
     example: string | null;
   }>;
+  kanji?: Array<{
+    word: string;
+    reading: string;
+    meaning: string;
+    components: Array<{
+      character: string;
+      readingInWord: string | null;
+      meaning: string;
+    }>;
+  }>;
   phrases: Array<{
     text: string;
     translation: string;
@@ -157,6 +167,37 @@ export type LanguageLesson = {
   createdAt: string;
   updatedAt: string;
 };
+
+export function isJapaneseLanguage(language: string) {
+  const trimmed = language.trim();
+  const normalized = trimmed
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLocaleLowerCase("und");
+
+  return (
+    normalized === "japanese" ||
+    normalized === "japones" ||
+    trimmed === "日本語"
+  );
+}
+
+export function languageLessonKanjiCopyText(
+  kanji: NonNullable<StructuredLanguageLesson["kanji"]>,
+) {
+  return kanji
+    .map(({ word, reading, meaning, components }) =>
+      [
+        word,
+        `Lectura: ${reading}`,
+        `Significado: ${meaning}`,
+        ...components.map(({ character, readingInWord, meaning }) =>
+          [character, readingInWord, meaning].filter(Boolean).join(" — "),
+        ),
+      ].join("\n"),
+    )
+    .join("\n\n");
+}
 
 export const LANGUAGE_LESSON_CONTENT_VERSION_OPTIONS = [
   { value: "original", label: "Original" },
