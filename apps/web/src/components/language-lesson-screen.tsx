@@ -17,6 +17,7 @@ import {
   DEFAULT_LANGUAGE_STORY_VOICE,
   downloadLanguageAudioBlob,
   formatLanguageLessonTitle,
+  getOrCreateLanguageAudioElement,
   LANGUAGE_AUDIO_PLAYBACK_RATE_OPTIONS,
   languageLessonAudioButtonLabel,
   languageLessonAudioErrorMessage,
@@ -24,6 +25,7 @@ import {
   languageLessonAudioRequest,
   languageLessonAudioStateAfterEnd,
   languageLessonAudioToggleAction,
+  languageAudioPlaybackErrorMessage,
   languageLessonContentForVersion,
   languageStoryAudioDownloadDisabled,
   languageStoryAudioDownloadFilename,
@@ -840,8 +842,14 @@ export function LanguageLessonScreen({
     const complete = audioCompletionRef.current;
     audioCompletionRef.current = null;
     complete?.("stopped");
-    stopPlayableLanguageAudio(audioElementRef.current);
-    audioElementRef.current = null;
+    const audio = audioElementRef.current;
+
+    if (audio) {
+      audio.onended = null;
+      audio.onerror = null;
+      stopPlayableLanguageAudio(audio);
+      audio.removeAttribute("src");
+    }
 
     if (audioObjectUrlRef.current) {
       URL.revokeObjectURL(audioObjectUrlRef.current);
@@ -859,8 +867,16 @@ export function LanguageLessonScreen({
     return () => {
       dialogueSequenceIdRef.current += 1;
       audioAbortControllerRef.current?.abort();
-      audioElementRef.current?.pause();
       audioCompletionRef.current?.("stopped");
+      const audio = audioElementRef.current;
+
+      if (audio) {
+        audio.onended = null;
+        audio.onerror = null;
+        stopPlayableLanguageAudio(audio);
+        audio.removeAttribute("src");
+        audioElementRef.current = null;
+      }
 
       if (audioObjectUrlRef.current) {
         URL.revokeObjectURL(audioObjectUrlRef.current);
@@ -1136,7 +1152,11 @@ export function LanguageLessonScreen({
       return "stopped";
     }
 
-    const previousAudio = audioElementRef.current;
+    const audio = getOrCreateLanguageAudioElement(
+      audioElementRef.current,
+      () => new Audio(),
+    );
+    audioElementRef.current = audio;
 
     if (dialogueSequenceId === undefined) {
       stopLanguageAudio();
@@ -1194,16 +1214,18 @@ export function LanguageLessonScreen({
         return "stopped";
       }
 
-      const audio = new Audio(audioUrl);
       const completion = new Promise<LanguageAudioPlaybackCompletion>(
         (resolve) => {
           audioCompletionRef.current = resolve;
         },
       );
       audioObjectUrlRef.current = audioUrl;
-      audioElementRef.current = audio;
+      audio.src = audioUrl;
       audio.onended = () => {
-        if (audioElementRef.current === audio) {
+        if (
+          requestId === audioRequestIdRef.current &&
+          audioElementRef.current === audio
+        ) {
           const complete = audioCompletionRef.current;
           audioCompletionRef.current = null;
           stopCurrentLanguageAudio();
@@ -1214,7 +1236,10 @@ export function LanguageLessonScreen({
         }
       };
       audio.onerror = () => {
-        if (audioElementRef.current === audio) {
+        if (
+          requestId === audioRequestIdRef.current &&
+          audioElementRef.current === audio
+        ) {
           const complete = audioCompletionRef.current;
           audioCompletionRef.current = null;
           stopCurrentLanguageAudio();
@@ -1233,7 +1258,7 @@ export function LanguageLessonScreen({
         }
       };
       await playExclusiveLanguageAudio(
-        previousAudio,
+        audio,
         audio,
         audioPlaybackRateRef.current,
       );
@@ -1252,10 +1277,7 @@ export function LanguageLessonScreen({
 
       if (requestId === audioRequestIdRef.current) {
         stopCurrentLanguageAudio();
-        const message =
-          error instanceof Error
-            ? error.message
-            : "No se pudo preparar la pronunciación.";
+        const message = languageAudioPlaybackErrorMessage(error);
         updateAudioPlayback({
           key,
           status: "error",

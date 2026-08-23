@@ -11,11 +11,13 @@ import {
   downloadLanguageAudioBlob,
   filterLanguageLessons,
   formatLanguageLessonTitle,
+  getOrCreateLanguageAudioElement,
   INITIAL_LANGUAGE_LESSON_CREATION_STATE,
   LANGUAGE_AUDIO_PLAYBACK_RATE_OPTIONS,
   LANGUAGE_LESSON_SOURCE_OPTIONS,
   LANGUAGE_STORY_VOICE_OPTIONS,
   languageLessonAudioButtonLabel,
+  languageAudioPlaybackErrorMessage,
   languageLessonAudioErrorMessage,
   languageLessonAudioKey,
   languageLessonAudioRequest,
@@ -190,6 +192,43 @@ test("dialogue sequence requests one line at a time and stops on cancellation or
   assert.equal(
     await playLanguageDialogueSequentially(3, async () => "error"),
     "error",
+  );
+});
+
+test("a reusable audio element receives every dialogue source without being recreated", () => {
+  const created: Array<{ src: string }> = [];
+  let current: { src: string } | null = null;
+
+  for (const source of ["blob:line-0", "blob:line-1", "blob:line-2"]) {
+    current = getOrCreateLanguageAudioElement(current, () => {
+      const audio = { src: "" };
+      created.push(audio);
+      return audio;
+    });
+    current.src = source;
+    assert.equal(current, created[0]);
+    assert.equal(current.src, source);
+  }
+
+  assert.equal(created.length, 1);
+});
+
+test("NotAllowedError is translated without exposing the native WebKit message", () => {
+  const nativeMessage =
+    "The request is not allowed by the user agent or the platform in the current context.";
+  const message = languageAudioPlaybackErrorMessage({
+    name: "NotAllowedError",
+    message: nativeMessage,
+  });
+
+  assert.equal(
+    message,
+    "El navegador bloqueó la reproducción automática. Toca Reproducir diálogo nuevamente.",
+  );
+  assert.doesNotMatch(message, /request is not allowed|user agent|platform/i);
+  assert.equal(
+    languageAudioPlaybackErrorMessage(new Error("Error controlado")),
+    "Error controlado",
   );
 });
 
@@ -754,10 +793,28 @@ test("lesson audio controls use an accessible spinner and non-color playing cue"
   assert.match(dialogueHandler, /playLanguageAudio\("dialogue", index, voices\[index\], sequenceId\)/);
   assert.doesNotMatch(dialogueHandler, /Promise\.all|map\(.*fetch/);
   assert.match(stopHandler, /audioAbortControllerRef\.current\?\.abort\(\)/);
-  assert.match(stopHandler, /stopPlayableLanguageAudio\(audioElementRef\.current\)/);
+  assert.match(stopHandler, /stopPlayableLanguageAudio\(audio\)/);
   assert.match(stopHandler, /URL\.revokeObjectURL\(audioObjectUrlRef\.current\)/);
+  assert.match(stopHandler, /audio\.onended = null/);
+  assert.match(stopHandler, /audio\.onerror = null/);
+  assert.match(stopHandler, /audio\.removeAttribute\("src"\)/);
+  assert.doesNotMatch(stopHandler, /audioElementRef\.current = null/);
   assert.match(component, /dialogueSequenceIdRef\.current \+= 1/);
   assert.match(component, /audioCompletionRef\.current/);
+  assert.equal(component.match(/new Audio\(\)/g)?.length, 1);
+  assert.doesNotMatch(component, /new Audio\(audioUrl\)/);
+  assert.match(
+    component,
+    /getOrCreateLanguageAudioElement\(\s*audioElementRef\.current,\s*\(\) => new Audio\(\)/,
+  );
+  assert.match(component, /audioObjectUrlRef\.current = audioUrl;\s*audio\.src = audioUrl;/);
+  assert.match(component, /audio\.onended = \(\) =>/);
+  assert.match(component, /audio\.onerror = \(\) =>/);
+  assert.ok(
+    (component.match(/requestId === audioRequestIdRef\.current/g)?.length ?? 0) >=
+      3,
+  );
+  assert.match(component, /languageAudioPlaybackErrorMessage\(error\)/);
   assert.ok(
     miniStorySection.indexOf("<LanguageStoryVoiceControl") <
       miniStorySection.indexOf("<LanguageAudioRateControl"),

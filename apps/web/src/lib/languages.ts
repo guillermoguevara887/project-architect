@@ -440,6 +440,28 @@ export type PlayableLanguageAudio = {
   play(): Promise<void>;
 };
 
+export function getOrCreateLanguageAudioElement<T>(
+  current: T | null,
+  create: () => T,
+) {
+  return current ?? create();
+}
+
+export function languageAudioPlaybackErrorMessage(error: unknown) {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    error.name === "NotAllowedError"
+  ) {
+    return "El navegador bloqueó la reproducción automática. Toca Reproducir diálogo nuevamente.";
+  }
+
+  return error instanceof Error
+    ? error.message
+    : "No se pudo preparar la pronunciación.";
+}
+
 export function applyLanguageAudioPlaybackRate(
   audio: Pick<PlayableLanguageAudio, "playbackRate"> | null,
   playbackRate: LanguageAudioPlaybackRate,
