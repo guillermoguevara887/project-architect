@@ -10,7 +10,10 @@ import {
 } from "react";
 import {
   formatLanguageLessonTitle,
+  languageLessonContentForVersion,
+  LANGUAGE_LESSON_CONTENT_VERSION_OPTIONS,
   type LanguageLesson,
+  type LanguageLessonContentVersion,
   type LanguageProject,
   type StructuredLanguageLesson,
 } from "@/lib/languages";
@@ -359,6 +362,9 @@ export function LanguageLessonScreen({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [processing, setProcessing] = useState(false);
+  const [simplifying, setSimplifying] = useState(false);
+  const [contentVersion, setContentVersion] =
+    useState<LanguageLessonContentVersion>("original");
   const [deleting, setDeleting] = useState(false);
   const [copiedSection, setCopiedSection] =
     useState<LessonSectionKey | null>(null);
@@ -407,6 +413,7 @@ export function LanguageLessonScreen({
           setProject(projectResult.project);
           setLesson(lessonResult.lesson);
           setSourceContent(lessonResult.lesson.sourceContent ?? "");
+          setContentVersion("original");
         }
       } catch {
         if (active) setLoadError("No se pudo cargar la lección.");
@@ -487,6 +494,7 @@ export function LanguageLessonScreen({
 
       setLesson(result.lesson);
       setSourceContent("");
+      setContentVersion("original");
     } catch {
       setLesson((current) =>
         current ? { ...current, status: "failed" } : current,
@@ -494,6 +502,48 @@ export function LanguageLessonScreen({
       setActionError("No se pudo procesar la lección. Intenta nuevamente.");
     } finally {
       setProcessing(false);
+    }
+  }
+
+  async function simplifyLesson() {
+    if (simplifying) return;
+
+    setSimplifying(true);
+    setActionError(null);
+
+    try {
+      const response = await fetch(
+        `/api/languages/projects/${encodeURIComponent(projectId)}/lessons/${encodeURIComponent(lessonId)}/simplify`,
+        { method: "POST", credentials: "include" },
+      );
+
+      if (response.status === 401) {
+        router.replace("/");
+        return;
+      }
+
+      const result = (await response.json()) as {
+        lesson?: LanguageLesson;
+        message?: string;
+      };
+
+      if (!response.ok || !result.lesson) {
+        setActionError(
+          result.message ??
+            "No se pudo simplificar la lección. Intenta nuevamente.",
+        );
+        return;
+      }
+
+      setLesson(result.lesson);
+      setContentVersion("simplified");
+      setCopiedSection(null);
+    } catch {
+      setActionError(
+        "No se pudo simplificar la lección. Intenta nuevamente.",
+      );
+    } finally {
+      setSimplifying(false);
     }
   }
 
@@ -535,11 +585,15 @@ export function LanguageLessonScreen({
   }
 
   async function copySection(sectionKey: LessonSectionKey) {
-    if (!lesson?.structuredContent) return;
+    if (!lesson) return;
+
+    const content = languageLessonContentForVersion(lesson, contentVersion);
+
+    if (!content) return;
 
     try {
       await navigator.clipboard.writeText(
-        sectionText(lesson.structuredContent, sectionKey),
+        sectionText(content, sectionKey),
       );
       setCopiedSection(sectionKey);
       window.setTimeout(() => {
@@ -577,7 +631,9 @@ export function LanguageLessonScreen({
   }
 
   const readyContent =
-    lesson.status === "ready" ? lesson.structuredContent : null;
+    lesson.status === "ready"
+      ? languageLessonContentForVersion(lesson, contentVersion)
+      : null;
 
   return (
     <main className="flow-shell language-shell language-lesson-shell">
@@ -632,6 +688,47 @@ export function LanguageLessonScreen({
         ) : null}
 
         {lesson.status === "ready" && readyContent ? (
+          <div className="lesson-simplification-controls">
+            {lesson.simplifiedStructuredContent ? (
+              <div
+                aria-label="Versión de la lección"
+                className="lesson-version-selector"
+                role="group"
+              >
+                {LANGUAGE_LESSON_CONTENT_VERSION_OPTIONS.map((option) => (
+                  <button
+                    aria-pressed={contentVersion === option.value}
+                    key={option.value}
+                    type="button"
+                    onClick={() => {
+                      setContentVersion(option.value);
+                      setCopiedSection(null);
+                    }}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <button
+                className="lesson-simplify-button"
+                disabled={simplifying}
+                type="button"
+                onClick={() => void simplifyLesson()}
+              >
+                {simplifying ? "Simplificando…" : "Simplificar lección"}
+              </button>
+            )}
+          </div>
+        ) : null}
+
+        {lesson.status === "ready" && actionError ? (
+          <p className="form-error lesson-action-error" role="alert">
+            {actionError}
+          </p>
+        ) : null}
+
+        {lesson.status === "ready" && readyContent ? (
           <ReadyLesson
             content={readyContent}
             copiedSection={copiedSection}
@@ -645,17 +742,11 @@ export function LanguageLessonScreen({
           </p>
         ) : null}
 
-        {lesson.status === "ready" && actionError ? (
-          <p className="form-error lesson-action-error" role="alert">
-            {actionError}
-          </p>
-        ) : null}
-
         <footer className="lesson-footer-actions">
           <button
             className="lesson-delete-button"
             type="button"
-            disabled={deleting || processing}
+            disabled={deleting || processing || simplifying}
             onClick={() => void deleteLesson()}
           >
             {deleting ? "Eliminando…" : "Eliminar lección"}

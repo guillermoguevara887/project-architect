@@ -350,6 +350,12 @@ export const languageLessons = pgTable(
       .default("draft")
       .notNull(),
     structuredContent: jsonb("structured_content").$type<StructuredLanguageLesson>(),
+    simplifiedStructuredContent: jsonb("simplified_structured_content")
+      .$type<StructuredLanguageLesson>(),
+    simplificationStartedAt: timestamp("simplification_started_at", {
+      withTimezone: true,
+    }),
+    simplifiedAt: timestamp("simplified_at", { withTimezone: true }),
     processedAt: timestamp("processed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
@@ -388,6 +394,10 @@ export const languageLessons = pgTable(
     readyContentCheck: check(
       "language_lessons_ready_content_check",
       sql`${table.status} <> 'ready' or (${table.structuredContent} is not null and ${table.processedAt} is not null)`,
+    ),
+    simplifiedContentCheck: check(
+      "language_lessons_simplified_content_check",
+      sql`(${table.simplifiedStructuredContent} is null and ${table.simplifiedAt} is null) or (${table.simplifiedStructuredContent} is not null and ${table.simplifiedAt} is not null)`,
     ),
   }),
 );

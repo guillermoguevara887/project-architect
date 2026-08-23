@@ -3,9 +3,11 @@ import test from "node:test";
 import {
   filterLanguageLessons,
   formatLanguageLessonTitle,
+  languageLessonContentForVersion,
   languageLessonFilterEmptyMessage,
   type LanguageLesson,
   type LanguageLessonSource,
+  type StructuredLanguageLesson,
 } from "../../web/src/lib/languages.js";
 
 function lesson(
@@ -34,6 +36,19 @@ const lessons = [
   lesson("free-1", 4, "free", 1),
   lesson("framework-2", 5, "language_framework", 2),
 ];
+
+function structuredContent(text: string): StructuredLanguageLesson {
+  return {
+    vocabulary: [{ term: text, meaning: text, example: null }],
+    phrases: [{ text, translation: text, note: null }],
+    patterns: [{ name: text, explanation: text, examples: [text] }],
+    miniStory: { text },
+    automaticThoughts: [{ text }],
+    dialogue: [{ speaker: "A", text }],
+    nextLevelBridge: [{ base: text, advanced: text, note: text }],
+    review: { keyVocabulary: [text], keyPatterns: [text] },
+  };
+}
 
 test("the all filter returns every lesson in its existing order", () => {
   const filtered = filterLanguageLessons(lessons, "all");
@@ -85,5 +100,24 @@ test("lesson titles continue to use source-specific numbering", () => {
   assert.equal(
     formatLanguageLessonTitle(lessons[3]!, "Alemán"),
     "Lección libre 1",
+  );
+});
+
+test("the displayed lesson version switches locally between persisted content", () => {
+  const original = structuredContent("Original");
+  const simplified = structuredContent("Simplificada");
+  const persistedLesson = {
+    ...lessons[0]!,
+    structuredContent: original,
+    simplifiedStructuredContent: simplified,
+  };
+
+  assert.equal(
+    languageLessonContentForVersion(persistedLesson, "original"),
+    original,
+  );
+  assert.equal(
+    languageLessonContentForVersion(persistedLesson, "simplified"),
+    simplified,
   );
 });

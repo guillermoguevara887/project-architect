@@ -59,6 +59,55 @@ test("the OpenAI lesson processor validates and returns all eight sections", asy
   assert.match(request?.input ?? "", /Nivel del proyecto: Nivel 1/);
 });
 
+test("simplification transforms structured content with the dedicated prompt and shared schema", async () => {
+  let request: {
+    input?: string;
+    instructions?: string;
+    store?: boolean;
+  } | null = null;
+  const processor = new OpenAILanguageLessonProcessor(async (received) => {
+    request = received;
+    return { status: "completed", output_parsed: validLesson };
+  });
+
+  assert.deepEqual(
+    await processor.simplify({
+      language: "Francés",
+      level: "Nivel 1",
+      structuredContent: validLesson,
+    }),
+    validLesson,
+  );
+  assert.equal(request?.store, false);
+  assert.match(request?.instructions ?? "", /simplificador pedagógico/i);
+  assert.match(request?.instructions ?? "", /mismas ocho secciones/i);
+  assert.match(request?.instructions ?? "", /vocabulary:/);
+  assert.match(request?.instructions ?? "", /nextLevelBridge:/);
+  assert.match(request?.input ?? "", /Idioma objetivo: Francés/);
+  assert.match(request?.input ?? "", /Nivel del proyecto: Nivel 1/);
+  assert.match(request?.input ?? "", /LECCIÓN ESTRUCTURADA ORIGINAL/);
+  assert.match(request?.input ?? "", /"miniStory"/);
+});
+
+test("simplification rejects output that does not match the existing lesson schema", async () => {
+  const { dialogue: _dialogue, ...invalidSimplification } = validLesson;
+  const processor = new OpenAILanguageLessonProcessor(async () => ({
+    status: "completed",
+    output_parsed: invalidSimplification,
+  }));
+
+  assert.equal(
+    await processingErrorCode(
+      processor.simplify({
+        language: "Francés",
+        level: "Nivel 1",
+        structuredContent: validLesson,
+      }),
+    ),
+    "invalid_response",
+  );
+});
+
 test("the processor rejects a missing section and arbitrary properties", async () => {
   const { review: _review, ...missingReview } = validLesson;
   const missingProcessor = new OpenAILanguageLessonProcessor(async () => ({

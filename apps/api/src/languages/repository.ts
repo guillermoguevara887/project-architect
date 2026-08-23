@@ -8,6 +8,7 @@ import type {
 } from "./contracts.js";
 
 export const LANGUAGE_LESSON_PROCESSING_TIMEOUT_MS = 15 * 60 * 1_000;
+export const LANGUAGE_LESSON_SIMPLIFICATION_TIMEOUT_MS = 15 * 60 * 1_000;
 
 export type LanguageProject = typeof languageProjects.$inferSelect;
 export type LanguageLesson = typeof languageLessons.$inferSelect;
@@ -48,6 +49,22 @@ export type FailLanguageLessonProcessingInput = OwnedLanguageProjectInput & {
   processingStartedAt: Date;
 };
 
+export type ClaimLanguageLessonSimplificationInput =
+  OwnedLanguageProjectInput & {
+    lessonId: string;
+  };
+
+export type CompleteLanguageLessonSimplificationInput =
+  ClaimLanguageLessonSimplificationInput & {
+    simplificationStartedAt: Date;
+    simplifiedStructuredContent: StructuredLanguageLesson;
+  };
+
+export type FailLanguageLessonSimplificationInput =
+  ClaimLanguageLessonSimplificationInput & {
+    simplificationStartedAt: Date;
+  };
+
 export type UpdateLanguageLessonResult =
   | { kind: "updated"; lesson: LanguageLesson }
   | { kind: "not_found" }
@@ -61,6 +78,17 @@ export type ClaimLanguageLessonResult =
     }
   | { kind: "not_found" }
   | { kind: "already_ready" }
+  | { kind: "processing" };
+
+export type ClaimLanguageLessonSimplificationResult =
+  | {
+      kind: "claimed";
+      lesson: LanguageLesson;
+      project: LanguageProject;
+    }
+  | { kind: "not_found" }
+  | { kind: "not_ready" }
+  | { kind: "already_simplified"; lesson: LanguageLesson }
   | { kind: "processing" };
 
 export interface LanguageStore {
@@ -93,6 +121,15 @@ export interface LanguageStore {
   ): Promise<LanguageLesson | null>;
   failLessonProcessing(
     input: FailLanguageLessonProcessingInput,
+  ): Promise<LanguageLesson | null>;
+  claimLessonForSimplification(
+    input: ClaimLanguageLessonSimplificationInput,
+  ): Promise<ClaimLanguageLessonSimplificationResult>;
+  completeLessonSimplification(
+    input: CompleteLanguageLessonSimplificationInput,
+  ): Promise<LanguageLesson | null>;
+  failLessonSimplification(
+    input: FailLanguageLessonSimplificationInput,
   ): Promise<LanguageLesson | null>;
   deleteLesson(
     lessonId: string,
@@ -419,6 +456,130 @@ export const languageStore: LanguageStore = {
           eq(languageLessons.languageProjectId, input.languageProjectId),
           eq(languageLessons.status, "processing"),
           eq(languageLessons.updatedAt, input.processingStartedAt),
+        ),
+      )
+      .returning();
+
+    return lesson ?? null;
+  },
+
+  async claimLessonForSimplification(input) {
+    return getDb().transaction(async (transaction) => {
+      const [project] = await transaction
+        .select()
+        .from(languageProjects)
+        .where(
+          and(
+            eq(languageProjects.id, input.languageProjectId),
+            eq(languageProjects.userId, input.userId),
+          ),
+        )
+        .limit(1);
+
+      if (!project) {
+        return { kind: "not_found" as const };
+      }
+
+      const [existing] = await transaction
+        .select()
+        .from(languageLessons)
+        .where(
+          and(
+            eq(languageLessons.id, input.lessonId),
+            eq(languageLessons.languageProjectId, input.languageProjectId),
+          ),
+        )
+        .limit(1)
+        .for("update");
+
+      if (!existing) {
+        return { kind: "not_found" as const };
+      }
+
+      if (existing.status !== "ready" || !existing.structuredContent) {
+        return { kind: "not_ready" as const };
+      }
+
+      if (existing.simplifiedStructuredContent) {
+        return { kind: "already_simplified" as const, lesson: existing };
+      }
+
+      if (
+        existing.simplificationStartedAt &&
+        Date.now() - existing.simplificationStartedAt.getTime() <
+          LANGUAGE_LESSON_SIMPLIFICATION_TIMEOUT_MS
+      ) {
+        return { kind: "processing" as const };
+      }
+
+      const simplificationStartedAt = new Date();
+      const [lesson] = await transaction
+        .update(languageLessons)
+        .set({ simplificationStartedAt })
+        .where(
+          and(
+            eq(languageLessons.id, input.lessonId),
+            eq(languageLessons.languageProjectId, input.languageProjectId),
+            eq(languageLessons.status, "ready"),
+          ),
+        )
+        .returning();
+
+      if (!lesson) {
+        throw new Error("The language lesson could not enter simplification.");
+      }
+
+      return { kind: "claimed" as const, lesson, project };
+    });
+  },
+
+  async completeLessonSimplification(input) {
+    if (!(await ownsProject(input.languageProjectId, input.userId))) {
+      return null;
+    }
+
+    const completedAt = new Date();
+    const [lesson] = await getDb()
+      .update(languageLessons)
+      .set({
+        simplifiedStructuredContent: input.simplifiedStructuredContent,
+        simplifiedAt: completedAt,
+        simplificationStartedAt: null,
+        updatedAt: completedAt,
+      })
+      .where(
+        and(
+          eq(languageLessons.id, input.lessonId),
+          eq(languageLessons.languageProjectId, input.languageProjectId),
+          eq(languageLessons.status, "ready"),
+          eq(
+            languageLessons.simplificationStartedAt,
+            input.simplificationStartedAt,
+          ),
+        ),
+      )
+      .returning();
+
+    return lesson ?? null;
+  },
+
+  async failLessonSimplification(input) {
+    if (!(await ownsProject(input.languageProjectId, input.userId))) {
+      return null;
+    }
+
+    const [lesson] = await getDb()
+      .update(languageLessons)
+      .set({ simplificationStartedAt: null })
+      .where(
+        and(
+          eq(languageLessons.id, input.lessonId),
+          eq(languageLessons.languageProjectId, input.languageProjectId),
+          eq(languageLessons.status, "ready"),
+          eq(
+            languageLessons.simplificationStartedAt,
+            input.simplificationStartedAt,
+          ),
         ),
       )
       .returning();

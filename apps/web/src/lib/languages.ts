@@ -91,10 +91,34 @@ export type LanguageLesson = {
   status: LanguageLessonStatus;
   sourceContent?: string;
   structuredContent?: StructuredLanguageLesson | null;
+  simplifiedStructuredContent?: StructuredLanguageLesson | null;
+  simplifiedAt?: string | null;
   processedAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
+
+export const LANGUAGE_LESSON_CONTENT_VERSION_OPTIONS = [
+  { value: "original", label: "Original" },
+  { value: "simplified", label: "Simplificada" },
+] as const;
+
+export type LanguageLessonContentVersion =
+  (typeof LANGUAGE_LESSON_CONTENT_VERSION_OPTIONS)[number]["value"];
+
+export function languageLessonContentForVersion(
+  lesson: Pick<
+    LanguageLesson,
+    "structuredContent" | "simplifiedStructuredContent"
+  >,
+  version: LanguageLessonContentVersion,
+) {
+  if (version === "simplified" && lesson.simplifiedStructuredContent) {
+    return lesson.simplifiedStructuredContent;
+  }
+
+  return lesson.structuredContent ?? null;
+}
 
 export function formatLanguageLessonTitle(
   lesson: Pick<LanguageLesson, "lessonSource" | "sourceLessonNumber">,

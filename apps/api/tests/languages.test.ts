@@ -13,13 +13,17 @@ import {
   LanguageLessonProcessingError,
   type LanguageLessonProcessor,
   type ProcessLanguageLessonInput,
+  type SimplifyLanguageLessonInput,
 } from "../src/languages/lesson-processor.js";
 import type {
   ClaimLanguageLessonInput,
+  ClaimLanguageLessonSimplificationInput,
   CompleteLanguageLessonProcessingInput,
+  CompleteLanguageLessonSimplificationInput,
   CreateLanguageProjectInput,
   CreateNextLanguageLessonInput,
   FailLanguageLessonProcessingInput,
+  FailLanguageLessonSimplificationInput,
   LanguageLesson,
   LanguageProject,
   LanguageStore,
@@ -78,6 +82,43 @@ const structuredLesson: StructuredLanguageLesson = {
   review: {
     keyVocabulary: ["müde"],
     keyPatterns: ["Ich muss …"],
+  },
+};
+
+const simplifiedLesson: StructuredLanguageLesson = {
+  vocabulary: [
+    { term: "müde", meaning: "cansado", example: "Ich bin müde." },
+  ],
+  phrases: [
+    {
+      text: "Ich stehe früh auf.",
+      translation: "Me levanto temprano.",
+      note: null,
+    },
+  ],
+  patterns: [
+    {
+      name: "Ich bin …",
+      explanation: "Describe un estado.",
+      examples: ["Ich bin müde."],
+    },
+  ],
+  miniStory: { text: "Lukas ist müde. Morgen steht er früh auf." },
+  automaticThoughts: [{ text: "Ich bin müde." }],
+  dialogue: [
+    { speaker: "Lukas", text: "Ich bin müde." },
+    { speaker: "Anna", text: "Geh schlafen." },
+  ],
+  nextLevelBridge: [
+    {
+      base: "Ich bin müde.",
+      advanced: "Ich bin sehr müde.",
+      note: "Sehr añade intensidad.",
+    },
+  ],
+  review: {
+    keyVocabulary: ["müde"],
+    keyPatterns: ["Ich bin …"],
   },
 };
 
@@ -175,6 +216,9 @@ class MemoryLanguageStore implements LanguageStore {
       sourceContent: "",
       status: "draft",
       structuredContent: null,
+      simplifiedStructuredContent: null,
+      simplificationStartedAt: null,
+      simplifiedAt: null,
       processedAt: null,
       createdAt: now,
       updatedAt: now,
@@ -319,6 +363,95 @@ class MemoryLanguageStore implements LanguageStore {
     return lesson;
   }
 
+  async claimLessonForSimplification(
+    input: ClaimLanguageLessonSimplificationInput,
+  ) {
+    const project = this.projects.find(
+      (candidate) =>
+        candidate.id === input.languageProjectId &&
+        candidate.userId === input.userId,
+    );
+
+    if (!project) {
+      return { kind: "not_found" as const };
+    }
+
+    const lesson = this.lessons.find(
+      (candidate) =>
+        candidate.id === input.lessonId &&
+        candidate.languageProjectId === input.languageProjectId,
+    );
+
+    if (!lesson) {
+      return { kind: "not_found" as const };
+    }
+
+    if (lesson.status !== "ready" || !lesson.structuredContent) {
+      return { kind: "not_ready" as const };
+    }
+
+    if (lesson.simplifiedStructuredContent) {
+      return { kind: "already_simplified" as const, lesson };
+    }
+
+    if (lesson.simplificationStartedAt) {
+      return { kind: "processing" as const };
+    }
+
+    lesson.simplificationStartedAt = this.now();
+    return { kind: "claimed" as const, lesson, project };
+  }
+
+  async completeLessonSimplification(
+    input: CompleteLanguageLessonSimplificationInput,
+  ) {
+    const lesson = this.lessons.find(
+      (candidate) =>
+        candidate.id === input.lessonId &&
+        candidate.languageProjectId === input.languageProjectId,
+    );
+
+    if (
+      !this.ownsProject(input.languageProjectId, input.userId) ||
+      !lesson ||
+      lesson.status !== "ready" ||
+      lesson.simplificationStartedAt?.getTime() !==
+        input.simplificationStartedAt.getTime()
+    ) {
+      return null;
+    }
+
+    const now = this.now();
+    lesson.simplifiedStructuredContent = input.simplifiedStructuredContent;
+    lesson.simplifiedAt = now;
+    lesson.simplificationStartedAt = null;
+    lesson.updatedAt = now;
+    return lesson;
+  }
+
+  async failLessonSimplification(
+    input: FailLanguageLessonSimplificationInput,
+  ) {
+    const lesson = this.lessons.find(
+      (candidate) =>
+        candidate.id === input.lessonId &&
+        candidate.languageProjectId === input.languageProjectId,
+    );
+
+    if (
+      !this.ownsProject(input.languageProjectId, input.userId) ||
+      !lesson ||
+      lesson.status !== "ready" ||
+      lesson.simplificationStartedAt?.getTime() !==
+        input.simplificationStartedAt.getTime()
+    ) {
+      return null;
+    }
+
+    lesson.simplificationStartedAt = null;
+    return lesson;
+  }
+
   async deleteLesson(lessonId: string, projectId: string, userId: string) {
     if (!this.ownsProject(projectId, userId)) {
       return false;
@@ -340,8 +473,12 @@ class MemoryLanguageStore implements LanguageStore {
 
 class FakeLanguageLessonProcessor implements LanguageLessonProcessor {
   readonly calls: ProcessLanguageLessonInput[] = [];
+  readonly simplificationCalls: SimplifyLanguageLessonInput[] = [];
   result = structuredLesson;
+  simplificationResult = structuredLesson;
   error: Error | null = null;
+  simplificationError: Error | null = null;
+  simplificationWait: Promise<void> | null = null;
 
   async process(input: ProcessLanguageLessonInput) {
     this.calls.push(input);
@@ -351,6 +488,20 @@ class FakeLanguageLessonProcessor implements LanguageLessonProcessor {
     }
 
     return this.result;
+  }
+
+  async simplify(input: SimplifyLanguageLessonInput) {
+    this.simplificationCalls.push(input);
+
+    if (this.simplificationWait) {
+      await this.simplificationWait;
+    }
+
+    if (this.simplificationError) {
+      throw this.simplificationError;
+    }
+
+    return this.simplificationResult;
   }
 }
 
@@ -429,6 +580,19 @@ async function processLesson(
     url: `/languages/projects/${projectId}/lessons/${lessonId}/process`,
     headers: { cookie },
     payload: { sourceContent },
+  });
+}
+
+async function simplifyLesson(
+  server: ReturnType<typeof createServer>,
+  projectId: string,
+  lessonId: string,
+  cookie: string,
+) {
+  return server.inject({
+    method: "POST",
+    url: `/languages/projects/${projectId}/lessons/${lessonId}/simplify`,
+    headers: { cookie },
   });
 }
 
@@ -728,7 +892,7 @@ test("empty input is rejected before processing", async () => {
   }
 });
 
-test("another user cannot read, process, update or delete a lesson", async () => {
+test("another user cannot read, process, simplify, update or delete a lesson", async () => {
   const { processor, server } = testServer();
   const ownerCookie = sessionCookie(firstUser.id);
   const otherCookie = sessionCookie(secondUser.id);
@@ -742,6 +906,12 @@ test("another user cannot read, process, update or delete a lesson", async () =>
       headers: { cookie: otherCookie },
     });
     const processing = await processLesson(
+      server,
+      project.id,
+      lesson.id,
+      otherCookie,
+    );
+    const simplification = await simplifyLesson(
       server,
       project.id,
       lesson.id,
@@ -761,9 +931,11 @@ test("another user cannot read, process, update or delete a lesson", async () =>
 
     assert.equal(detail.statusCode, 404);
     assert.equal(processing.statusCode, 404);
+    assert.equal(simplification.statusCode, 404);
     assert.equal(update.statusCode, 404);
     assert.equal(deletion.statusCode, 404);
     assert.equal(processor.calls.length, 0);
+    assert.equal(processor.simplificationCalls.length, 0);
   } finally {
     await server.close();
   }
@@ -903,6 +1075,230 @@ test("ready lesson detail persists structure without exposing source content", a
     assert.equal(detail.json().lesson.status, "ready");
     assert.equal("sourceContent" in detail.json().lesson, false);
     assert.deepEqual(detail.json().lesson.structuredContent, structuredLesson);
+    assert.equal(detail.json().lesson.simplifiedStructuredContent, null);
+    assert.equal(detail.json().lesson.simplifiedAt, null);
+  } finally {
+    await server.close();
+  }
+});
+
+test("only a ready lesson can be simplified", async () => {
+  const { processor, server } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+
+  try {
+    const project = await createProject(server, cookie);
+    const draft = await createLesson(server, project.id, cookie);
+    const response = await simplifyLesson(
+      server,
+      project.id,
+      draft.id,
+      cookie,
+    );
+
+    assert.equal(response.statusCode, 409);
+    assert.equal(response.json().error, "LANGUAGE_LESSON_NOT_READY");
+    assert.equal(processor.simplificationCalls.length, 0);
+  } finally {
+    await server.close();
+  }
+});
+
+test("simplification uses structured content, persists eight sections and preserves the original", async () => {
+  const { store, processor, server } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+
+  try {
+    const project = await createProject(server, cookie);
+    const created = await createLesson(server, project.id, cookie);
+    await processLesson(
+      server,
+      project.id,
+      created.id,
+      cookie,
+      "Private source that must not drive simplification",
+    );
+    const originalBefore = structuredClone(
+      store.lessons[0]?.structuredContent,
+    );
+    processor.simplificationResult = simplifiedLesson;
+
+    const response = await simplifyLesson(
+      server,
+      project.id,
+      created.id,
+      cookie,
+    );
+    const detail = await server.inject({
+      method: "GET",
+      url: `/languages/projects/${project.id}/lessons/${created.id}`,
+      headers: { cookie },
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(processor.simplificationCalls, [
+      {
+        language: "Alemán",
+        level: "Nivel 2",
+        structuredContent: structuredLesson,
+      },
+    ]);
+    assert.deepEqual(store.lessons[0]?.structuredContent, originalBefore);
+    assert.deepEqual(
+      store.lessons[0]?.simplifiedStructuredContent,
+      simplifiedLesson,
+    );
+    assert.ok(store.lessons[0]?.simplifiedAt);
+    assert.equal(store.lessons[0]?.simplificationStartedAt, null);
+    assert.deepEqual(
+      Object.keys(response.json().lesson.simplifiedStructuredContent).sort(),
+      [
+        "automaticThoughts",
+        "dialogue",
+        "miniStory",
+        "nextLevelBridge",
+        "patterns",
+        "phrases",
+        "review",
+        "vocabulary",
+      ],
+    );
+    assert.equal(detail.statusCode, 200);
+    assert.deepEqual(
+      detail.json().lesson.simplifiedStructuredContent,
+      simplifiedLesson,
+    );
+    assert.ok(detail.json().lesson.simplifiedAt);
+    assert.deepEqual(detail.json().lesson.structuredContent, originalBefore);
+  } finally {
+    await server.close();
+  }
+});
+
+test("a persisted simplification makes the endpoint idempotent", async () => {
+  const { processor, server } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+
+  try {
+    const project = await createProject(server, cookie);
+    const lesson = await createLesson(server, project.id, cookie);
+    await processLesson(server, project.id, lesson.id, cookie);
+    processor.simplificationResult = simplifiedLesson;
+
+    const first = await simplifyLesson(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+    );
+    const second = await simplifyLesson(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+    );
+
+    assert.equal(first.statusCode, 200);
+    assert.equal(second.statusCode, 200);
+    assert.equal(processor.simplificationCalls.length, 1);
+    assert.deepEqual(
+      second.json().lesson.simplifiedStructuredContent,
+      simplifiedLesson,
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("concurrent simplification requests produce only one OpenAI call", async () => {
+  const { processor, server } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+  let releaseSimplification = () => {};
+  processor.simplificationWait = new Promise<void>((resolve) => {
+    releaseSimplification = resolve;
+  });
+
+  try {
+    const project = await createProject(server, cookie);
+    const lesson = await createLesson(server, project.id, cookie);
+    await processLesson(server, project.id, lesson.id, cookie);
+
+    const firstRequest = simplifyLesson(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+    );
+
+    for (
+      let attempt = 0;
+      attempt < 20 && processor.simplificationCalls.length === 0;
+      attempt += 1
+    ) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+
+    const secondResponse = await simplifyLesson(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+    );
+    releaseSimplification();
+    const firstResponse = await firstRequest;
+
+    assert.equal(firstResponse.statusCode, 200);
+    assert.equal(secondResponse.statusCode, 409);
+    assert.equal(
+      secondResponse.json().error,
+      "LANGUAGE_LESSON_SIMPLIFICATION_PROCESSING",
+    );
+    assert.equal(processor.simplificationCalls.length, 1);
+  } finally {
+    releaseSimplification();
+    await server.close();
+  }
+});
+
+test("OpenAI errors leave the ready original intact and allow retry", async () => {
+  const { store, processor, server } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+
+  try {
+    const project = await createProject(server, cookie);
+    const lesson = await createLesson(server, project.id, cookie);
+    await processLesson(server, project.id, lesson.id, cookie);
+    const originalBefore = structuredClone(
+      store.lessons[0]?.structuredContent,
+    );
+    processor.simplificationError = new LanguageLessonProcessingError(
+      "provider_error",
+    );
+
+    const failed = await simplifyLesson(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+    );
+
+    assert.equal(failed.statusCode, 502);
+    assert.equal(store.lessons[0]?.status, "ready");
+    assert.deepEqual(store.lessons[0]?.structuredContent, originalBefore);
+    assert.equal(store.lessons[0]?.simplifiedStructuredContent, null);
+    assert.equal(store.lessons[0]?.simplifiedAt, null);
+    assert.equal(store.lessons[0]?.simplificationStartedAt, null);
+
+    processor.simplificationError = null;
+    const retried = await simplifyLesson(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+    );
+
+    assert.equal(retried.statusCode, 200);
+    assert.equal(processor.simplificationCalls.length, 2);
   } finally {
     await server.close();
   }
@@ -963,4 +1359,29 @@ test("lesson source number migration backfills by project and source without rep
   assert.doesNotMatch(migration, /\b(?:DROP|TRUNCATE)\b|\bDELETE\s+FROM\b/i);
   assert.doesNotMatch(migration, /CREATE TABLE/i);
   assert.doesNotMatch(migration, /SET\s+"lesson_number"/i);
+});
+
+test("lesson simplification migration is additive and preserves existing lessons", async () => {
+  const migration = await readFile(
+    new URL(
+      "../drizzle/0009_add_language_lesson_simplification.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+
+  assert.match(migration, /ALTER TABLE "language_lessons"/);
+  assert.match(migration, /"simplified_structured_content" jsonb/);
+  assert.match(
+    migration,
+    /"simplification_started_at" timestamp with time zone/,
+  );
+  assert.match(migration, /"simplified_at" timestamp with time zone/);
+  assert.match(migration, /language_lessons_simplified_content_check/);
+  assert.doesNotMatch(migration, /\b(?:DROP|TRUNCATE)\b|\bDELETE\s+FROM\b/i);
+  assert.doesNotMatch(migration, /CREATE TABLE/i);
+  assert.doesNotMatch(
+    migration,
+    /ADD COLUMN "(?:simplified_structured_content|simplification_started_at|simplified_at)"[^\n]*NOT NULL/i,
+  );
 });

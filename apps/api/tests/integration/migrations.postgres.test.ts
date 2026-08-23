@@ -447,11 +447,17 @@ test("source lesson numbers are backfilled independently without changing genera
   ];
 
   try {
-    assert.equal(migrations.at(-1)?.id, sourceNumberMigrationId);
-    assert.equal(sourceNumberMigrationIndex, migrations.length - 1);
+    assert.equal(
+      migrations[sourceNumberMigrationIndex]?.id,
+      sourceNumberMigrationId,
+    );
     const migrationsBeforeSourceNumber = migrations.slice(
       0,
       sourceNumberMigrationIndex,
+    );
+    const migrationsThroughSourceNumber = migrations.slice(
+      0,
+      sourceNumberMigrationIndex + 1,
     );
     assert.deepEqual(
       await migratePending(database, migrationsBeforeSourceNumber),
@@ -486,9 +492,10 @@ test("source lesson numbers are backfilled independently without changing genera
       }
     });
 
-    assert.deepEqual(await migratePending(database, migrations), [
-      sourceNumberMigrationId,
-    ]);
+    assert.deepEqual(
+      await migratePending(database, migrationsThroughSourceNumber),
+      [sourceNumberMigrationId],
+    );
 
     const state = await withSql(isolatedUrl, async (sql) => {
       const lessons = await sql<
@@ -595,9 +602,153 @@ test("source lesson numbers are backfilled independently without changing genera
     );
     assert.equal(state.sourceNumberColumn?.isNullable, "NO");
 
-    const report = await getMigrationStatus(database, migrations);
+    const report = await getMigrationStatus(
+      database,
+      migrationsThroughSourceNumber,
+    );
     assert.equal(report.historyMode, "current");
     assert.ok(report.migrations.every(({ state: status }) => status === "applied"));
+  } finally {
+    await database.close();
+  }
+});
+
+test("language lesson simplification columns are nullable and preserve existing ready content", async () => {
+  const isolatedUrl = await createIsolatedDatabase(
+    "language_phase_3_simplification",
+  );
+  const database = createPostgresMigrationDatabase(isolatedUrl);
+  const migrations = await loadMigrationFiles(migrationDirectory);
+  const simplificationMigrationId =
+    "0009_add_language_lesson_simplification.sql";
+  const simplificationMigrationIndex = migrations.findIndex(
+    ({ id }) => id === simplificationMigrationId,
+  );
+  const userId = "70000000-0000-4000-8000-000000000001";
+  const projectId = "70000000-0000-4000-8000-000000000002";
+  const lessonId = "70000000-0000-4000-8000-000000000003";
+  const originalContent = { version: "original", sectionCount: 8 };
+
+  try {
+    assert.equal(migrations.at(-1)?.id, simplificationMigrationId);
+    assert.equal(simplificationMigrationIndex, migrations.length - 1);
+    const migrationsBeforeSimplification = migrations.slice(
+      0,
+      simplificationMigrationIndex,
+    );
+    assert.deepEqual(
+      await migratePending(database, migrationsBeforeSimplification),
+      migrationsBeforeSimplification.map(({ id }) => id),
+    );
+
+    await withSql(isolatedUrl, async (sql) => {
+      await sql`
+        INSERT INTO users (id, username, password_hash)
+        VALUES (${userId}, 'simplification-user', 'not-a-real-hash')
+      `;
+      await sql`
+        INSERT INTO language_projects (id, user_id, language, level)
+        VALUES (${projectId}, ${userId}, 'Alemán', 'Nivel 2')
+      `;
+      await sql`
+        INSERT INTO language_lessons (
+          id,
+          language_project_id,
+          lesson_number,
+          lesson_source,
+          source_lesson_number,
+          status,
+          structured_content,
+          processed_at
+        )
+        VALUES (
+          ${lessonId},
+          ${projectId},
+          1,
+          'free',
+          1,
+          'ready',
+          ${sql.json(originalContent)},
+          now()
+        )
+      `;
+    });
+
+    assert.deepEqual(await migratePending(database, migrations), [
+      simplificationMigrationId,
+    ]);
+
+    const state = await withSql(isolatedUrl, async (sql) => {
+      const [lesson] = await sql<
+        Array<{
+          structuredContent: unknown;
+          simplifiedStructuredContent: unknown;
+          simplificationStartedAt: Date | null;
+          simplifiedAt: Date | null;
+        }>
+      >`
+        SELECT structured_content AS "structuredContent",
+               simplified_structured_content AS "simplifiedStructuredContent",
+               simplification_started_at AS "simplificationStartedAt",
+               simplified_at AS "simplifiedAt"
+        FROM language_lessons
+        WHERE id = ${lessonId}
+      `;
+      const columns = await sql<
+        Array<{ name: string; isNullable: "YES" | "NO" }>
+      >`
+        SELECT column_name AS name, is_nullable AS "isNullable"
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'language_lessons'
+          AND column_name IN (
+            'simplified_structured_content',
+            'simplification_started_at',
+            'simplified_at'
+          )
+        ORDER BY column_name
+      `;
+      const constraints = await sql<Array<{ name: string }>>`
+        SELECT conname AS name
+        FROM pg_constraint
+        WHERE conrelid = 'language_lessons'::regclass
+          AND conname = 'language_lessons_simplified_content_check'
+      `;
+
+      await assert.rejects(
+        sql`
+          UPDATE language_lessons
+          SET simplified_structured_content = '{"version":"simplified"}'::jsonb
+          WHERE id = ${lessonId}
+        `,
+        /language_lessons_simplified_content_check/i,
+      );
+
+      return { lesson, columns, constraints };
+    });
+
+    assert.deepEqual(state.lesson, {
+      structuredContent: originalContent,
+      simplifiedStructuredContent: null,
+      simplificationStartedAt: null,
+      simplifiedAt: null,
+    });
+    assert.deepEqual(
+      state.columns.map(({ name, isNullable }) => ({ name, isNullable })),
+      [
+        { name: "simplification_started_at", isNullable: "YES" },
+        { name: "simplified_at", isNullable: "YES" },
+        { name: "simplified_structured_content", isNullable: "YES" },
+      ],
+    );
+    assert.deepEqual(
+      state.constraints.map(({ name }) => ({ name })),
+      [{ name: "language_lessons_simplified_content_check" }],
+    );
+
+    const report = await getMigrationStatus(database, migrations);
+    assert.equal(report.historyMode, "current");
+    assert.ok(report.migrations.every(({ state }) => state === "applied"));
   } finally {
     await database.close();
   }

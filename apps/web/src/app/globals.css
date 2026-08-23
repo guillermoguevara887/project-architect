@@ -1098,6 +1098,55 @@ button:disabled {
   line-height: 1.5;
 }
 
+.lesson-simplification-controls {
+  display: flex;
+  min-width: 0;
+  margin-top: 2rem;
+}
+
+.lesson-simplify-button {
+  min-height: 2.75rem;
+  padding: 0.65rem 1rem;
+  background: #0ea5a4;
+  color: #fff;
+}
+
+.lesson-simplify-button:hover:not(:disabled) {
+  background: #0b8c8b;
+}
+
+.lesson-simplify-button:focus-visible,
+.lesson-version-selector button:focus-visible {
+  outline: 3px solid rgb(14 165 164 / 22%);
+  outline-offset: 0.15rem;
+}
+
+.lesson-version-selector {
+  display: inline-grid;
+  min-width: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 0.25rem;
+  border: 1px solid #bfe8e4;
+  border-radius: 999px;
+  background: #f4fbfa;
+}
+
+.lesson-version-selector button {
+  min-height: 2.5rem;
+  padding: 0.55rem 0.9rem;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  box-shadow: none;
+  color: #0f2147;
+  font-size: 0.85rem;
+}
+
+.lesson-version-selector button[aria-pressed="true"] {
+  background: #0ea5a4;
+  color: #fff;
+}
+
 .lesson-sections {
   display: grid;
   min-width: 0;
@@ -1475,6 +1524,11 @@ button:disabled {
 
   .lesson-filter-button {
     flex: 1 1 calc(50% - 0.55rem);
+  }
+
+  .lesson-simplify-button,
+  .lesson-version-selector {
+    width: 100%;
   }
 
   .lesson-section-header {

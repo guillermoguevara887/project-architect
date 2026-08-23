@@ -52,11 +52,19 @@ function publicLesson(lesson: LanguageLesson) {
   const summary = publicLessonSummary(lesson);
 
   if (summary.status === "ready") {
+    const simplifiedStructuredContent = lesson.simplifiedStructuredContent
+      ? structuredLanguageLessonSchema.parse(
+          lesson.simplifiedStructuredContent,
+        )
+      : null;
+
     return {
       ...summary,
       structuredContent: structuredLanguageLessonSchema.parse(
         lesson.structuredContent,
       ),
+      simplifiedStructuredContent,
+      simplifiedAt: lesson.simplifiedAt?.toISOString() ?? null,
     };
   }
 
@@ -64,6 +72,8 @@ function publicLesson(lesson: LanguageLesson) {
     ...summary,
     sourceContent: lesson.sourceContent,
     structuredContent: null,
+    simplifiedStructuredContent: null,
+    simplifiedAt: null,
   };
 }
 
@@ -469,6 +479,130 @@ export function registerLanguageRoutes(
         return reply.code(502).send({
           error: "LANGUAGE_LESSON_PROCESSING_FAILED",
           message: "No se pudo procesar la lección. Intenta nuevamente.",
+        });
+      }
+    },
+  );
+
+  server.post<{ Params: { projectId: string; lessonId: string } }>(
+    "/languages/projects/:projectId/lessons/:lessonId/simplify",
+    async (request, reply) => {
+      const { projectId, lessonId } = request.params;
+      let userId: string | null = null;
+      let simplificationStartedAt: Date | null = null;
+
+      try {
+        userId = await authenticatedUserId(request, authStore);
+
+        if (!userId) {
+          return reply.code(401).send({ error: "UNAUTHORIZED" });
+        }
+
+        if (
+          !languageProjectIdSchema.safeParse(projectId).success ||
+          !languageLessonIdSchema.safeParse(lessonId).success
+        ) {
+          return reply.code(404).send({ error: "LANGUAGE_LESSON_NOT_FOUND" });
+        }
+
+        const claim = await store.claimLessonForSimplification({
+          languageProjectId: projectId,
+          lessonId,
+          userId,
+        });
+
+        if (claim.kind === "not_found") {
+          return reply.code(404).send({ error: "LANGUAGE_LESSON_NOT_FOUND" });
+        }
+
+        if (claim.kind === "not_ready") {
+          return reply.code(409).send({
+            error: "LANGUAGE_LESSON_NOT_READY",
+            message: "Solo una lección procesada se puede simplificar.",
+          });
+        }
+
+        if (claim.kind === "already_simplified") {
+          return { lesson: publicLesson(claim.lesson) };
+        }
+
+        if (claim.kind === "processing") {
+          return reply.code(409).send({
+            error: "LANGUAGE_LESSON_SIMPLIFICATION_PROCESSING",
+            message: "La lección ya se está simplificando.",
+          });
+        }
+
+        const claimedAt = claim.lesson.simplificationStartedAt;
+
+        if (!claimedAt) {
+          throw new Error("Language lesson simplification claim is missing.");
+        }
+
+        simplificationStartedAt = claimedAt;
+        const structuredContent = structuredLanguageLessonSchema.parse(
+          claim.lesson.structuredContent,
+        );
+        const simplifiedStructuredContent = await processor.simplify({
+          language: claim.project.language,
+          level: claim.project.level,
+          structuredContent,
+        });
+        const lesson = await store.completeLessonSimplification({
+          languageProjectId: projectId,
+          lessonId,
+          userId,
+          simplificationStartedAt: claimedAt,
+          simplifiedStructuredContent,
+        });
+
+        if (!lesson) {
+          server.log.warn(
+            { projectId, lessonId, simplificationState: "changed" },
+            "Language lesson simplification was not persisted.",
+          );
+          return reply.code(409).send({
+            error: "LANGUAGE_LESSON_STATE_CHANGED",
+            message: "La lección cambió mientras se simplificaba.",
+          });
+        }
+
+        return { lesson: publicLesson(lesson) };
+      } catch (error) {
+        if (userId && simplificationStartedAt) {
+          try {
+            await store.failLessonSimplification({
+              languageProjectId: projectId,
+              lessonId,
+              userId,
+              simplificationStartedAt,
+            });
+          } catch {
+            server.log.error(
+              {
+                projectId,
+                lessonId,
+                errorType: "simplification_failure_state_persist_error",
+              },
+              "Language lesson simplification failure state could not be cleared.",
+            );
+          }
+        }
+
+        server.log.error(
+          {
+            projectId,
+            lessonId,
+            errorType:
+              error instanceof LanguageLessonProcessingError
+                ? error.code
+                : "unexpected",
+          },
+          "Language lesson simplification failed.",
+        );
+        return reply.code(502).send({
+          error: "LANGUAGE_LESSON_SIMPLIFICATION_FAILED",
+          message: "No se pudo simplificar la lección. Intenta nuevamente.",
         });
       }
     },
