@@ -1778,6 +1778,46 @@ test("lesson audio rejects arbitrary text, unsupported sections and invalid inde
       cookie,
       { version: "original", section: "automaticThoughts", index: 99 },
     );
+    const dialogueWithoutVoice = await requestLessonAudio(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      { version: "original", section: "dialogue", index: 0 },
+    );
+    const dialogueWithText = await requestLessonAudio(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      {
+        version: "original",
+        section: "dialogue",
+        index: 0,
+        voice: "female",
+        text: "Texto arbitrario",
+      },
+    );
+    const dialogueWithSpeaker = await requestLessonAudio(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      {
+        version: "original",
+        section: "dialogue",
+        index: 0,
+        voice: "male",
+        speaker: "Navegador",
+      },
+    );
+    const missingDialogueLine = await requestLessonAudio(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      { version: "original", section: "dialogue", index: 99, voice: "male" },
+    );
 
     assert.equal(unauthenticated.statusCode, 401);
     assert.equal(arbitraryText.statusCode, 400);
@@ -1786,6 +1826,14 @@ test("lesson audio rejects arbitrary text, unsupported sections and invalid inde
     assert.equal(invalidIndex.statusCode, 400);
     assert.equal(automaticThoughtWithVoice.statusCode, 400);
     assert.equal(missingAutomaticThought.statusCode, 400);
+    assert.equal(dialogueWithoutVoice.statusCode, 400);
+    assert.equal(dialogueWithText.statusCode, 400);
+    assert.equal(dialogueWithSpeaker.statusCode, 400);
+    assert.equal(missingDialogueLine.statusCode, 400);
+    assert.equal(
+      missingDialogueLine.json().error,
+      "INVALID_LANGUAGE_AUDIO_TARGET",
+    );
     assert.equal(
       missingAutomaticThought.json().error,
       "INVALID_LANGUAGE_AUDIO_TARGET",
@@ -1899,6 +1947,189 @@ test("German mini story uses ElevenLabs for original and simplified content and 
     );
   } finally {
     await server.close();
+  }
+});
+
+test("dialogue uses voiced ElevenLabs targets and reuses each stored line asset", async () => {
+  const {
+    store,
+    audioStore,
+    audioProvider,
+    audioStorage,
+    elevenLabsProvider,
+    server,
+  } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+
+  try {
+    const project = await createProject(server, cookie, "Deutsch");
+    const lesson = await createLesson(server, project.id, cookie);
+    await processLesson(server, project.id, lesson.id, cookie);
+    const storedLesson = store.lessons.find(({ id }) => id === lesson.id);
+    assert.ok(storedLesson);
+    storedLesson.simplifiedStructuredContent = simplifiedLesson;
+    storedLesson.simplifiedAt = new Date();
+
+    const requests = [
+      { version: "original", section: "dialogue", index: 0, voice: "female" },
+      { version: "original", section: "dialogue", index: 0, voice: "female" },
+      { version: "original", section: "dialogue", index: 1, voice: "male" },
+      { version: "simplified", section: "dialogue", index: 0, voice: "female" },
+    ] as const;
+
+    for (const payload of requests) {
+      const response = await requestLessonAudio(
+        server,
+        project.id,
+        lesson.id,
+        cookie,
+        payload,
+      );
+      assert.equal(response.statusCode, 200);
+    }
+
+    assert.equal(audioProvider.calls.length, 0);
+    assert.deepEqual(elevenLabsProvider.calls, [
+      { text: "Ich bin müde.", language: "Deutsch" },
+      { text: "Dann geh schlafen.", language: "Deutsch" },
+    ]);
+    assert.deepEqual(
+      elevenLabsProvider.configurations.map(({ model, voice }) => ({
+        model,
+        voice,
+      })),
+      [
+        {
+          model: "eleven_multilingual_v2",
+          voice: "test-german-female-voice",
+        },
+        {
+          model: "eleven_multilingual_v2",
+          voice: "test-german-male-voice",
+        },
+      ],
+    );
+    assert.equal(audioStore.assets.length, 2);
+    assert.equal(audioStorage.puts.length, 2);
+    assert.equal(audioStorage.gets.length, 2);
+  } finally {
+    await server.close();
+  }
+});
+
+test("dialogue selects multilingual and Flash configurations without OpenAI fallback", async () => {
+  const { audioProvider, elevenLabsProvider, server } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+  const languages = [
+    ["Français", "fr", "female", "eleven_multilingual_v2", undefined],
+    ["Tiếng Việt", "vi", "male", "eleven_flash_v2_5", "vi"],
+    ["Norsk", "no", "female", "eleven_flash_v2_5", "no"],
+  ] as const;
+
+  try {
+    for (const [language, code, voice] of languages) {
+      const project = await createProject(server, cookie, language);
+      const lesson = await createLesson(server, project.id, cookie);
+      await processLesson(server, project.id, lesson.id, cookie);
+      const response = await requestLessonAudio(
+        server,
+        project.id,
+        lesson.id,
+        cookie,
+        { version: "original", section: "dialogue", index: 0, voice },
+      );
+      assert.equal(response.statusCode, 200, `${code} ${voice}`);
+    }
+
+    assert.equal(audioProvider.calls.length, 0);
+    assert.deepEqual(
+      elevenLabsProvider.configurations.map(
+        ({ model, voice, languageCode }) => ({ model, voice, languageCode }),
+      ),
+      languages.map(([, code, voice, model, languageCode]) => ({
+        model,
+        voice: `test-${code}-${voice}-voice`,
+        languageCode,
+      })),
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("dialogue returns its own unavailable errors without provider fallback", async () => {
+  const unsupported = testServer();
+  const missingVoice = testServer();
+  const cookie = sessionCookie(firstUser.id);
+  const femaleVoice = process.env.ELEVENLABS_VOICE_ID_DE_FEMALE;
+
+  try {
+    const unsupportedProject = await createProject(
+      unsupported.server,
+      cookie,
+      "Klingon",
+    );
+    const unsupportedLesson = await createLesson(
+      unsupported.server,
+      unsupportedProject.id,
+      cookie,
+    );
+    await processLesson(
+      unsupported.server,
+      unsupportedProject.id,
+      unsupportedLesson.id,
+      cookie,
+    );
+    const unavailable = await requestLessonAudio(
+      unsupported.server,
+      unsupportedProject.id,
+      unsupportedLesson.id,
+      cookie,
+      { version: "original", section: "dialogue", index: 0, voice: "female" },
+    );
+
+    const germanProject = await createProject(
+      missingVoice.server,
+      cookie,
+      "Alemán",
+    );
+    const germanLesson = await createLesson(
+      missingVoice.server,
+      germanProject.id,
+      cookie,
+    );
+    await processLesson(
+      missingVoice.server,
+      germanProject.id,
+      germanLesson.id,
+      cookie,
+    );
+    delete process.env.ELEVENLABS_VOICE_ID_DE_FEMALE;
+    const voiceUnavailable = await requestLessonAudio(
+      missingVoice.server,
+      germanProject.id,
+      germanLesson.id,
+      cookie,
+      { version: "original", section: "dialogue", index: 0, voice: "female" },
+    );
+
+    assert.equal(unavailable.statusCode, 409);
+    assert.equal(unavailable.json().error, "LANGUAGE_DIALOGUE_AUDIO_UNAVAILABLE");
+    assert.equal(voiceUnavailable.statusCode, 409);
+    assert.equal(
+      voiceUnavailable.json().error,
+      "LANGUAGE_DIALOGUE_AUDIO_VOICE_UNAVAILABLE",
+    );
+    assert.equal(unsupported.audioProvider.calls.length, 0);
+    assert.equal(unsupported.elevenLabsProvider.calls.length, 0);
+    assert.equal(missingVoice.audioProvider.calls.length, 0);
+    assert.equal(missingVoice.elevenLabsProvider.calls.length, 0);
+  } finally {
+    if (femaleVoice) {
+      process.env.ELEVENLABS_VOICE_ID_DE_FEMALE = femaleVoice;
+    }
+    await unsupported.server.close();
+    await missingVoice.server.close();
   }
 });
 

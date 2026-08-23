@@ -228,6 +228,14 @@ export const languageLessonAudioRequestSchema = z
         voice: languageStoryVoiceSchema,
       })
       .strict(),
+    z
+      .object({
+        version: languageLessonAudioVersionSchema,
+        section: z.literal("dialogue"),
+        index: languageLessonAudioIndexSchema,
+        voice: languageStoryVoiceSchema,
+      })
+      .strict(),
   ])
   .superRefine((input, context) => {
     if (input.section === "miniStory" && input.index !== 0) {
@@ -271,6 +279,10 @@ export function resolveLanguageLessonAudioText(
 
   if (target.section === "automaticThoughts") {
     return content.automaticThoughts[target.index]?.text ?? null;
+  }
+
+  if (target.section === "dialogue") {
+    return content.dialogue[target.index]?.text ?? null;
   }
 
   return content.phrases[target.index]?.text ?? null;

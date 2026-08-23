@@ -11,6 +11,7 @@ import {
 } from "react";
 import {
   applyLanguageAudioPlaybackRate,
+  assignLanguageDialogueVoices,
   canRegenerateLanguageLesson,
   DEFAULT_LANGUAGE_AUDIO_PLAYBACK_RATE,
   DEFAULT_LANGUAGE_STORY_VOICE,
@@ -30,8 +31,10 @@ import {
   LANGUAGE_LESSON_CONTENT_VERSION_OPTIONS,
   LANGUAGE_STORY_VOICE_OPTIONS,
   playExclusiveLanguageAudio,
+  playLanguageDialogueSequentially,
   stopPlayableLanguageAudio,
   type LanguageAudioPlaybackRate,
+  type LanguageAudioPlaybackCompletion,
   type LanguageLesson,
   type LanguageLessonAudioPlayback,
   type LanguageLessonAudioSection,
@@ -215,6 +218,46 @@ function LessonAudioButton({
   );
 }
 
+function LanguageDialogueAudioButton({
+  playback,
+  onPlay,
+}: {
+  playback: Pick<LanguageLessonAudioPlayback, "status" | "error"> | null;
+  onPlay: () => void;
+}) {
+  const loading = playback?.status === "loading";
+  const playing = playback?.status === "playing";
+  const active = loading || playing;
+
+  return (
+    <>
+      <button
+        aria-busy={loading}
+        aria-label={active ? "Detener diálogo" : "Reproducir diálogo"}
+        aria-pressed={playing}
+        className="lesson-dialogue-play-button"
+        data-state={playback?.status ?? "idle"}
+        type="button"
+        onClick={onPlay}
+      >
+        {loading ? (
+          <span aria-hidden="true" className="lesson-audio-spinner" />
+        ) : playing ? (
+          <StopIcon />
+        ) : (
+          <SpeakerIcon />
+        )}
+        <span>{active ? "Detener diálogo" : "Reproducir diálogo"}</span>
+      </button>
+      {playback?.status === "error" && playback.error ? (
+        <small className="lesson-audio-error" role="alert">
+          {playback.error}
+        </small>
+      ) : null}
+    </>
+  );
+}
+
 function LanguageAudioRateControl({
   playbackRate,
   onPlaybackRateChange,
@@ -381,11 +424,13 @@ function ReadyLesson({
   contentVersion,
   copiedSection,
   audioPlayback,
+  dialoguePlayback,
   audioPlaybackRate,
   storyVoice,
   storyDownload,
   onCopy,
   onDownloadStory,
+  onPlayDialogue,
   onPlayAudio,
   onPlaybackRateChange,
   onStoryVoiceChange,
@@ -394,14 +439,20 @@ function ReadyLesson({
   contentVersion: LanguageLessonContentVersion;
   copiedSection: LessonSectionKey | null;
   audioPlayback: LanguageLessonAudioPlayback | null;
+  dialoguePlayback: Pick<
+    LanguageLessonAudioPlayback,
+    "status" | "error"
+  > | null;
   audioPlaybackRate: LanguageAudioPlaybackRate;
   storyVoice: LanguageStoryVoice;
   storyDownload: { loading: boolean; error: string | null };
   onCopy: (sectionKey: LessonSectionKey) => void;
   onDownloadStory: () => void;
+  onPlayDialogue: () => void;
   onPlayAudio: (
     section: LanguageLessonAudioSection,
     index: number,
+    voice?: LanguageStoryVoice,
   ) => void;
   onPlaybackRateChange: (playbackRate: LanguageAudioPlaybackRate) => void;
   onStoryVoiceChange: (voice: LanguageStoryVoice) => void;
@@ -419,6 +470,7 @@ function ReadyLesson({
     audioPlayback,
     storyAudioKey,
   );
+  const dialogueVoices = assignLanguageDialogueVoices(content.dialogue);
 
   return (
     <div className="lesson-sections">
@@ -589,12 +641,39 @@ function ReadyLesson({
         title="Diálogo"
         copied={copiedSection === "dialogue"}
         onCopy={onCopy}
+        headerAction={
+          <LanguageDialogueAudioButton
+            playback={dialoguePlayback}
+            onPlay={onPlayDialogue}
+          />
+        }
       >
         <div className="lesson-dialogue">
           {content.dialogue.map((line, index) => (
-            <p key={`${line.speaker}-${index}`}>
-              <strong>{line.speaker}:</strong> {line.text}
-            </p>
+            <div className="lesson-dialogue-line" key={`${line.speaker}-${index}`}>
+              <p>
+                <strong>{line.speaker}:</strong>
+                <span>{line.text}</span>
+              </p>
+              <LessonAudioButton
+                text={line.text}
+                accessibleLabel={`intervención de ${line.speaker}`}
+                playback={
+                  audioPlayback?.key ===
+                  languageLessonAudioKey(
+                    contentVersion,
+                    "dialogue",
+                    index,
+                    dialogueVoices[index],
+                  )
+                    ? audioPlayback
+                    : null
+                }
+                onPlay={() =>
+                  onPlayAudio("dialogue", index, dialogueVoices[index])
+                }
+              />
+            </div>
           ))}
         </div>
       </LessonSection>
@@ -691,6 +770,14 @@ export function LanguageLessonScreen({
     useState<LessonSectionKey | null>(null);
   const [audioPlayback, setAudioPlayback] =
     useState<LanguageLessonAudioPlayback | null>(null);
+  const [dialoguePlayback, setDialoguePlayback] = useState<Pick<
+    LanguageLessonAudioPlayback,
+    "status" | "error"
+  > | null>(null);
+  const dialoguePlaybackRef = useRef<Pick<
+    LanguageLessonAudioPlayback,
+    "status" | "error"
+  > | null>(null);
   const [storyDownload, setStoryDownload] = useState<{
     loading: boolean;
     error: string | null;
@@ -701,6 +788,10 @@ export function LanguageLessonScreen({
   const audioObjectUrlRef = useRef<string | null>(null);
   const audioAbortControllerRef = useRef<AbortController | null>(null);
   const audioRequestIdRef = useRef(0);
+  const dialogueSequenceIdRef = useRef(0);
+  const audioCompletionRef = useRef<
+    ((result: LanguageAudioPlaybackCompletion) => void) | null
+  >(null);
   const simplifying = simplificationAction !== null;
 
   function updateAudioPlayback(
@@ -708,6 +799,13 @@ export function LanguageLessonScreen({
   ) {
     audioPlaybackRef.current = playback;
     setAudioPlayback(playback);
+  }
+
+  function updateDialoguePlayback(
+    playback: Pick<LanguageLessonAudioPlayback, "status" | "error"> | null,
+  ) {
+    dialoguePlaybackRef.current = playback;
+    setDialoguePlayback(playback);
   }
 
   function updateLanguageAudioPlaybackRate(
@@ -735,10 +833,13 @@ export function LanguageLessonScreen({
     setStoryVoice(voice);
   }
 
-  function stopLanguageAudio() {
+  function stopCurrentLanguageAudio() {
     audioRequestIdRef.current += 1;
     audioAbortControllerRef.current?.abort();
     audioAbortControllerRef.current = null;
+    const complete = audioCompletionRef.current;
+    audioCompletionRef.current = null;
+    complete?.("stopped");
     stopPlayableLanguageAudio(audioElementRef.current);
     audioElementRef.current = null;
 
@@ -748,10 +849,18 @@ export function LanguageLessonScreen({
     }
   }
 
+  function stopLanguageAudio() {
+    dialogueSequenceIdRef.current += 1;
+    updateDialoguePlayback(null);
+    stopCurrentLanguageAudio();
+  }
+
   useEffect(() => {
     return () => {
+      dialogueSequenceIdRef.current += 1;
       audioAbortControllerRef.current?.abort();
       audioElementRef.current?.pause();
+      audioCompletionRef.current?.("stopped");
 
       if (audioObjectUrlRef.current) {
         URL.revokeObjectURL(audioObjectUrlRef.current);
@@ -1004,29 +1113,43 @@ export function LanguageLessonScreen({
   async function playLanguageAudio(
     section: LanguageLessonAudioSection,
     index: number,
-  ) {
-    const voice = section === "miniStory" ? storyVoice : undefined;
+    dialogueVoice?: LanguageStoryVoice,
+    dialogueSequenceId?: number,
+  ): Promise<LanguageAudioPlaybackCompletion> {
+    const voice =
+      section === "miniStory"
+        ? storyVoice
+        : section === "dialogue"
+          ? dialogueVoice
+          : undefined;
     const key = languageLessonAudioKey(contentVersion, section, index, voice);
     const toggleAction = languageLessonAudioToggleAction(
       audioPlaybackRef.current,
       key,
     );
 
-    if (toggleAction === "ignore") return;
+    if (toggleAction === "ignore") return "stopped";
 
     if (toggleAction === "stop") {
       stopLanguageAudio();
       updateAudioPlayback(null);
-      return;
+      return "stopped";
     }
 
     const previousAudio = audioElementRef.current;
 
-    stopLanguageAudio();
+    if (dialogueSequenceId === undefined) {
+      stopLanguageAudio();
+    } else {
+      stopCurrentLanguageAudio();
+    }
     const requestId = audioRequestIdRef.current;
     const controller = new AbortController();
     audioAbortControllerRef.current = controller;
     updateAudioPlayback({ key, status: "loading", error: null });
+    if (dialogueSequenceId === dialogueSequenceIdRef.current) {
+      updateDialoguePlayback({ status: "loading", error: null });
+    }
 
     try {
       const response = await fetch(
@@ -1051,7 +1174,7 @@ export function LanguageLessonScreen({
         stopLanguageAudio();
         updateAudioPlayback(null);
         router.replace("/");
-        return;
+        return "stopped";
       }
 
       if (!response.ok) {
@@ -1068,28 +1191,45 @@ export function LanguageLessonScreen({
 
       if (requestId !== audioRequestIdRef.current) {
         URL.revokeObjectURL(audioUrl);
-        return;
+        return "stopped";
       }
 
       const audio = new Audio(audioUrl);
+      const completion = new Promise<LanguageAudioPlaybackCompletion>(
+        (resolve) => {
+          audioCompletionRef.current = resolve;
+        },
+      );
       audioObjectUrlRef.current = audioUrl;
       audioElementRef.current = audio;
       audio.onended = () => {
         if (audioElementRef.current === audio) {
-          stopLanguageAudio();
+          const complete = audioCompletionRef.current;
+          audioCompletionRef.current = null;
+          stopCurrentLanguageAudio();
           updateAudioPlayback(
             languageLessonAudioStateAfterEnd(audioPlaybackRef.current, key),
           );
+          complete?.("ended");
         }
       };
       audio.onerror = () => {
         if (audioElementRef.current === audio) {
-          stopLanguageAudio();
+          const complete = audioCompletionRef.current;
+          audioCompletionRef.current = null;
+          stopCurrentLanguageAudio();
           updateAudioPlayback({
             key,
             status: "error",
             error: "No se pudo reproducir la pronunciación.",
           });
+          if (dialogueSequenceId === dialogueSequenceIdRef.current) {
+            updateDialoguePlayback({
+              status: "error",
+              error: "No se pudo reproducir el diálogo.",
+            });
+          }
+          complete?.("error");
         }
       };
       await playExclusiveLanguageAudio(
@@ -1100,27 +1240,71 @@ export function LanguageLessonScreen({
 
       if (requestId === audioRequestIdRef.current) {
         updateAudioPlayback({ key, status: "playing", error: null });
+        if (dialogueSequenceId === dialogueSequenceIdRef.current) {
+          updateDialoguePlayback({ status: "playing", error: null });
+        }
       }
+      return await completion;
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
-        return;
+        return "stopped";
       }
 
       if (requestId === audioRequestIdRef.current) {
-        stopLanguageAudio();
+        stopCurrentLanguageAudio();
+        const message =
+          error instanceof Error
+            ? error.message
+            : "No se pudo preparar la pronunciación.";
         updateAudioPlayback({
           key,
           status: "error",
-          error:
-            error instanceof Error
-              ? error.message
-              : "No se pudo preparar la pronunciación.",
+          error: message,
         });
+        if (dialogueSequenceId === dialogueSequenceIdRef.current) {
+          updateDialoguePlayback({ status: "error", error: message });
+        }
       }
+      return "error";
     } finally {
       if (audioAbortControllerRef.current === controller) {
         audioAbortControllerRef.current = null;
       }
+    }
+  }
+
+  async function playDialogueAudio() {
+    if (
+      dialoguePlaybackRef.current?.status === "loading" ||
+      dialoguePlaybackRef.current?.status === "playing"
+    ) {
+      stopLanguageAudio();
+      updateAudioPlayback(null);
+      return;
+    }
+
+    if (!lesson) return;
+    const content = languageLessonContentForVersion(lesson, contentVersion);
+    if (!content?.dialogue.length) return;
+
+    const voices = assignLanguageDialogueVoices(content.dialogue);
+    stopLanguageAudio();
+    updateAudioPlayback(null);
+    const sequenceId = dialogueSequenceIdRef.current;
+    updateDialoguePlayback({ status: "loading", error: null });
+
+    const result = await playLanguageDialogueSequentially(
+      content.dialogue.length,
+      (index) =>
+        playLanguageAudio("dialogue", index, voices[index], sequenceId),
+      () => sequenceId === dialogueSequenceIdRef.current,
+    );
+
+    if (sequenceId !== dialogueSequenceIdRef.current) return;
+
+    if (result === "completed" || result === "stopped") {
+      updateDialoguePlayback(null);
+      updateAudioPlayback(null);
     }
   }
 
@@ -1338,13 +1522,15 @@ export function LanguageLessonScreen({
             contentVersion={contentVersion}
             copiedSection={copiedSection}
             audioPlayback={audioPlayback}
+            dialoguePlayback={dialoguePlayback}
             audioPlaybackRate={audioPlaybackRate}
             storyVoice={storyVoice}
             storyDownload={storyDownload}
             onCopy={(sectionKey) => void copySection(sectionKey)}
             onDownloadStory={() => void downloadMiniStoryAudio()}
-            onPlayAudio={(section, index) =>
-              void playLanguageAudio(section, index)
+            onPlayDialogue={() => void playDialogueAudio()}
+            onPlayAudio={(section, index, voice) =>
+              void playLanguageAudio(section, index, voice)
             }
             onPlaybackRateChange={updateLanguageAudioPlaybackRate}
             onStoryVoiceChange={updateLanguageStoryVoice}

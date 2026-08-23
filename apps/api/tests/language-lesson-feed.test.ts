@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   applyLanguageAudioPlaybackRate,
+  assignLanguageDialogueVoices,
   canRegenerateLanguageLesson,
   createLanguageLessonSubmissionGuard,
   DEFAULT_LANGUAGE_AUDIO_PLAYBACK_RATE,
@@ -27,6 +28,7 @@ import {
   languageStoryAudioDownloadFilename,
   languageStoryVoiceChangeStopsPlayback,
   playExclusiveLanguageAudio,
+  playLanguageDialogueSequentially,
   stopPlayableLanguageAudio,
   type LanguageLesson,
   type LanguageLessonSource,
@@ -91,8 +93,29 @@ test("lesson audio UI builds positional requests without arbitrary text", () => 
     languageLessonAudioKey("simplified", "automaticThoughts", 1),
     "simplified:automaticThoughts:1",
   );
+  assert.deepEqual(
+    languageLessonAudioRequest("original", "dialogue", 2, "female"),
+    {
+      version: "original",
+      section: "dialogue",
+      index: 2,
+      voice: "female",
+    },
+  );
+  assert.equal(
+    languageLessonAudioKey("simplified", "dialogue", 1, "male"),
+    "simplified:dialogue:1:male",
+  );
+  assert.equal(
+    "speaker" in languageLessonAudioRequest("original", "dialogue", 0, "male"),
+    false,
+  );
   assert.throws(
     () => languageLessonAudioRequest("original", "miniStory", 0),
+    /requires a voice/,
+  );
+  assert.throws(
+    () => languageLessonAudioRequest("original", "dialogue", 0),
     /requires a voice/,
   );
   assert.throws(
@@ -108,6 +131,65 @@ test("lesson audio UI builds positional requests without arbitrary text", () => 
         "male",
       ),
     /only valid for mini story/,
+  );
+});
+
+test("dialogue voices stay consistent by normalized speaker order", () => {
+  assert.deepEqual(
+    assignLanguageDialogueVoices([
+      { speaker: " Anna " },
+      { speaker: "Thomas" },
+      { speaker: "anna" },
+      { speaker: " THOMAS " },
+      { speaker: "Mika" },
+      { speaker: "Sofia" },
+      { speaker: "mika" },
+    ]),
+    ["female", "male", "female", "male", "female", "male", "female"],
+  );
+});
+
+test("dialogue sequence requests one line at a time and stops on cancellation or error", async () => {
+  const events: string[] = [];
+  let releaseLine: (() => void) | null = null;
+  const firstRun = playLanguageDialogueSequentially(
+    3,
+    async (index) => {
+      events.push(`start-${index}`);
+      await new Promise<void>((resolve) => {
+        releaseLine = resolve;
+      });
+      events.push(`end-${index}`);
+      return "ended";
+    },
+  );
+
+  await Promise.resolve();
+  assert.deepEqual(events, ["start-0"]);
+  releaseLine?.();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(events, ["start-0", "end-0", "start-1"]);
+  releaseLine?.();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(events, ["start-0", "end-0", "start-1", "end-1", "start-2"]);
+  releaseLine?.();
+  assert.equal(await firstRun, "completed");
+
+  let active = true;
+  assert.equal(
+    await playLanguageDialogueSequentially(
+      3,
+      async () => {
+        active = false;
+        return "ended";
+      },
+      () => active,
+    ),
+    "stopped",
+  );
+  assert.equal(
+    await playLanguageDialogueSequentially(3, async () => "error"),
+    "error",
   );
 });
 
@@ -603,6 +685,9 @@ test("lesson audio controls use an accessible spinner and non-color playing cue"
   const automaticThoughtsSection = component.match(
     /sectionKey="automaticThoughts"[\s\S]*?<\/LessonSection>/,
   )?.[0];
+  const dialogueSection = component.match(
+    /sectionKey="dialogue"[\s\S]*?<\/LessonSection>/,
+  )?.[0];
   const generalReadyControls = component.match(
     /\{lesson\.status === "ready" && readyContent \? \([\s\S]*?<ReadyLesson/,
   )?.[0];
@@ -612,13 +697,22 @@ test("lesson audio controls use an accessible spinner and non-color playing cue"
   const storyDownloadHandler = component.match(
     /async function downloadMiniStoryAudio\([\s\S]*?\n  }/,
   )?.[0];
+  const dialogueHandler = component.match(
+    /async function playDialogueAudio\([\s\S]*?\n  }/,
+  )?.[0];
+  const stopHandler = component.match(
+    /function stopCurrentLanguageAudio\([\s\S]*?\n  }/,
+  )?.[0];
 
   assert.ok(rateHandler);
   assert.ok(miniStorySection);
   assert.ok(automaticThoughtsSection);
+  assert.ok(dialogueSection);
   assert.ok(generalReadyControls);
   assert.ok(storyVoiceHandler);
   assert.ok(storyDownloadHandler);
+  assert.ok(dialogueHandler);
+  assert.ok(stopHandler);
   assert.doesNotMatch(rateHandler, /fetch|\.play\(/);
   assert.match(component, /className="lesson-audio-spinner"/);
   assert.match(component, /<StopIcon \/>/);
@@ -647,6 +741,23 @@ test("lesson audio controls use an accessible spinner and non-color playing cue"
     automaticThoughtsSection,
     /onPlay=\{\(\) => onPlayAudio\("automaticThoughts", index\)\}/,
   );
+  assert.match(dialogueSection, /<LanguageDialogueAudioButton/);
+  assert.match(dialogueSection, /accessibleLabel=\{`intervención de \$\{line\.speaker\}`\}/);
+  assert.match(
+    dialogueSection,
+    /onPlayAudio\("dialogue", index, dialogueVoices\[index\]\)/,
+  );
+  assert.match(component, /assignLanguageDialogueVoices\(content\.dialogue\)/);
+  assert.match(component, /Reproducir diálogo/);
+  assert.match(component, /Detener diálogo/);
+  assert.match(dialogueHandler, /playLanguageDialogueSequentially/);
+  assert.match(dialogueHandler, /playLanguageAudio\("dialogue", index, voices\[index\], sequenceId\)/);
+  assert.doesNotMatch(dialogueHandler, /Promise\.all|map\(.*fetch/);
+  assert.match(stopHandler, /audioAbortControllerRef\.current\?\.abort\(\)/);
+  assert.match(stopHandler, /stopPlayableLanguageAudio\(audioElementRef\.current\)/);
+  assert.match(stopHandler, /URL\.revokeObjectURL\(audioObjectUrlRef\.current\)/);
+  assert.match(component, /dialogueSequenceIdRef\.current \+= 1/);
+  assert.match(component, /audioCompletionRef\.current/);
   assert.ok(
     miniStorySection.indexOf("<LanguageStoryVoiceControl") <
       miniStorySection.indexOf("<LanguageAudioRateControl"),
@@ -689,6 +800,8 @@ test("lesson audio controls use an accessible spinner and non-color playing cue"
   assert.match(styles, /\.lesson-story-voice-selector/);
   assert.match(styles, /\.lesson-story-download-button/);
   assert.match(styles, /\.lesson-thought-audio-item/);
+  assert.match(styles, /\.lesson-dialogue-play-button/);
+  assert.match(styles, /\.lesson-dialogue-line/);
   assert.doesNotMatch(
     `${component}\n${languageHelpers}`,
     /ELEVENLABS|VOICE_ID|eleven_multilingual|eleven_flash|languageCode|language_code/,

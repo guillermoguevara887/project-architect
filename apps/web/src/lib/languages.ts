@@ -170,7 +170,8 @@ export type LanguageLessonAudioSection =
   | "vocabulary"
   | "phrases"
   | "automaticThoughts"
-  | "miniStory";
+  | "miniStory"
+  | "dialogue";
 
 export const LANGUAGE_STORY_VOICE_OPTIONS = [
   { value: "male", label: "Hombre" },
@@ -201,19 +202,78 @@ export type LanguageLessonAudioPlayback = {
 
 export type LanguageLessonAudioToggleAction = "play" | "stop" | "ignore";
 
+export type LanguageDialogueSequenceResult =
+  | "completed"
+  | "stopped"
+  | "error";
+
+export type LanguageAudioPlaybackCompletion =
+  | "ended"
+  | "stopped"
+  | "error";
+
+function languageLessonAudioSectionRequiresVoice(
+  section: LanguageLessonAudioSection,
+) {
+  return section === "miniStory" || section === "dialogue";
+}
+
 export function languageLessonAudioKey(
   version: LanguageLessonContentVersion,
   section: LanguageLessonAudioSection,
   index: number,
   voice?: LanguageStoryVoice,
 ) {
-  if (section === "miniStory") {
-    if (!voice) throw new Error("Mini story audio requires a voice.");
+  if (languageLessonAudioSectionRequiresVoice(section)) {
+    if (!voice) throw new Error(`${section} audio requires a voice.`);
     return `${version}:${section}:${index}:${voice}`;
   }
 
-  if (voice) throw new Error("Voice is only valid for mini story audio.");
+  if (voice) {
+    throw new Error("Voice is only valid for mini story or dialogue audio.");
+  }
   return `${version}:${section}:${index}`;
+}
+
+function normalizeLanguageDialogueSpeaker(speaker: string) {
+  return speaker.trim().toLocaleLowerCase("und");
+}
+
+export function assignLanguageDialogueVoices(
+  dialogue: ReadonlyArray<{ speaker: string }>,
+): LanguageStoryVoice[] {
+  const voicesBySpeaker = new Map<string, LanguageStoryVoice>();
+
+  return dialogue.map(({ speaker }) => {
+    const normalizedSpeaker = normalizeLanguageDialogueSpeaker(speaker);
+    const existingVoice = voicesBySpeaker.get(normalizedSpeaker);
+
+    if (existingVoice) return existingVoice;
+
+    const voice =
+      voicesBySpeaker.size % 2 === 0
+        ? ("female" as const)
+        : ("male" as const);
+    voicesBySpeaker.set(normalizedSpeaker, voice);
+    return voice;
+  });
+}
+
+export async function playLanguageDialogueSequentially(
+  lineCount: number,
+  playLine: (index: number) => Promise<LanguageAudioPlaybackCompletion>,
+  isActive: () => boolean = () => true,
+): Promise<LanguageDialogueSequenceResult> {
+  for (let index = 0; index < lineCount; index += 1) {
+    if (!isActive()) return "stopped";
+
+    const result = await playLine(index);
+
+    if (result === "error") return "error";
+    if (result === "stopped" || !isActive()) return "stopped";
+  }
+
+  return "completed";
 }
 
 export function languageLessonAudioToggleAction(
@@ -269,6 +329,17 @@ export function languageLessonAudioErrorMessage(
     return "La voz seleccionada todavía no está disponible.";
   }
 
+  if (status === 409 && result.error === "LANGUAGE_DIALOGUE_AUDIO_UNAVAILABLE") {
+    return "El audio del diálogo todavía no está disponible para este idioma.";
+  }
+
+  if (
+    status === 409 &&
+    result.error === "LANGUAGE_DIALOGUE_AUDIO_VOICE_UNAVAILABLE"
+  ) {
+    return "La voz del diálogo todavía no está disponible.";
+  }
+
   return result.message ?? "No se pudo preparar la pronunciación.";
 }
 
@@ -285,12 +356,14 @@ export function languageLessonAudioRequest(
   index: number,
   voice?: LanguageStoryVoice,
 ) {
-  if (section === "miniStory") {
-    if (!voice) throw new Error("Mini story audio requires a voice.");
+  if (languageLessonAudioSectionRequiresVoice(section)) {
+    if (!voice) throw new Error(`${section} audio requires a voice.`);
     return { version, section, index, voice };
   }
 
-  if (voice) throw new Error("Voice is only valid for mini story audio.");
+  if (voice) {
+    throw new Error("Voice is only valid for mini story or dialogue audio.");
+  }
   return { version, section, index };
 }
 

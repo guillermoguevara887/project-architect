@@ -113,12 +113,20 @@ export function registerLanguageAudioRoutes(
         let configuration: LanguageAudioConfiguration | null =
           OPENAI_LANGUAGE_AUDIO_CONFIG;
 
-        if (parsedInput.data.section === "miniStory") {
+        if (
+          parsedInput.data.section === "miniStory" ||
+          parsedInput.data.section === "dialogue"
+        ) {
+          const dialogueAudio = parsedInput.data.section === "dialogue";
+
           if (!resolveLanguageStoryAudioLanguage(project.language)) {
             return reply.code(409).send({
-              error: "LANGUAGE_STORY_AUDIO_UNAVAILABLE",
-              message:
-                "El audio de Mini historia no está disponible para este idioma.",
+              error: dialogueAudio
+                ? "LANGUAGE_DIALOGUE_AUDIO_UNAVAILABLE"
+                : "LANGUAGE_STORY_AUDIO_UNAVAILABLE",
+              message: dialogueAudio
+                ? "El audio del diálogo todavía no está disponible para este idioma."
+                : "El audio de Mini historia no está disponible para este idioma.",
             });
           }
 
@@ -129,9 +137,15 @@ export function registerLanguageAudioRoutes(
         }
 
         if (!configuration) {
+          const dialogueAudio = parsedInput.data.section === "dialogue";
+
           return reply.code(409).send({
-            error: "LANGUAGE_STORY_AUDIO_VOICE_UNAVAILABLE",
-            message: "La voz seleccionada todavía no está disponible.",
+            error: dialogueAudio
+              ? "LANGUAGE_DIALOGUE_AUDIO_VOICE_UNAVAILABLE"
+              : "LANGUAGE_STORY_AUDIO_VOICE_UNAVAILABLE",
+            message: dialogueAudio
+              ? "La voz del diálogo todavía no está disponible."
+              : "La voz seleccionada todavía no está disponible.",
           });
         }
 

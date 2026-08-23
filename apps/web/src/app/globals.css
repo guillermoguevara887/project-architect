@@ -1148,6 +1148,11 @@ button:disabled {
   outline-offset: 0.15rem;
 }
 
+.lesson-dialogue-play-button:focus-visible {
+  outline: 3px solid rgb(14 165 164 / 22%);
+  outline-offset: 0.15rem;
+}
+
 .lesson-version-selector {
   display: inline-grid;
   min-width: 0;
@@ -1553,6 +1558,33 @@ button:disabled {
   animation: lesson-audio-pulse 1.6s ease-out infinite;
 }
 
+.lesson-dialogue-play-button {
+  display: inline-flex;
+  min-height: 2.65rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  padding: 0.5rem 0.8rem;
+  border: 1px solid var(--lesson-section-border);
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: none;
+  color: var(--lesson-section-accent);
+  font-size: 0.82rem;
+}
+
+.lesson-dialogue-play-button:hover {
+  border-color: var(--lesson-section-accent);
+  background: color-mix(in srgb, var(--lesson-section-accent) 8%, #fff);
+}
+
+.lesson-dialogue-play-button[data-state="playing"],
+.lesson-dialogue-play-button[data-state="loading"] {
+  border-color: var(--lesson-section-accent);
+  background: var(--lesson-section-accent);
+  color: #fff;
+}
+
 .lesson-audio-icon,
 .lesson-audio-spinner {
   width: 1.15rem;
@@ -1708,14 +1740,43 @@ button:disabled {
 
 .lesson-dialogue {
   display: grid;
-  gap: 0.75rem;
+  gap: 0;
 }
 
-.lesson-dialogue p {
+.lesson-dialogue-line {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.55rem 0.75rem;
+  padding: 0.7rem 0;
+  border-bottom: 1px solid var(--lesson-section-divider);
+}
+
+.lesson-dialogue-line:first-child {
+  padding-top: 0;
+}
+
+.lesson-dialogue-line:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.lesson-dialogue-line p {
+  display: grid;
+  min-width: 0;
+  gap: 0.15rem;
   margin: 0;
   line-height: 1.65;
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+.lesson-dialogue-line .lesson-audio-error {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #b42318;
+  font-size: 0.78rem;
 }
 
 .lesson-bridge {
@@ -1903,6 +1964,10 @@ button:disabled {
   }
 
   .lesson-story-download-button {
+    flex: 1 1 auto;
+  }
+
+  .lesson-dialogue-play-button {
     flex: 1 1 auto;
   }
 

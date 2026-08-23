@@ -145,6 +145,73 @@ test("mini story is a safe index-zero target resolved from stored content", () =
   );
 });
 
+test("dialogue is a strict voiced positional target resolved from stored content", () => {
+  const content = {
+    vocabulary: [],
+    phrases: [],
+    patterns: [],
+    miniStory: { text: "Eine gespeicherte Geschichte." },
+    automaticThoughts: [],
+    dialogue: [
+      { speaker: "Anna", text: "Guten Morgen." },
+      { speaker: "Thomas", text: "Wie geht es dir?" },
+    ],
+    nextLevelBridge: [],
+    review: { keyVocabulary: [], keyPatterns: [] },
+  } satisfies StructuredLanguageLesson;
+
+  for (const voice of ["male", "female"] as const) {
+    assert.equal(
+      languageLessonAudioRequestSchema.safeParse({
+        version: "original",
+        section: "dialogue",
+        index: 1,
+        voice,
+      }).success,
+      true,
+    );
+  }
+
+  for (const payload of [
+    { version: "original", section: "dialogue", index: 0 },
+    {
+      version: "original",
+      section: "dialogue",
+      index: 0,
+      voice: "other",
+    },
+    {
+      version: "original",
+      section: "dialogue",
+      index: 0,
+      voice: "female",
+      text: "Texto del navegador",
+    },
+    {
+      version: "original",
+      section: "dialogue",
+      index: 0,
+      voice: "female",
+      speaker: "Navegador",
+    },
+  ]) {
+    assert.equal(languageLessonAudioRequestSchema.safeParse(payload).success, false);
+  }
+
+  assert.equal(
+    resolveLanguageLessonAudioText(content, { section: "dialogue", index: 0 }),
+    "Guten Morgen.",
+  );
+  assert.equal(
+    resolveLanguageLessonAudioText(content, { section: "dialogue", index: 1 }),
+    "Wie geht es dir?",
+  );
+  assert.equal(
+    resolveLanguageLessonAudioText(content, { section: "dialogue", index: 2 }),
+    null,
+  );
+});
+
 test("automatic thoughts are strict positional OpenAI targets", () => {
   const content = {
     vocabulary: [],
