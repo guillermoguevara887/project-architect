@@ -772,7 +772,7 @@ test("language audio migration persists metadata with a unique private cache ide
   const userId = "71000000-0000-4000-8000-000000000001";
 
   try {
-    assert.equal(migrations.at(-1)?.id, audioMigrationId);
+    assert.ok(migrations.some(({ id }) => id === audioMigrationId));
     assert.deepEqual(
       await migratePending(database, migrations),
       migrations.map(({ id }) => id),
@@ -886,6 +886,114 @@ test("language audio migration persists metadata with a unique private cache ide
       storageKey:
         "language-audio/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.mp3",
       status: "ready",
+    });
+    const report = await getMigrationStatus(database, migrations);
+    assert.equal(report.historyMode, "current");
+    assert.ok(report.migrations.every(({ state: status }) => status === "applied"));
+  } finally {
+    await database.close();
+  }
+});
+
+test("exercises migration persists focused exercise state and constraints", async () => {
+  const isolatedUrl = await createIsolatedDatabase("exercises");
+  const database = createPostgresMigrationDatabase(isolatedUrl);
+  const migrations = await loadMigrationFiles(migrationDirectory);
+  const exerciseMigrationId = "0011_create_exercises.sql";
+  const userId = "72000000-0000-4000-8000-000000000001";
+  const exerciseId = "72000000-0000-4000-8000-000000000002";
+
+  try {
+    assert.equal(migrations.at(-1)?.id, exerciseMigrationId);
+    assert.deepEqual(
+      await migratePending(database, migrations),
+      migrations.map(({ id }) => id),
+    );
+
+    const state = await withSql(isolatedUrl, async (sql) => {
+      await sql`
+        INSERT INTO users (id, username, password_hash)
+        VALUES (${userId}, 'exercise-user', 'not-a-real-hash')
+      `;
+      await sql`
+        INSERT INTO exercises (
+          id,
+          user_id,
+          title,
+          source_name,
+          chapter,
+          exercise_number,
+          prompt,
+          suggested_steps,
+          workspace_type,
+          workspace_value
+        )
+        VALUES (
+          ${exerciseId},
+          ${userId},
+          'Operaciones con tensores',
+          'Deep Learning with PyTorch',
+          'Capítulo 3',
+          '3.4',
+          'Crea un tensor y explica qué observas.',
+          ${sql.json(["Crear el tensor", "Inspeccionar su shape"])},
+          'local',
+          'C:\\Users\\memoos\\exercise.py'
+        )
+      `;
+
+      const [exercise] = await sql<
+        Array<{
+          title: string;
+          status: string;
+          suggestedSteps: unknown;
+          workspaceType: string;
+          workspaceValue: string;
+        }>
+      >`
+        SELECT title,
+               status,
+               suggested_steps AS "suggestedSteps",
+               workspace_type AS "workspaceType",
+               workspace_value AS "workspaceValue"
+        FROM exercises
+        WHERE id = ${exerciseId} AND user_id = ${userId}
+      `;
+
+      await assert.rejects(
+        sql`
+          UPDATE exercises
+          SET status = 'paused'
+          WHERE id = ${exerciseId}
+        `,
+        /exercises_status_check/i,
+      );
+      await assert.rejects(
+        sql`
+          UPDATE exercises
+          SET workspace_type = 'colab', workspace_value = NULL
+          WHERE id = ${exerciseId}
+        `,
+        /exercises_workspace_pair_check/i,
+      );
+      await assert.rejects(
+        sql`
+          UPDATE exercises
+          SET suggested_steps = '{"step":"not-an-array"}'::jsonb
+          WHERE id = ${exerciseId}
+        `,
+        /exercises_suggested_steps_check/i,
+      );
+
+      return exercise;
+    });
+
+    assert.deepEqual(state, {
+      title: "Operaciones con tensores",
+      status: "pending",
+      suggestedSteps: ["Crear el tensor", "Inspeccionar su shape"],
+      workspaceType: "local",
+      workspaceValue: "C:\\Users\\memoos\\exercise.py",
     });
     const report = await getMigrationStatus(database, migrations);
     assert.equal(report.historyMode, "current");

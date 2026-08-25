@@ -12,6 +12,12 @@ import { authStore, type AuthStore } from "./auth/repository.js";
 import { registerAuthRoutes } from "./auth/routes.js";
 import { assertSessionConfiguration } from "./auth/session.js";
 import { closeDbConnection, getDb } from "./db/client.js";
+import {
+  exerciseStore,
+  type ExerciseStore,
+} from "./exercises/repository.js";
+import { registerExerciseRoutes } from "./exercises/routes.js";
+import { exerciseTutor, type ExerciseTutor } from "./exercises/tutor.js";
 import { journeyStore, type JourneyStore } from "./journey/repository.js";
 import { registerJourneyRoutes } from "./journey/routes.js";
 import {
@@ -39,6 +45,8 @@ type ServerDependencies = {
   authStore?: AuthStore;
   architectProjectStore?: ArchitectProjectStore;
   journeyStore?: JourneyStore;
+  exerciseStore?: ExerciseStore;
+  exerciseTutor?: ExerciseTutor;
   languageStore?: LanguageStore;
   languageLessonProcessor?: LanguageLessonProcessor;
   languageAudioStore?: LanguageAudioStore;
@@ -138,6 +146,12 @@ export function configureServer(
     server,
     dependencies.journeyStore ?? journeyStore,
     configuredAuthStore,
+  );
+  registerExerciseRoutes(
+    server,
+    dependencies.exerciseStore ?? exerciseStore,
+    configuredAuthStore,
+    dependencies.exerciseTutor ?? exerciseTutor,
   );
   registerLanguageRoutes(
     server,

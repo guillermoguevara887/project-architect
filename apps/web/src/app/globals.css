@@ -1915,6 +1915,363 @@ button:disabled {
   color: #b42318;
 }
 
+.exercises-shell {
+  align-items: start;
+}
+
+.exercises-card,
+.exercise-detail-card {
+  width: min(100%, 68rem);
+}
+
+.exercise-form-card {
+  width: min(100%, 48rem);
+}
+
+.exercises-heading,
+.exercise-detail-heading,
+.exercise-section-heading {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1.5rem;
+}
+
+.exercises-heading > *,
+.exercise-detail-heading > *,
+.exercise-section-heading > *,
+.exercise-list-card > * {
+  min-width: 0;
+}
+
+.exercises-heading .primary-link {
+  flex: 0 0 auto;
+}
+
+.exercises-intro {
+  max-width: 42rem;
+  margin: 1rem 0 0;
+  color: #556176;
+  font-size: 1.05rem;
+  line-height: 1.6;
+}
+
+.exercises-error,
+.exercise-action-error {
+  margin-top: 1.5rem;
+}
+
+.exercise-list {
+  display: grid;
+  min-width: 0;
+  gap: 0.85rem;
+  margin-top: 2.5rem;
+}
+
+.exercise-list-card {
+  display: flex;
+  max-width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  padding: 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: 0.9rem;
+  background: #fff;
+  color: var(--foreground);
+  text-decoration: none;
+  transition:
+    border-color 150ms ease,
+    transform 150ms ease;
+}
+
+.exercise-list-card:hover {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+}
+
+.exercise-list-copy strong {
+  display: block;
+  font-size: 1.08rem;
+  overflow-wrap: anywhere;
+}
+
+.exercise-list-copy p {
+  margin: 0.45rem 0 0;
+  color: #556176;
+  overflow-wrap: anywhere;
+}
+
+.exercise-list-copy span {
+  display: block;
+  margin-top: 0.3rem;
+  color: #7a8496;
+  font-size: 0.82rem;
+}
+
+.exercise-status {
+  flex: 0 0 auto;
+  padding: 0.4rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.exercise-status-pending {
+  background: #eef1f5;
+  color: #526077;
+}
+
+.exercise-status-working {
+  background: #fff3cd;
+  color: #805d00;
+}
+
+.exercise-status-solved {
+  background: #dcf7e9;
+  color: #087443;
+}
+
+.exercise-form,
+.workspace-form {
+  display: grid;
+  min-width: 0;
+  gap: 0.75rem;
+  margin-top: 2rem;
+}
+
+.exercise-form label,
+.workspace-form label,
+.exercise-status-control span,
+.exercise-metadata dt {
+  color: #465269;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.exercise-form input,
+.exercise-form textarea,
+.workspace-form input,
+.workspace-form select,
+.exercise-status-control select {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  padding: 0.85rem 0.9rem;
+  border: 1px solid #c7ced9;
+  border-radius: 0.65rem;
+  background: #fff;
+  color: var(--foreground);
+  font: inherit;
+}
+
+.exercise-form textarea {
+  resize: vertical;
+  line-height: 1.55;
+}
+
+.exercise-form input:focus,
+.exercise-form textarea:focus,
+.workspace-form input:focus,
+.workspace-form select:focus,
+.exercise-status-control select:focus {
+  border-color: var(--accent);
+  outline: 3px solid rgb(49 87 213 / 14%);
+}
+
+.exercise-form-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.exercise-form-row > div {
+  display: grid;
+  min-width: 0;
+  gap: 0.75rem;
+}
+
+.exercise-form > button,
+.workspace-form > button {
+  justify-self: start;
+}
+
+.exercise-detail-heading h1 {
+  font-size: clamp(2rem, 5vw, 2.75rem);
+}
+
+.exercise-status-control {
+  display: grid;
+  width: min(100%, 10rem);
+  flex: 0 0 auto;
+  gap: 0.45rem;
+}
+
+.exercise-tabs {
+  display: flex;
+  min-width: 0;
+  gap: 0.35rem;
+  margin-top: 2rem;
+  padding: 0.3rem;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 0.8rem;
+  background: #f3f5f8;
+}
+
+.exercise-tabs button {
+  min-width: max-content;
+  min-height: 2.55rem;
+  flex: 1 0 auto;
+  padding: 0.55rem 0.85rem;
+  background: transparent;
+  box-shadow: none;
+  color: #526077;
+  font-size: 0.88rem;
+}
+
+.exercise-tabs button[aria-selected="true"] {
+  background: #fff;
+  box-shadow: 0 0.2rem 0.7rem rgb(23 32 51 / 8%);
+  color: var(--accent);
+}
+
+.exercise-panel {
+  min-width: 0;
+  margin-top: 1.5rem;
+}
+
+.exercise-section,
+.exercise-ai-panel {
+  min-width: 0;
+  padding: clamp(1.25rem, 4vw, 1.75rem);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  background: #fff;
+}
+
+.exercise-section + .exercise-section {
+  margin-top: 1rem;
+}
+
+.exercise-section-heading {
+  align-items: center;
+}
+
+.exercise-section-heading h2 {
+  margin: 0;
+  font-size: 1.3rem;
+  letter-spacing: -0.02em;
+}
+
+.compact-button,
+.compact-link {
+  min-height: 2.45rem;
+  flex: 0 0 auto;
+  padding: 0.55rem 0.8rem;
+  font-size: 0.84rem;
+}
+
+.exercise-edit-form,
+.workspace-form {
+  margin-top: 1.5rem;
+}
+
+.exercise-metadata {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  margin: 1.5rem 0 0;
+  border-block: 1px solid var(--border);
+}
+
+.exercise-metadata > div {
+  min-width: 0;
+  padding: 1rem;
+}
+
+.exercise-metadata > div:first-child {
+  padding-left: 0;
+}
+
+.exercise-metadata dd {
+  margin: 0.45rem 0 0;
+  overflow-wrap: anywhere;
+}
+
+.exercise-prompt,
+.exercise-guide-content {
+  margin: 1.5rem 0 0;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.workspace-current {
+  display: grid;
+  min-width: 0;
+  gap: 0.45rem;
+  margin-top: 1.25rem;
+  padding: 1rem;
+  border-radius: 0.8rem;
+  background: #f5f7fb;
+}
+
+.workspace-current span {
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.workspace-current code {
+  min-width: 0;
+  color: #27344d;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.exercise-ai-panel {
+  background: #fbfcff;
+}
+
+.exercise-tab-empty {
+  margin-top: 1.5rem;
+}
+
+.exercise-guide-content {
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border);
+}
+
+.exercise-steps-list {
+  display: grid;
+  min-width: 0;
+  gap: 0.9rem;
+  margin: 1.5rem 0 0;
+  padding: 1.25rem 0 0 2.5rem;
+  border-top: 1px solid var(--border);
+}
+
+.exercise-steps-list li {
+  padding-left: 0.35rem;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.exercise-steps-list li::marker {
+  color: var(--accent);
+  font-weight: 800;
+}
+
 .visually-hidden {
   position: absolute;
   width: 1px;
@@ -1989,9 +2346,39 @@ button:disabled {
   .idea-list-card,
   .architect-project-card,
   .language-heading,
-  .language-list-card {
+  .language-list-card,
+  .exercises-heading,
+  .exercise-list-card,
+  .exercise-detail-heading,
+  .exercise-section-heading {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .exercises-heading .primary-link,
+  .exercise-section-heading > button,
+  .exercise-section-heading > a,
+  .exercise-form > button,
+  .workspace-form > button {
+    width: 100%;
+  }
+
+  .exercise-status-control {
+    width: 100%;
+  }
+
+  .exercise-form-row,
+  .exercise-metadata {
+    grid-template-columns: 1fr;
+  }
+
+  .exercise-metadata > div {
+    padding: 0.9rem 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .exercise-metadata > div:last-child {
+    border-bottom: 0;
   }
 
   .language-heading > button,

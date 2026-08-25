@@ -17,6 +17,10 @@ import type {
   LanguageLessonStatus,
   StructuredLanguageLesson,
 } from "../languages/contracts.js";
+import type {
+  ExerciseStatus,
+  ExerciseWorkspaceType,
+} from "../exercises/contracts.js";
 
 type StoredDiscoveryAnswerValue = string | number | boolean | string[];
 
@@ -303,6 +307,57 @@ export const journeyFeedEntries = pgTable(
     ideaCreatedAtIdx: index("journey_feed_entries_idea_created_at_idx").on(
       table.ideaId,
       table.createdAt.desc(),
+    ),
+  }),
+);
+
+export const exercises = pgTable(
+  "exercises",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    sourceName: text("source_name"),
+    chapter: text("chapter"),
+    exerciseNumber: text("exercise_number"),
+    prompt: text("prompt").notNull(),
+    status: text("status")
+      .$type<ExerciseStatus>()
+      .default("pending")
+      .notNull(),
+    guideContent: text("guide_content"),
+    suggestedSteps: jsonb("suggested_steps").$type<string[]>(),
+    workspaceType: text("workspace_type").$type<ExerciseWorkspaceType>(),
+    workspaceValue: text("workspace_value"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    userCreatedAtIdx: index("exercises_user_created_at_idx").on(
+      table.userId,
+      table.createdAt.desc(),
+    ),
+    statusCheck: check(
+      "exercises_status_check",
+      sql`${table.status} in ('pending', 'working', 'solved')`,
+    ),
+    workspaceTypeCheck: check(
+      "exercises_workspace_type_check",
+      sql`${table.workspaceType} is null or ${table.workspaceType} in ('colab', 'local', 'url')`,
+    ),
+    workspacePairCheck: check(
+      "exercises_workspace_pair_check",
+      sql`(${table.workspaceType} is null and ${table.workspaceValue} is null) or (${table.workspaceType} is not null and ${table.workspaceValue} is not null)`,
+    ),
+    suggestedStepsCheck: check(
+      "exercises_suggested_steps_check",
+      sql`${table.suggestedSteps} is null or jsonb_typeof(${table.suggestedSteps}) = 'array'`,
     ),
   }),
 );

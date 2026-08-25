@@ -132,6 +132,11 @@ export function DashboardScreen() {
               <strong>Idiomas</strong>
               <p>Organiza idiomas, niveles y lecciones secuenciales.</p>
             </Link>
+            <Link className="module-card" href="/exercises">
+              <span className="module-label">Práctica enfocada</span>
+              <strong>Ejercicios</strong>
+              <p>Trabaja ejercicios de libros, cursos y materiales de estudio.</p>
+            </Link>
           </div>
         </section>
       </section>
