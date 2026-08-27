@@ -18,6 +18,7 @@ import {
   type ExerciseWorkspaceType,
 } from "@/lib/exercises";
 import { useSessionGuard } from "@/lib/use-session-guard";
+import { ExerciseGuide } from "./exercise-guide";
 
 type ExerciseTab = "exercise" | "guide" | "steps";
 
@@ -240,11 +241,20 @@ export function ExerciseDetailScreen({ exerciseId }: { exerciseId: string }) {
       }
 
       const result = (await response.json()) as {
+        error?: string;
         exercise?: Exercise;
         message?: string;
       };
 
       if (!response.ok || !result.exercise) {
+        if (
+          kind === "guide" &&
+          result.error === "EXERCISE_GUIDE_LIMIT_REACHED" &&
+          result.exercise
+        ) {
+          setExercise(result.exercise);
+        }
+
         setActionError(
           result.message ??
             (kind === "guide"
@@ -310,6 +320,10 @@ export function ExerciseDetailScreen({ exerciseId }: { exerciseId: string }) {
       : workspaceType === "colab"
         ? "https://colab.research.google.com/drive/…"
         : "https://…";
+  const hasGuide = Boolean(
+    exercise.guideStructuredContent || exercise.guideContent,
+  );
+  const guideLimitReached = exercise.guideGenerationCount >= 2;
 
   return (
     <main className="flow-shell exercises-shell">
@@ -567,23 +581,32 @@ export function ExerciseDetailScreen({ exerciseId }: { exerciseId: string }) {
                 <p className="section-kicker">Tutor, no solucionador</p>
                 <h2>Guía</h2>
               </div>
-              <button
-                type="button"
-                disabled={generating !== null}
-                onClick={() => void generate("guide")}
-              >
-                {generating === "guide"
-                  ? "Generando…"
-                  : exercise.guideContent
-                    ? "Regenerar guía"
-                    : "Explícame este ejercicio"}
-              </button>
+              <div className="exercise-guide-actions">
+                <button
+                  type="button"
+                  disabled={generating !== null || guideLimitReached}
+                  onClick={() => void generate("guide")}
+                >
+                  {generating === "guide"
+                    ? "Generando…"
+                    : hasGuide
+                      ? "Regenerar guía"
+                      : "Generar guía"}
+                </button>
+                {exercise.guideGenerationCount === 1 ? (
+                  <span>1 regeneración disponible</span>
+                ) : null}
+                {guideLimitReached ? (
+                  <span>Límite de regeneraciones alcanzado</span>
+                ) : null}
+              </div>
             </div>
 
-            {exercise.guideContent ? (
-              <div className="exercise-guide-content">
-                {exercise.guideContent}
-              </div>
+            {hasGuide ? (
+              <ExerciseGuide
+                guide={exercise.guideStructuredContent}
+                legacyGuide={exercise.guideContent}
+              />
             ) : (
               <div className="empty-state exercise-tab-empty">
                 <h3>La guía aún no existe</h3>

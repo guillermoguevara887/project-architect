@@ -33,9 +33,27 @@ export type ExerciseSummary = {
   updatedAt: string;
 };
 
+export type ExerciseGuideItem = {
+  label: string | null;
+  text: string;
+};
+
+export type ExerciseGuideSection = {
+  type: "explanation" | "concepts" | "bullets";
+  title: string;
+  intro: string | null;
+  items: ExerciseGuideItem[];
+};
+
+export type StructuredExerciseGuide = {
+  sections: ExerciseGuideSection[];
+};
+
 export type Exercise = ExerciseSummary & {
   prompt: string;
   guideContent: string | null;
+  guideStructuredContent: StructuredExerciseGuide | null;
+  guideGenerationCount: number;
   suggestedSteps: string[] | null;
   workspaceType: ExerciseWorkspaceType | null;
   workspaceValue: string | null;

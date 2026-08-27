@@ -3,15 +3,25 @@ import type { AuthStore } from "../auth/repository.js";
 import { readSessionUserId } from "../auth/session.js";
 import {
   createExerciseSchema,
+  EXERCISE_GUIDE_MAX_GENERATIONS,
   exerciseIdSchema,
+  generatedExerciseGuideSchema,
   updateExerciseSchema,
   updateExerciseStatusSchema,
   updateExerciseWorkspaceSchema,
 } from "./contracts.js";
-import type { Exercise, ExerciseStore } from "./repository.js";
+import {
+  effectiveGuideGenerationCount,
+  type Exercise,
+  type ExerciseStore,
+} from "./repository.js";
 import { ExerciseTutorError, type ExerciseTutor } from "./tutor.js";
 
 function publicExercise(exercise: Exercise) {
+  const structuredGuide = generatedExerciseGuideSchema.safeParse(
+    exercise.guideStructuredContent,
+  );
+
   return {
     id: exercise.id,
     title: exercise.title,
@@ -21,6 +31,10 @@ function publicExercise(exercise: Exercise) {
     prompt: exercise.prompt,
     status: exercise.status,
     guideContent: exercise.guideContent,
+    guideStructuredContent: structuredGuide.success
+      ? structuredGuide.data
+      : null,
+    guideGenerationCount: effectiveGuideGenerationCount(exercise),
     suggestedSteps: exercise.suggestedSteps,
     workspaceType: exercise.workspaceType,
     workspaceValue: exercise.workspaceValue,
@@ -308,18 +322,37 @@ export function registerExerciseRoutes(
           return reply.code(404).send({ error: "EXERCISE_NOT_FOUND" });
         }
 
-        const guideContent = await tutor.generateGuide(current);
-        const exercise = await store.saveGuide(
+        if (
+          effectiveGuideGenerationCount(current) >=
+          EXERCISE_GUIDE_MAX_GENERATIONS
+        ) {
+          return reply.code(409).send({
+            error: "EXERCISE_GUIDE_LIMIT_REACHED",
+            message: "Límite de regeneraciones alcanzado.",
+            exercise: publicExercise(current),
+          });
+        }
+
+        const guide = await tutor.generateGuide(current);
+        const result = await store.saveStructuredGuide(
           current.id,
           userId,
-          guideContent,
+          guide,
         );
 
-        if (!exercise) {
+        if (result.status === "not_found") {
           return reply.code(404).send({ error: "EXERCISE_NOT_FOUND" });
         }
 
-        return { exercise: publicExercise(exercise) };
+        if (result.status === "limit_reached") {
+          return reply.code(409).send({
+            error: "EXERCISE_GUIDE_LIMIT_REACHED",
+            message: "Límite de regeneraciones alcanzado.",
+            exercise: publicExercise(result.exercise),
+          });
+        }
+
+        return { exercise: publicExercise(result.exercise) };
       } catch (error) {
         server.log.error({ error }, "Exercise guide generation failed.");
 

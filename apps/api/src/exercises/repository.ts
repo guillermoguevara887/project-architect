@@ -1,10 +1,12 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { getDb } from "../db/client.js";
 import { exercises } from "../db/schema.js";
 import type {
   ExerciseStatus,
   ExerciseWorkspaceType,
+  StructuredExerciseGuide,
 } from "./contracts.js";
+import { EXERCISE_GUIDE_MAX_GENERATIONS } from "./contracts.js";
 
 export type Exercise = typeof exercises.$inferSelect;
 
@@ -34,6 +36,21 @@ export type UpdateExerciseWorkspaceInput = {
   workspaceValue: string | null;
 };
 
+export type SaveStructuredGuideResult =
+  | { status: "saved"; exercise: Exercise }
+  | { status: "limit_reached"; exercise: Exercise }
+  | { status: "not_found" };
+
+export function effectiveGuideGenerationCount(
+  exercise: Pick<Exercise, "guideContent" | "guideGenerationCount">,
+) {
+  // A legacy guide is the first generation without requiring a data backfill.
+  return Math.max(
+    exercise.guideGenerationCount,
+    exercise.guideContent === null ? 0 : 1,
+  );
+}
+
 export interface ExerciseStore {
   listExercises(userId: string): Promise<Exercise[]>;
   createExercise(input: CreateExerciseInput): Promise<Exercise>;
@@ -50,11 +67,11 @@ export interface ExerciseStore {
   updateWorkspace(
     input: UpdateExerciseWorkspaceInput,
   ): Promise<Exercise | null>;
-  saveGuide(
+  saveStructuredGuide(
     exerciseId: string,
     userId: string,
-    guideContent: string,
-  ): Promise<Exercise | null>;
+    guide: StructuredExerciseGuide,
+  ): Promise<SaveStructuredGuideResult>;
   saveSuggestedSteps(
     exerciseId: string,
     userId: string,
@@ -64,6 +81,11 @@ export interface ExerciseStore {
 
 const ownedExercise = (exerciseId: string, userId: string) =>
   and(eq(exercises.id, exerciseId), eq(exercises.userId, userId));
+
+const effectiveGuideGenerationCountSql = sql<number>`greatest(
+  ${exercises.guideGenerationCount},
+  case when ${exercises.guideContent} is null then 0 else 1 end
+)`;
 
 export const exerciseStore: ExerciseStore = {
   async listExercises(userId) {
@@ -132,14 +154,30 @@ export const exerciseStore: ExerciseStore = {
     return exercise ?? null;
   },
 
-  async saveGuide(exerciseId, userId, guideContent) {
+  async saveStructuredGuide(exerciseId, userId, guide) {
     const [exercise] = await getDb()
       .update(exercises)
-      .set({ guideContent, updatedAt: new Date() })
-      .where(ownedExercise(exerciseId, userId))
+      .set({
+        guideStructuredContent: guide,
+        guideGenerationCount: sql`${effectiveGuideGenerationCountSql} + 1`,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          ownedExercise(exerciseId, userId),
+          sql`${effectiveGuideGenerationCountSql} < ${EXERCISE_GUIDE_MAX_GENERATIONS}`,
+        ),
+      )
       .returning();
 
-    return exercise ?? null;
+    if (exercise) {
+      return { status: "saved", exercise };
+    }
+
+    const current = await this.findExerciseByIdForUser(exerciseId, userId);
+    return current
+      ? { status: "limit_reached", exercise: current }
+      : { status: "not_found" };
   },
 
   async saveSuggestedSteps(exerciseId, userId, suggestedSteps) {

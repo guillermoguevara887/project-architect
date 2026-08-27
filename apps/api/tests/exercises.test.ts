@@ -5,7 +5,10 @@ import test from "node:test";
 import type { AuthStore, AuthUser } from "../src/auth/repository.js";
 import { createSessionCookie } from "../src/auth/session.js";
 import { createServer } from "../src/create-server.js";
-import type { ExerciseStatus } from "../src/exercises/contracts.js";
+import type {
+  ExerciseStatus,
+  StructuredExerciseGuide,
+} from "../src/exercises/contracts.js";
 import type {
   CreateExerciseInput,
   Exercise,
@@ -13,9 +16,10 @@ import type {
   UpdateExerciseInput,
   UpdateExerciseWorkspaceInput,
 } from "../src/exercises/repository.js";
-import type {
-  ExerciseTutor,
-  ExerciseTutorInput,
+import {
+  ExerciseTutorError,
+  type ExerciseTutor,
+  type ExerciseTutorInput,
 } from "../src/exercises/tutor.js";
 
 process.env.NODE_ENV = "test";
@@ -82,6 +86,8 @@ class MemoryExerciseStore implements ExerciseStore {
       ...input,
       status: "pending",
       guideContent: null,
+      guideStructuredContent: null,
+      guideGenerationCount: 0,
       suggestedSteps: null,
       workspaceType: null,
       workspaceValue: null,
@@ -144,16 +150,30 @@ class MemoryExerciseStore implements ExerciseStore {
     return exercise;
   }
 
-  async saveGuide(exerciseId: string, userId: string, guideContent: string) {
+  async saveStructuredGuide(
+    exerciseId: string,
+    userId: string,
+    guide: StructuredExerciseGuide,
+  ) {
     const exercise = this.findOwned(exerciseId, userId);
 
     if (!exercise) {
-      return null;
+      return { status: "not_found" as const };
     }
 
-    exercise.guideContent = guideContent;
+    const effectiveCount = Math.max(
+      exercise.guideGenerationCount,
+      exercise.guideContent === null ? 0 : 1,
+    );
+
+    if (effectiveCount >= 2) {
+      return { status: "limit_reached" as const, exercise };
+    }
+
+    exercise.guideStructuredContent = guide;
+    exercise.guideGenerationCount = effectiveCount + 1;
     exercise.updatedAt = this.now();
-    return exercise;
+    return { status: "saved" as const, exercise };
   }
 
   async saveSuggestedSteps(
@@ -173,13 +193,48 @@ class MemoryExerciseStore implements ExerciseStore {
   }
 }
 
+function guideFixture(generation = 1): StructuredExerciseGuide {
+  return {
+    sections: [
+      {
+        type: "explanation",
+        title: `Objetivo ${generation}`,
+        intro: "Distingue los datos almacenados de su interpretación.",
+        items: [],
+      },
+      {
+        type: "concepts",
+        title: "Piezas mínimas",
+        intro: null,
+        items: [
+          {
+            label: "Storage",
+            text: "Es la memoria subyacente que contiene los valores.",
+          },
+        ],
+      },
+      {
+        type: "bullets",
+        title: "Qué comprobar",
+        intro: null,
+        items: [
+          {
+            label: null,
+            text: "Observa si dos vistas comparten almacenamiento.",
+          },
+        ],
+      },
+    ],
+  };
+}
+
 class FakeExerciseTutor implements ExerciseTutor {
   readonly guideCalls: ExerciseTutorInput[] = [];
   readonly stepsCalls: ExerciseTutorInput[] = [];
 
   async generateGuide(input: ExerciseTutorInput) {
     this.guideCalls.push(input);
-    return `Guía generada ${this.guideCalls.length}`;
+    return guideFixture(this.guideCalls.length);
   }
 
   async generateSteps(input: ExerciseTutorInput) {
@@ -302,6 +357,8 @@ test("creation, listing, reading and updates stay isolated by user", async () =>
 
     assert.equal(store.exercises[0]?.userId, firstUser.id);
     assert.equal(exercise.status, "pending");
+    assert.equal(exercise.guideGenerationCount, 0);
+    assert.equal(exercise.guideStructuredContent, null);
     assert.equal(ownerList.statusCode, 200);
     assert.equal(ownerList.json().exercises.length, 1);
     assert.equal(otherList.statusCode, 200);
@@ -431,6 +488,11 @@ test("guide and steps generation persist and regenerate only for the owner", asy
       url: `/exercises/${exercise.id}/guide`,
       headers: { cookie: ownerCookie },
     });
+    const blockedGuide = await server.inject({
+      method: "POST",
+      url: `/exercises/${exercise.id}/guide`,
+      headers: { cookie: ownerCookie },
+    });
     const steps = await server.inject({
       method: "POST",
       url: `/exercises/${exercise.id}/steps`,
@@ -453,12 +515,22 @@ test("guide and steps generation persist and regenerate only for the owner", asy
     });
 
     assert.equal(guide.statusCode, 200);
-    assert.equal(guide.json().exercise.guideContent, "Guía generada 1");
+    assert.equal(guide.json().exercise.guideContent, null);
+    assert.equal(guide.json().exercise.guideGenerationCount, 1);
+    assert.equal(
+      guide.json().exercise.guideStructuredContent.sections[0].title,
+      "Objetivo 1",
+    );
     assert.equal(guideRegeneration.statusCode, 200);
     assert.equal(
-      guideRegeneration.json().exercise.guideContent,
-      "Guía generada 2",
+      guideRegeneration.json().exercise.guideStructuredContent.sections[0]
+        .title,
+      "Objetivo 2",
     );
+    assert.equal(guideRegeneration.json().exercise.guideGenerationCount, 2);
+    assert.equal(blockedGuide.statusCode, 409);
+    assert.equal(blockedGuide.json().error, "EXERCISE_GUIDE_LIMIT_REACHED");
+    assert.equal(blockedGuide.json().exercise.guideGenerationCount, 2);
     assert.equal(steps.statusCode, 200);
     assert.deepEqual(steps.json().exercise.suggestedSteps, [
       "Paso generado 1",
@@ -469,10 +541,152 @@ test("guide and steps generation persist and regenerate only for the owner", asy
       "Paso generado 2",
       "Comprobar el resultado",
     ]);
+    assert.equal(reload.json().exercise.guideGenerationCount, 2);
+    assert.equal(
+      reload.json().exercise.guideStructuredContent.sections[0].title,
+      "Objetivo 2",
+    );
     assert.equal(foreignGuide.statusCode, 404);
     assert.equal(tutor.guideCalls.length, 2);
     assert.equal(tutor.stepsCalls.length, 2);
     assert.equal(tutor.guideCalls[0]?.title, "Operaciones con tensores");
+  } finally {
+    await server.close();
+  }
+});
+
+test("a legacy guide remains visible and permits exactly one structured regeneration", async () => {
+  const { store, tutor, server } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+
+  try {
+    const exercise = await createExercise(server, cookie);
+    const stored = store.exercises[0];
+    assert.ok(stored);
+    stored.guideContent =
+      "## Qué te pide\n\n**Storage**\nMemoria donde viven los valores.";
+
+    const legacy = await server.inject({
+      method: "GET",
+      url: `/exercises/${exercise.id}`,
+      headers: { cookie },
+    });
+    const regeneration = await server.inject({
+      method: "POST",
+      url: `/exercises/${exercise.id}/guide`,
+      headers: { cookie },
+    });
+    const blocked = await server.inject({
+      method: "POST",
+      url: `/exercises/${exercise.id}/guide`,
+      headers: { cookie },
+    });
+
+    assert.equal(legacy.statusCode, 200);
+    assert.equal(legacy.json().exercise.guideContent, stored.guideContent);
+    assert.equal(legacy.json().exercise.guideStructuredContent, null);
+    assert.equal(legacy.json().exercise.guideGenerationCount, 1);
+    assert.equal(regeneration.statusCode, 200);
+    assert.equal(
+      regeneration.json().exercise.guideContent,
+      stored.guideContent,
+    );
+    assert.equal(regeneration.json().exercise.guideGenerationCount, 2);
+    assert.equal(
+      regeneration.json().exercise.guideStructuredContent.sections.length,
+      3,
+    );
+    assert.equal(blocked.statusCode, 409);
+    assert.equal(tutor.guideCalls.length, 1);
+    assert.equal(stored.guideGenerationCount, 2);
+  } finally {
+    await server.close();
+  }
+});
+
+test("provider and invalid structured output failures preserve guide content and count", async () => {
+  const store = new MemoryExerciseStore();
+  const failureCodes = ["provider_error", "invalid_response"] as const;
+  let failureIndex = 0;
+  const failingTutor: ExerciseTutor = {
+    async generateGuide() {
+      const code = failureCodes[failureIndex] ?? "invalid_response";
+      failureIndex += 1;
+      throw new ExerciseTutorError(code);
+    },
+    async generateSteps() {
+      return ["No se usa en esta prueba"];
+    },
+  };
+  const server = createServer(
+    {},
+    {
+      authStore: new MemoryAuthStore(),
+      exerciseStore: store,
+      exerciseTutor: failingTutor,
+    },
+  );
+  const cookie = sessionCookie(firstUser.id);
+
+  try {
+    const exercise = await createExercise(server, cookie);
+    const stored = store.exercises[0];
+    assert.ok(stored);
+    const existingGuide = guideFixture(7);
+    stored.guideStructuredContent = existingGuide;
+    stored.guideGenerationCount = 1;
+
+    for (const expectedCode of failureCodes) {
+      const response = await server.inject({
+        method: "POST",
+        url: `/exercises/${exercise.id}/guide`,
+        headers: { cookie },
+      });
+
+      assert.equal(response.statusCode, 503, expectedCode);
+      assert.equal(response.json().error, "EXERCISE_AI_UNAVAILABLE");
+      assert.equal(stored.guideGenerationCount, 1);
+      assert.deepEqual(stored.guideStructuredContent, existingGuide);
+      assert.equal(stored.guideContent, null);
+    }
+  } finally {
+    await server.close();
+  }
+});
+
+test("simultaneous regenerations cannot exceed the backend guide limit", async () => {
+  const { store, tutor, server } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+
+  try {
+    const exercise = await createExercise(server, cookie);
+    const first = await server.inject({
+      method: "POST",
+      url: `/exercises/${exercise.id}/guide`,
+      headers: { cookie },
+    });
+    assert.equal(first.statusCode, 200);
+
+    const concurrent = await Promise.all([
+      server.inject({
+        method: "POST",
+        url: `/exercises/${exercise.id}/guide`,
+        headers: { cookie },
+      }),
+      server.inject({
+        method: "POST",
+        url: `/exercises/${exercise.id}/guide`,
+        headers: { cookie },
+      }),
+    ]);
+
+    assert.deepEqual(
+      concurrent.map((response) => response.statusCode).sort(),
+      [200, 409],
+    );
+    assert.equal(store.exercises[0]?.guideGenerationCount, 2);
+    assert.equal(tutor.guideCalls.length, 3);
+    assert.ok(store.exercises[0]?.guideStructuredContent);
   } finally {
     await server.close();
   }
@@ -492,5 +706,27 @@ test("Exercises migration is additive, isolated by user and non-destructive", as
   assert.doesNotMatch(
     migration,
     /\b(?:DROP|TRUNCATE|ALTER)\b|\bDELETE\s+FROM\b/i,
+  );
+});
+
+test("structured guide migration is additive and preserves guide_content", async () => {
+  const migration = await readFile(
+    new URL(
+      "../drizzle/0012_structure_exercise_guides.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+
+  assert.match(migration, /ADD COLUMN "guide_structured_content" jsonb/);
+  assert.match(
+    migration,
+    /ADD COLUMN "guide_generation_count" integer DEFAULT 0 NOT NULL/,
+  );
+  assert.match(migration, /jsonb_typeof\("guide_structured_content"\)/);
+  assert.match(migration, /"guide_generation_count" BETWEEN 0 AND 2/);
+  assert.doesNotMatch(
+    migration,
+    /\b(?:DROP|TRUNCATE|DELETE|UPDATE)\b|ALTER\s+COLUMN\s+"guide_content"/i,
   );
 });

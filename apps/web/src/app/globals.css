@@ -2204,8 +2204,7 @@ button:disabled {
   overflow-wrap: anywhere;
 }
 
-.exercise-prompt,
-.exercise-guide-content {
+.exercise-prompt {
   margin: 1.5rem 0 0;
   line-height: 1.75;
   overflow-wrap: anywhere;
@@ -2243,13 +2242,149 @@ button:disabled {
   background: #fbfcff;
 }
 
-.exercise-tab-empty {
-  margin-top: 1.5rem;
+.exercise-guide-actions {
+  display: grid;
+  flex: 0 0 auto;
+  justify-items: end;
+  gap: 0.45rem;
 }
 
-.exercise-guide-content {
+.exercise-guide-actions span {
+  color: #69758a;
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
+.exercise-guide-sections {
+  display: grid;
+  min-width: 0;
+  gap: 0.85rem;
+  margin-top: 1.5rem;
   padding-top: 1.25rem;
   border-top: 1px solid var(--border);
+}
+
+.exercise-guide-section {
+  min-width: 0;
+  padding: clamp(1rem, 3vw, 1.25rem);
+  border: 1px solid #dfe4ed;
+  border-radius: 0.85rem;
+  background: #fff;
+}
+
+.exercise-guide-section-concepts {
+  border-color: #ced8f6;
+  background: #fafbff;
+}
+
+.exercise-guide-section h3 {
+  margin: 0;
+  color: #202d45;
+  font-size: 1.05rem;
+  letter-spacing: -0.015em;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.exercise-guide-intro {
+  margin: 0.65rem 0 0;
+  color: #4f5b70;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.exercise-guide-concepts {
+  display: grid;
+  min-width: 0;
+  gap: 0;
+  margin: 0.85rem 0 0;
+}
+
+.exercise-guide-concepts > div {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(7rem, 0.3fr) minmax(0, 1fr);
+  gap: 1rem;
+  padding: 0.75rem 0;
+  border-top: 1px solid #e2e7f2;
+}
+
+.exercise-guide-concepts dt {
+  color: var(--accent);
+  font-size: 0.9rem;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.exercise-guide-concepts dd {
+  margin: 0;
+  color: #536078;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.exercise-guide-bullets {
+  display: grid;
+  min-width: 0;
+  gap: 0.65rem;
+  margin: 0.85rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.exercise-guide-bullets li {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 0.45rem minmax(0, 1fr);
+  column-gap: 0.65rem;
+  color: #4f5b70;
+  line-height: 1.55;
+}
+
+.exercise-guide-bullets li::before {
+  width: 0.38rem;
+  height: 0.38rem;
+  margin-top: 0.58rem;
+  border-radius: 50%;
+  background: var(--accent);
+  content: "";
+}
+
+.exercise-guide-bullets strong,
+.exercise-guide-bullets span {
+  grid-column: 2;
+  overflow-wrap: anywhere;
+}
+
+.exercise-guide-bullets strong {
+  color: #2c3951;
+  font-size: 0.9rem;
+}
+
+.exercise-guide-legacy {
+  min-width: 0;
+  margin-top: 1.5rem;
+  padding: 1.25rem;
+  border: 1px solid #dfe4ed;
+  border-radius: 0.85rem;
+  background: #fff;
+  color: #4f5b70;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.exercise-guide-legacy-label {
+  margin: 0 0 0.65rem;
+  color: #7a8496;
+  font-size: 0.75rem;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.exercise-tab-empty {
+  margin-top: 1.5rem;
 }
 
 .exercise-steps-list {
@@ -2358,9 +2493,24 @@ button:disabled {
   .exercises-heading .primary-link,
   .exercise-section-heading > button,
   .exercise-section-heading > a,
+  .exercise-guide-actions,
+  .exercise-guide-actions > button,
   .exercise-form > button,
   .workspace-form > button {
     width: 100%;
+  }
+
+  .exercise-guide-actions {
+    justify-items: stretch;
+  }
+
+  .exercise-guide-actions span {
+    text-align: center;
+  }
+
+  .exercise-guide-concepts > div {
+    grid-template-columns: 1fr;
+    gap: 0.3rem;
   }
 
   .exercise-status-control {

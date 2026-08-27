@@ -900,14 +900,24 @@ test("exercises migration persists focused exercise state and constraints", asyn
   const database = createPostgresMigrationDatabase(isolatedUrl);
   const migrations = await loadMigrationFiles(migrationDirectory);
   const exerciseMigrationId = "0011_create_exercises.sql";
+  const exerciseMigrationIndex = migrations.findIndex(
+    ({ id }) => id === exerciseMigrationId,
+  );
+  const migrationsThroughExercises = migrations.slice(
+    0,
+    exerciseMigrationIndex + 1,
+  );
   const userId = "72000000-0000-4000-8000-000000000001";
   const exerciseId = "72000000-0000-4000-8000-000000000002";
 
   try {
-    assert.equal(migrations.at(-1)?.id, exerciseMigrationId);
+    assert.equal(
+      migrations[exerciseMigrationIndex + 1]?.id,
+      "0012_structure_exercise_guides.sql",
+    );
     assert.deepEqual(
-      await migratePending(database, migrations),
-      migrations.map(({ id }) => id),
+      await migratePending(database, migrationsThroughExercises),
+      migrationsThroughExercises.map(({ id }) => id),
     );
 
     const state = await withSql(isolatedUrl, async (sql) => {
@@ -995,9 +1005,149 @@ test("exercises migration persists focused exercise state and constraints", asyn
       workspaceType: "local",
       workspaceValue: "C:\\Users\\memoos\\exercise.py",
     });
-    const report = await getMigrationStatus(database, migrations);
+    const report = await getMigrationStatus(database, migrationsThroughExercises);
     assert.equal(report.historyMode, "current");
     assert.ok(report.migrations.every(({ state: status }) => status === "applied"));
+  } finally {
+    await database.close();
+  }
+});
+
+test("structured exercise guide migration preserves legacy guides and enforces bounds", async () => {
+  const isolatedUrl = await createIsolatedDatabase("structured_exercise_guides");
+  const database = createPostgresMigrationDatabase(isolatedUrl);
+  const migrations = await loadMigrationFiles(migrationDirectory);
+  const structuredGuideMigrationId =
+    "0012_structure_exercise_guides.sql";
+  const structuredGuideMigrationIndex = migrations.findIndex(
+    ({ id }) => id === structuredGuideMigrationId,
+  );
+  const migrationsBeforeStructuredGuide = migrations.slice(
+    0,
+    structuredGuideMigrationIndex,
+  );
+  const userId = "73000000-0000-4000-8000-000000000001";
+  const exerciseId = "73000000-0000-4000-8000-000000000002";
+  const legacyGuide = "## Concepto\n\n**Storage** guarda los valores.";
+  const structuredGuide = {
+    sections: [
+      {
+        type: "explanation",
+        title: "La idea central",
+        intro: "Distingue memoria e interpretación.",
+        items: [],
+      },
+      {
+        type: "concepts",
+        title: "Piezas mínimas",
+        intro: null,
+        items: [
+          {
+            label: "Storage",
+            text: "Memoria donde viven los valores.",
+          },
+        ],
+      },
+    ],
+  };
+
+  try {
+    assert.equal(migrations.at(-1)?.id, structuredGuideMigrationId);
+    assert.deepEqual(
+      await migratePending(database, migrationsBeforeStructuredGuide),
+      migrationsBeforeStructuredGuide.map(({ id }) => id),
+    );
+
+    await withSql(isolatedUrl, async (sql) => {
+      await sql`
+        INSERT INTO users (id, username, password_hash)
+        VALUES (${userId}, 'legacy-guide-user', 'not-a-real-hash')
+      `;
+      await sql`
+        INSERT INTO exercises (id, user_id, title, prompt, guide_content)
+        VALUES (
+          ${exerciseId},
+          ${userId},
+          'Storage de un tensor',
+          'Explica la relación entre tensor y storage.',
+          ${legacyGuide}
+        )
+      `;
+    });
+
+    assert.deepEqual(await migratePending(database, migrations), [
+      structuredGuideMigrationId,
+    ]);
+
+    const state = await withSql(isolatedUrl, async (sql) => {
+      const [afterMigration] = await sql<
+        Array<{
+          guideContent: string;
+          guideStructuredContent: unknown;
+          guideGenerationCount: number;
+        }>
+      >`
+        SELECT guide_content AS "guideContent",
+               guide_structured_content AS "guideStructuredContent",
+               guide_generation_count AS "guideGenerationCount"
+        FROM exercises
+        WHERE id = ${exerciseId}
+      `;
+
+      await sql`
+        UPDATE exercises
+        SET guide_structured_content = ${sql.json(structuredGuide)},
+            guide_generation_count = 2
+        WHERE id = ${exerciseId}
+      `;
+
+      await assert.rejects(
+        sql`
+          UPDATE exercises
+          SET guide_structured_content = '[]'::jsonb
+          WHERE id = ${exerciseId}
+        `,
+        /exercises_guide_structured_content_check/i,
+      );
+      await assert.rejects(
+        sql`
+          UPDATE exercises
+          SET guide_generation_count = 3
+          WHERE id = ${exerciseId}
+        `,
+        /exercises_guide_generation_count_check/i,
+      );
+
+      const [persisted] = await sql<
+        Array<{
+          guideContent: string;
+          guideStructuredContent: unknown;
+          guideGenerationCount: number;
+        }>
+      >`
+        SELECT guide_content AS "guideContent",
+               guide_structured_content AS "guideStructuredContent",
+               guide_generation_count AS "guideGenerationCount"
+        FROM exercises
+        WHERE id = ${exerciseId}
+      `;
+
+      return { afterMigration, persisted };
+    });
+
+    assert.deepEqual(state.afterMigration, {
+      guideContent: legacyGuide,
+      guideStructuredContent: null,
+      guideGenerationCount: 0,
+    });
+    assert.deepEqual(state.persisted, {
+      guideContent: legacyGuide,
+      guideStructuredContent: structuredGuide,
+      guideGenerationCount: 2,
+    });
+    const report = await getMigrationStatus(database, migrations);
+    assert.equal(report.historyMode, "current");
+    assert.ok(report.migrations.every(({ state }) => state === "applied"));
   } finally {
     await database.close();
   }

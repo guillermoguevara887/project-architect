@@ -20,6 +20,7 @@ import type {
 import type {
   ExerciseStatus,
   ExerciseWorkspaceType,
+  StructuredExerciseGuide,
 } from "../exercises/contracts.js";
 
 type StoredDiscoveryAnswerValue = string | number | boolean | string[];
@@ -328,6 +329,11 @@ export const exercises = pgTable(
       .default("pending")
       .notNull(),
     guideContent: text("guide_content"),
+    guideStructuredContent: jsonb("guide_structured_content")
+      .$type<StructuredExerciseGuide>(),
+    guideGenerationCount: integer("guide_generation_count")
+      .default(0)
+      .notNull(),
     suggestedSteps: jsonb("suggested_steps").$type<string[]>(),
     workspaceType: text("workspace_type").$type<ExerciseWorkspaceType>(),
     workspaceValue: text("workspace_value"),
@@ -358,6 +364,14 @@ export const exercises = pgTable(
     suggestedStepsCheck: check(
       "exercises_suggested_steps_check",
       sql`${table.suggestedSteps} is null or jsonb_typeof(${table.suggestedSteps}) = 'array'`,
+    ),
+    guideStructuredContentCheck: check(
+      "exercises_guide_structured_content_check",
+      sql`${table.guideStructuredContent} is null or jsonb_typeof(${table.guideStructuredContent}) = 'object'`,
+    ),
+    guideGenerationCountCheck: check(
+      "exercises_guide_generation_count_check",
+      sql`${table.guideGenerationCount} between 0 and 2`,
     ),
   }),
 );
