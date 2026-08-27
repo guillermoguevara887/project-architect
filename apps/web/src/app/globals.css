@@ -1119,6 +1119,70 @@ button:disabled {
   line-height: 1.5;
 }
 
+.lesson-learning-progress {
+  display: flex;
+  min-width: 0;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 0.85rem 1.25rem;
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid #d7ece9;
+}
+
+.lesson-learning-progress-field {
+  display: grid;
+  min-width: 0;
+  gap: 0.4rem;
+}
+
+.lesson-learning-progress-field > span {
+  color: #64748b;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.lesson-learning-progress-field > div {
+  display: inline-flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.lesson-learning-progress-field button {
+  min-height: 2.65rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #c8d8fb;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: none;
+  color: #0f2147;
+  font-size: 0.82rem;
+}
+
+.lesson-learning-progress-field button[aria-pressed="true"] {
+  border-color: #2563eb;
+  background: #2563eb;
+  color: #fff;
+}
+
+.lesson-learning-progress-field button:focus-visible {
+  outline: 3px solid rgb(37 99 235 / 22%);
+  outline-offset: 0.15rem;
+}
+
+.lesson-learning-progress > small {
+  align-self: center;
+  color: #64748b;
+}
+
+.lesson-learning-progress-error {
+  width: 100%;
+  margin: 0;
+  color: #b42318;
+  font-size: 0.82rem;
+}
+
 .lesson-simplification-controls {
   display: flex;
   min-width: 0;
@@ -2565,6 +2629,21 @@ button:disabled {
   .lesson-regeneration-action,
   .lesson-regenerate-button {
     width: 100%;
+  }
+
+  .lesson-learning-progress,
+  .lesson-learning-progress-field {
+    width: 100%;
+  }
+
+  .lesson-learning-progress-field > div {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .lesson-learning-progress-field button {
+    width: 100%;
+    padding-inline: 0.45rem;
   }
 
   .lesson-audio-rate-control {

@@ -13,6 +13,8 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import type {
+  LanguageLessonDifficulty,
+  LanguageLessonLearningStatus,
   LanguageLessonSource,
   LanguageLessonStatus,
   StructuredLanguageLesson,
@@ -418,6 +420,11 @@ export const languageLessons = pgTable(
       .$type<LanguageLessonStatus>()
       .default("draft")
       .notNull(),
+    learningStatus: text("learning_status")
+      .$type<LanguageLessonLearningStatus>()
+      .default("pending")
+      .notNull(),
+    difficulty: text("difficulty").$type<LanguageLessonDifficulty>(),
     structuredContent: jsonb("structured_content").$type<StructuredLanguageLesson>(),
     simplifiedStructuredContent: jsonb("simplified_structured_content")
       .$type<StructuredLanguageLesson>(),
@@ -459,6 +466,14 @@ export const languageLessons = pgTable(
     statusCheck: check(
       "language_lessons_status_check",
       sql`${table.status} in ('draft', 'processing', 'ready', 'failed')`,
+    ),
+    learningStatusCheck: check(
+      "language_lessons_learning_status_check",
+      sql`${table.learningStatus} in ('pending', 'in_progress', 'completed')`,
+    ),
+    difficultyCheck: check(
+      "language_lessons_difficulty_check",
+      sql`${table.difficulty} is null or ${table.difficulty} in ('easy', 'normal', 'hard')`,
     ),
     readyContentCheck: check(
       "language_lessons_ready_content_check",

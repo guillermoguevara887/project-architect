@@ -1026,6 +1026,10 @@ test("structured exercise guide migration preserves legacy guides and enforces b
     0,
     structuredGuideMigrationIndex,
   );
+  const migrationsThroughStructuredGuide = migrations.slice(
+    0,
+    structuredGuideMigrationIndex + 1,
+  );
   const userId = "73000000-0000-4000-8000-000000000001";
   const exerciseId = "73000000-0000-4000-8000-000000000002";
   const legacyGuide = "## Concepto\n\n**Storage** guarda los valores.";
@@ -1052,7 +1056,10 @@ test("structured exercise guide migration preserves legacy guides and enforces b
   };
 
   try {
-    assert.equal(migrations.at(-1)?.id, structuredGuideMigrationId);
+    assert.equal(
+      migrations[structuredGuideMigrationIndex + 1]?.id,
+      "0013_add_language_lesson_progress.sql",
+    );
     assert.deepEqual(
       await migratePending(database, migrationsBeforeStructuredGuide),
       migrationsBeforeStructuredGuide.map(({ id }) => id),
@@ -1075,7 +1082,7 @@ test("structured exercise guide migration preserves legacy guides and enforces b
       `;
     });
 
-    assert.deepEqual(await migratePending(database, migrations), [
+    assert.deepEqual(await migratePending(database, migrationsThroughStructuredGuide), [
       structuredGuideMigrationId,
     ]);
 
@@ -1145,7 +1152,10 @@ test("structured exercise guide migration preserves legacy guides and enforces b
       guideStructuredContent: structuredGuide,
       guideGenerationCount: 2,
     });
-    const report = await getMigrationStatus(database, migrations);
+    const report = await getMigrationStatus(
+      database,
+      migrationsThroughStructuredGuide,
+    );
     assert.equal(report.historyMode, "current");
     assert.ok(report.migrations.every(({ state }) => state === "applied"));
   } finally {

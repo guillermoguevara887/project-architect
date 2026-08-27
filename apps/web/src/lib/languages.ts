@@ -12,6 +12,24 @@ export type LanguageLessonStatus =
   | "ready"
   | "failed";
 
+export const LANGUAGE_LESSON_LEARNING_STATUS_OPTIONS = [
+  { value: "pending", label: "Pendiente" },
+  { value: "in_progress", label: "En curso" },
+  { value: "completed", label: "Finalizada" },
+] as const;
+
+export type LanguageLessonLearningStatus =
+  (typeof LANGUAGE_LESSON_LEARNING_STATUS_OPTIONS)[number]["value"];
+
+export const LANGUAGE_LESSON_DIFFICULTY_OPTIONS = [
+  { value: "easy", label: "Fácil" },
+  { value: "normal", label: "Normal" },
+  { value: "hard", label: "Difícil" },
+] as const;
+
+export type LanguageLessonDifficulty =
+  (typeof LANGUAGE_LESSON_DIFFICULTY_OPTIONS)[number]["value"];
+
 export const LANGUAGE_LESSON_SOURCE_OPTIONS = [
   {
     value: "assimil",
@@ -159,6 +177,8 @@ export type LanguageLesson = {
   lessonSource: LanguageLessonSource;
   sourceLessonNumber: number;
   status: LanguageLessonStatus;
+  learningStatus: LanguageLessonLearningStatus;
+  difficulty: LanguageLessonDifficulty | null;
   sourceContent?: string;
   structuredContent?: StructuredLanguageLesson | null;
   simplifiedStructuredContent?: StructuredLanguageLesson | null;

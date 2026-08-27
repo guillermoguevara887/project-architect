@@ -20,6 +20,8 @@ import {
   getOrCreateLanguageAudioElement,
   isJapaneseLanguage,
   LANGUAGE_AUDIO_PLAYBACK_RATE_OPTIONS,
+  LANGUAGE_LESSON_DIFFICULTY_OPTIONS,
+  LANGUAGE_LESSON_LEARNING_STATUS_OPTIONS,
   languageDialogueLineIsActive,
   languageLessonAudioButtonLabel,
   languageLessonAudioErrorMessage,
@@ -44,6 +46,8 @@ import {
   type LanguageLessonAudioPlayback,
   type LanguageLessonAudioSection,
   type LanguageLessonContentVersion,
+  type LanguageLessonDifficulty,
+  type LanguageLessonLearningStatus,
   type LanguageProject,
   type LanguageStoryVoice,
   type StructuredLanguageLesson,
@@ -51,6 +55,65 @@ import {
 import { useSessionGuard } from "@/lib/use-session-guard";
 
 const SOURCE_CONTENT_MAX_LENGTH = 100_000;
+
+function LanguageLessonProgressControls({
+  learningStatus,
+  difficulty,
+  updating,
+  error,
+  onLearningStatusChange,
+  onDifficultyChange,
+}: {
+  learningStatus: LanguageLessonLearningStatus;
+  difficulty: LanguageLessonDifficulty | null;
+  updating: "learningStatus" | "difficulty" | null;
+  error: string | null;
+  onLearningStatusChange: (value: LanguageLessonLearningStatus) => void;
+  onDifficultyChange: (value: LanguageLessonDifficulty) => void;
+}) {
+  return (
+    <section className="lesson-learning-progress" aria-label="Progreso de aprendizaje">
+      <div className="lesson-learning-progress-field">
+        <span>Estado</span>
+        <div aria-label="Estado de aprendizaje" role="group">
+          {LANGUAGE_LESSON_LEARNING_STATUS_OPTIONS.map((option) => (
+            <button
+              aria-pressed={learningStatus === option.value}
+              disabled={updating !== null}
+              key={option.value}
+              type="button"
+              onClick={() => onLearningStatusChange(option.value)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="lesson-learning-progress-field">
+        <span>Dificultad</span>
+        <div aria-label="Dificultad percibida" role="group">
+          {LANGUAGE_LESSON_DIFFICULTY_OPTIONS.map((option) => (
+            <button
+              aria-pressed={difficulty === option.value}
+              disabled={updating !== null}
+              key={option.value}
+              type="button"
+              onClick={() => onDifficultyChange(option.value)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {updating ? <small aria-live="polite">Guardando…</small> : null}
+      {error ? (
+        <p className="lesson-learning-progress-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </section>
+  );
+}
 
 type LessonSectionKey =
   | "vocabulary"
@@ -812,6 +875,11 @@ export function LanguageLessonScreen({
   const [sourceContent, setSourceContent] = useState("");
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [progressError, setProgressError] = useState<string | null>(null);
+  const [progressUpdating, setProgressUpdating] = useState<
+    "learningStatus" | "difficulty" | null
+  >(null);
+  const progressUpdatingRef = useRef(false);
   const [processing, setProcessing] = useState(false);
   const [simplificationAction, setSimplificationAction] = useState<
     "simplify" | "regenerate" | null
@@ -1125,6 +1193,56 @@ export function LanguageLessonScreen({
       );
     } finally {
       setSimplificationAction(null);
+    }
+  }
+
+  async function updateLearningProgress(
+    progress:
+      | { learningStatus: LanguageLessonLearningStatus }
+      | { difficulty: LanguageLessonDifficulty },
+  ) {
+    if (progressUpdatingRef.current) return;
+
+    progressUpdatingRef.current = true;
+    setProgressUpdating(
+      "learningStatus" in progress ? "learningStatus" : "difficulty",
+    );
+    setProgressError(null);
+
+    try {
+      const response = await fetch(
+        `/api/languages/projects/${encodeURIComponent(projectId)}/lessons/${encodeURIComponent(lessonId)}/progress`,
+        {
+          method: "PATCH",
+          credentials: "include",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(progress),
+        },
+      );
+
+      if (response.status === 401) {
+        router.replace("/");
+        return;
+      }
+
+      const result = (await response.json()) as {
+        lesson?: LanguageLesson;
+        message?: string;
+      };
+
+      if (!response.ok || !result.lesson) {
+        setProgressError(
+          result.message ?? "No se pudo guardar el progreso de la lección.",
+        );
+        return;
+      }
+
+      setLesson(result.lesson);
+    } catch {
+      setProgressError("No se pudo guardar el progreso de la lección.");
+    } finally {
+      progressUpdatingRef.current = false;
+      setProgressUpdating(null);
     }
   }
 
@@ -1503,6 +1621,21 @@ export function LanguageLessonScreen({
             {formatLanguageLessonTitle(lesson, project.language)}
           </h1>
         </header>
+
+        {lesson.status === "ready" ? (
+          <LanguageLessonProgressControls
+            difficulty={lesson.difficulty}
+            error={progressError}
+            learningStatus={lesson.learningStatus}
+            updating={progressUpdating}
+            onDifficultyChange={(difficulty) =>
+              void updateLearningProgress({ difficulty })
+            }
+            onLearningStatusChange={(learningStatus) =>
+              void updateLearningProgress({ learningStatus })
+            }
+          />
+        ) : null}
 
         {lesson.status === "processing" ? (
           <section className="lesson-processing" aria-live="polite">

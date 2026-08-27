@@ -15,6 +15,8 @@ import {
   INITIAL_LANGUAGE_LESSON_CREATION_STATE,
   isJapaneseLanguage,
   LANGUAGE_AUDIO_PLAYBACK_RATE_OPTIONS,
+  LANGUAGE_LESSON_DIFFICULTY_OPTIONS,
+  LANGUAGE_LESSON_LEARNING_STATUS_OPTIONS,
   LANGUAGE_LESSON_SOURCE_OPTIONS,
   LANGUAGE_STORY_VOICE_OPTIONS,
   languageDialogueLineIsActive,
@@ -1081,6 +1083,8 @@ function lesson(
     lessonSource,
     sourceLessonNumber,
     status: "draft",
+    learningStatus: "pending",
+    difficulty: null,
     processedAt: null,
     createdAt: `2026-08-${String(lessonNumber).padStart(2, "0")}T12:00:00.000Z`,
     updatedAt: `2026-08-${String(lessonNumber).padStart(2, "0")}T12:00:00.000Z`,
@@ -1107,6 +1111,58 @@ function structuredContent(text: string): StructuredLanguageLesson {
     review: { keyVocabulary: [text], keyPatterns: [text] },
   };
 }
+
+test("lesson learning progress options expose the required labels and null selects no difficulty", () => {
+  assert.deepEqual(LANGUAGE_LESSON_LEARNING_STATUS_OPTIONS, [
+    { value: "pending", label: "Pendiente" },
+    { value: "in_progress", label: "En curso" },
+    { value: "completed", label: "Finalizada" },
+  ]);
+  assert.deepEqual(LANGUAGE_LESSON_DIFFICULTY_OPTIONS, [
+    { value: "easy", label: "Fácil" },
+    { value: "normal", label: "Normal" },
+    { value: "hard", label: "Difícil" },
+  ]);
+  assert.ok(
+    LANGUAGE_LESSON_DIFFICULTY_OPTIONS.every(
+      (option) => null !== option.value,
+    ),
+  );
+});
+
+test("lesson progress UI is ready-only, server-confirmed and accessible", async () => {
+  const component = await readFile(
+    new URL(
+      "../../web/src/components/language-lesson-screen.tsx",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  const styles = await readFile(
+    new URL("../../web/src/app/globals.css", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(component, /lesson\.status === "ready" \? \(\s*<LanguageLessonProgressControls/s);
+  assert.match(component, /aria-label="Estado de aprendizaje"/);
+  assert.match(component, /aria-label="Dificultad percibida"/);
+  assert.match(component, /aria-pressed=\{learningStatus === option\.value\}/);
+  assert.match(component, /aria-pressed=\{difficulty === option\.value\}/);
+  assert.match(component, /disabled=\{updating !== null\}/);
+  assert.match(component, /lessons\/\$\{encodeURIComponent\(lessonId\)\}\/progress/);
+  assert.match(component, /method: "PATCH"/);
+  assert.match(component, /if \(!response\.ok \|\| !result\.lesson\)/);
+  assert.match(component, /setLesson\(result\.lesson\)/);
+  assert.match(component, /lesson-learning-progress-error" role="alert"/);
+  assert.match(styles, /\.lesson-learning-progress-field button\[aria-pressed="true"\]/);
+  assert.match(styles, /grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/);
+
+  assert.match(component, /languageDialogueLineIsActive\(/);
+  assert.match(component, /getOrCreateLanguageAudioElement\(/);
+  assert.match(component, /\(\) => new Audio\(\)/);
+  assert.doesNotMatch(component, /new Audio\(audioUrl\)/);
+  assert.match(component, /title="Kanji de la lección"/);
+});
 
 test("frontend historical lessons can omit kanji and Japanese aliases are detected", () => {
   const historical = structuredContent("歴史");

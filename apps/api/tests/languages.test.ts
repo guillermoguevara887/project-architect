@@ -18,9 +18,14 @@ import type {
   LanguageAudioStorage,
   PutLanguageAudioInput,
 } from "../src/languages/audio-storage.js";
-import type {
-  LanguageLessonSource,
-  StructuredLanguageLesson,
+import {
+  languageLessonDifficultySchema,
+  languageLessonLearningStatusSchema,
+  updateLanguageLessonProgressSchema,
+  type LanguageLessonDifficulty,
+  type LanguageLessonLearningStatus,
+  type LanguageLessonSource,
+  type StructuredLanguageLesson,
 } from "../src/languages/contracts.js";
 import {
   LanguageLessonProcessingError,
@@ -41,6 +46,7 @@ import type {
   LanguageProject,
   LanguageStore,
   UpdateLanguageLessonInput,
+  UpdateLanguageLessonProgressInput,
 } from "../src/languages/repository.js";
 
 process.env.NODE_ENV = "test";
@@ -248,6 +254,8 @@ class MemoryLanguageStore implements LanguageStore {
       sourceLessonNumber,
       sourceContent: "",
       status: "draft",
+      learningStatus: "pending",
+      difficulty: null,
       structuredContent: null,
       simplifiedStructuredContent: null,
       simplificationStartedAt: null,
@@ -392,6 +400,28 @@ class MemoryLanguageStore implements LanguageStore {
     lesson.status = "failed";
     lesson.structuredContent = null;
     lesson.processedAt = null;
+    lesson.updatedAt = this.now();
+    return lesson;
+  }
+
+  async updateLessonLearningProgress(input: UpdateLanguageLessonProgressInput) {
+    if (!this.ownsProject(input.languageProjectId, input.userId)) {
+      return null;
+    }
+
+    const lesson = this.lessons.find(
+      (candidate) =>
+        candidate.id === input.lessonId &&
+        candidate.languageProjectId === input.languageProjectId,
+    );
+    if (!lesson) return null;
+
+    if (input.learningStatus !== undefined) {
+      lesson.learningStatus = input.learningStatus;
+    }
+    if (input.difficulty !== undefined) {
+      lesson.difficulty = input.difficulty;
+    }
     lesson.updatedAt = this.now();
     return lesson;
   }
@@ -740,6 +770,8 @@ async function createLesson(
     lessonNumber: number;
     lessonSource: LanguageLessonSource;
     sourceLessonNumber: number;
+    learningStatus: LanguageLessonLearningStatus;
+    difficulty: LanguageLessonDifficulty | null;
   };
 }
 
@@ -773,6 +805,24 @@ async function simplifyLesson(
   });
 }
 
+async function updateLessonProgress(
+  server: ReturnType<typeof createServer>,
+  projectId: string,
+  lessonId: string,
+  cookie: string,
+  payload: {
+    learningStatus?: LanguageLessonLearningStatus;
+    difficulty?: LanguageLessonDifficulty | null;
+  },
+) {
+  return server.inject({
+    method: "PATCH",
+    url: `/languages/projects/${projectId}/lessons/${lessonId}/progress`,
+    headers: { cookie },
+    payload,
+  });
+}
+
 async function requestLessonAudio(
   server: ReturnType<typeof createServer>,
   projectId: string,
@@ -787,6 +837,177 @@ async function requestLessonAudio(
     payload,
   });
 }
+
+test("language lesson progress contracts are strict and support partial updates", () => {
+  for (const value of ["pending", "in_progress", "completed"]) {
+    assert.equal(languageLessonLearningStatusSchema.safeParse(value).success, true);
+  }
+  assert.equal(languageLessonLearningStatusSchema.safeParse("ready").success, false);
+
+  for (const value of ["easy", "normal", "hard"]) {
+    assert.equal(languageLessonDifficultySchema.safeParse(value).success, true);
+    assert.equal(
+      updateLanguageLessonProgressSchema.safeParse({ difficulty: value }).success,
+      true,
+    );
+  }
+  assert.equal(
+    updateLanguageLessonProgressSchema.safeParse({ difficulty: null }).success,
+    true,
+  );
+  assert.equal(
+    updateLanguageLessonProgressSchema.safeParse({ difficulty: "extreme" }).success,
+    false,
+  );
+  assert.equal(updateLanguageLessonProgressSchema.safeParse({}).success, false);
+  assert.equal(
+    updateLanguageLessonProgressSchema.safeParse({
+      learningStatus: "pending",
+      unexpected: true,
+    }).success,
+    false,
+  );
+});
+
+test("lesson progress defaults and public summary are pending and unrated", async () => {
+  const { server } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+
+  try {
+    const project = await createProject(server, cookie);
+    const lesson = await createLesson(server, project.id, cookie);
+    assert.equal(lesson.learningStatus, "pending");
+    assert.equal(lesson.difficulty, null);
+
+    const listing = await server.inject({
+      method: "GET",
+      url: `/languages/projects/${project.id}/lessons`,
+      headers: { cookie },
+    });
+    assert.equal(listing.statusCode, 200);
+    assert.equal(listing.json().lessons[0].learningStatus, "pending");
+    assert.equal(listing.json().lessons[0].difficulty, null);
+
+    const detail = await server.inject({
+      method: "GET",
+      url: `/languages/projects/${project.id}/lessons/${lesson.id}`,
+      headers: { cookie },
+    });
+    assert.equal(detail.statusCode, 200);
+    assert.equal(detail.json().lesson.learningStatus, "pending");
+    assert.equal(detail.json().lesson.difficulty, null);
+  } finally {
+    await server.close();
+  }
+});
+
+test("lesson progress endpoint requires auth, ownership and an existing lesson", async () => {
+  const { server } = testServer();
+  const ownerCookie = sessionCookie(firstUser.id);
+  const otherCookie = sessionCookie(secondUser.id);
+
+  try {
+    const project = await createProject(server, ownerCookie);
+    const lesson = await createLesson(server, project.id, ownerCookie);
+    const url = `/languages/projects/${project.id}/lessons/${lesson.id}/progress`;
+
+    const unauthenticated = await server.inject({
+      method: "PATCH",
+      url,
+      payload: { learningStatus: "in_progress" },
+    });
+    assert.equal(unauthenticated.statusCode, 401);
+    assert.equal(unauthenticated.json().error, "UNAUTHORIZED");
+
+    const forbidden = await updateLessonProgress(
+      server,
+      project.id,
+      lesson.id,
+      otherCookie,
+      { learningStatus: "in_progress" },
+    );
+    assert.equal(forbidden.statusCode, 404);
+    assert.equal(forbidden.json().error, "LANGUAGE_LESSON_NOT_FOUND");
+
+    const missing = await updateLessonProgress(
+      server,
+      project.id,
+      randomUUID(),
+      ownerCookie,
+      { learningStatus: "in_progress" },
+    );
+    assert.equal(missing.statusCode, 404);
+    assert.equal(missing.json().error, "LANGUAGE_LESSON_NOT_FOUND");
+  } finally {
+    await server.close();
+  }
+});
+
+test("lesson progress updates either field or both without changing lesson content", async () => {
+  const { store, server } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+
+  try {
+    const project = await createProject(server, cookie);
+    const lesson = await createLesson(server, project.id, cookie, "assimil");
+    await processLesson(server, project.id, lesson.id, cookie, "Private source");
+    const before = structuredClone(
+      store.lessons.find(({ id }) => id === lesson.id),
+    );
+    assert.ok(before);
+
+    const statusOnly = await updateLessonProgress(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      { learningStatus: "in_progress" },
+    );
+    assert.equal(statusOnly.statusCode, 200);
+    assert.equal(statusOnly.json().lesson.learningStatus, "in_progress");
+    assert.equal(statusOnly.json().lesson.difficulty, null);
+
+    const difficultyOnly = await updateLessonProgress(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      { difficulty: "hard" },
+    );
+    assert.equal(difficultyOnly.statusCode, 200);
+    assert.equal(difficultyOnly.json().lesson.difficulty, "hard");
+
+    const both = await updateLessonProgress(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      { learningStatus: "completed", difficulty: "normal" },
+    );
+    assert.equal(both.statusCode, 200);
+    assert.equal(both.json().lesson.learningStatus, "completed");
+    assert.equal(both.json().lesson.difficulty, "normal");
+
+    const stored = store.lessons.find(({ id }) => id === lesson.id);
+    assert.ok(stored);
+    assert.equal(stored.status, before.status);
+    assert.equal(stored.sourceContent, before.sourceContent);
+    assert.deepEqual(stored.structuredContent, before.structuredContent);
+    assert.equal(stored.lessonSource, "assimil");
+    assert.equal(stored.sourceLessonNumber, before.sourceLessonNumber);
+
+    const invalid = await server.inject({
+      method: "PATCH",
+      url: `/languages/projects/${project.id}/lessons/${lesson.id}/progress`,
+      headers: { cookie },
+      payload: {},
+    });
+    assert.equal(invalid.statusCode, 400);
+    assert.equal(invalid.json().error, "INVALID_LANGUAGE_LESSON_PROGRESS");
+  } finally {
+    await server.close();
+  }
+});
 
 test("Idiomas requires authentication and validates project fields", async () => {
   const { store, server } = testServer();
@@ -889,6 +1110,8 @@ test("lesson provenance accepts every supported value, persists and defaults to 
       );
       assert.equal(created.lessonSource, lessonSource);
       assert.equal(created.sourceLessonNumber, 1);
+      assert.equal(created.learningStatus, "pending");
+      assert.equal(created.difficulty, null);
 
       const detail = await server.inject({
         method: "GET",
@@ -2666,4 +2889,25 @@ test("lesson simplification migration is additive and preserves existing lessons
     migration,
     /ADD COLUMN "(?:simplified_structured_content|simplification_started_at|simplified_at)"[^\n]*NOT NULL/i,
   );
+});
+
+test("lesson progress migration defaults historical lessons and constrains metadata", async () => {
+  const migration = await readFile(
+    new URL(
+      "../drizzle/0013_add_language_lesson_progress.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+
+  assert.match(migration, /ALTER TABLE "language_lessons"/);
+  assert.match(migration, /"learning_status" text DEFAULT 'pending' NOT NULL/);
+  assert.match(migration, /"difficulty" text/);
+  assert.match(migration, /language_lessons_learning_status_check/);
+  assert.match(migration, /'pending', 'in_progress', 'completed'/);
+  assert.match(migration, /language_lessons_difficulty_check/);
+  assert.match(migration, /"difficulty" IS NULL/);
+  assert.match(migration, /'easy', 'normal', 'hard'/);
+  assert.doesNotMatch(migration, /\b(?:DROP|TRUNCATE)\b|\bDELETE\s+FROM\b/i);
+  assert.doesNotMatch(migration, /\bUPDATE\s+"language_lessons"/i);
 });

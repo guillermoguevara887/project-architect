@@ -11,6 +11,7 @@ import {
   simplifyLanguageLessonSchema,
   structuredLanguageLessonSchema,
   updateLanguageLessonSchema,
+  updateLanguageLessonProgressSchema,
 } from "./contracts.js";
 import {
   LanguageLessonProcessingError,
@@ -43,6 +44,8 @@ function publicLessonSummary(lesson: LanguageLesson) {
     lessonSource: lesson.lessonSource,
     sourceLessonNumber: lesson.sourceLessonNumber,
     status,
+    learningStatus: lesson.learningStatus,
+    difficulty: lesson.difficulty,
     processedAt: lesson.processedAt?.toISOString() ?? null,
     createdAt: lesson.createdAt.toISOString(),
     updatedAt: lesson.updatedAt.toISOString(),
@@ -480,6 +483,56 @@ export function registerLanguageRoutes(
         return reply.code(502).send({
           error: "LANGUAGE_LESSON_PROCESSING_FAILED",
           message: "No se pudo procesar la lección. Intenta nuevamente.",
+        });
+      }
+    },
+  );
+
+  server.patch<{ Params: { projectId: string; lessonId: string } }>(
+    "/languages/projects/:projectId/lessons/:lessonId/progress",
+    async (request, reply) => {
+      try {
+        const userId = await authenticatedUserId(request, authStore);
+
+        if (!userId) {
+          return reply.code(401).send({ error: "UNAUTHORIZED" });
+        }
+
+        if (
+          !languageProjectIdSchema.safeParse(request.params.projectId).success ||
+          !languageLessonIdSchema.safeParse(request.params.lessonId).success
+        ) {
+          return reply.code(404).send({ error: "LANGUAGE_LESSON_NOT_FOUND" });
+        }
+
+        const parsedInput = updateLanguageLessonProgressSchema.safeParse(
+          request.body,
+        );
+
+        if (!parsedInput.success) {
+          return reply.code(400).send({
+            error: "INVALID_LANGUAGE_LESSON_PROGRESS",
+            message: "El progreso de la lección no es válido.",
+          });
+        }
+
+        const lesson = await store.updateLessonLearningProgress({
+          languageProjectId: request.params.projectId,
+          lessonId: request.params.lessonId,
+          userId,
+          ...parsedInput.data,
+        });
+
+        if (!lesson) {
+          return reply.code(404).send({ error: "LANGUAGE_LESSON_NOT_FOUND" });
+        }
+
+        return { lesson: publicLesson(lesson) };
+      } catch (error) {
+        server.log.error({ error }, "Language lesson progress update failed.");
+        return reply.code(503).send({
+          error: "LANGUAGES_UNAVAILABLE",
+          message: "No se pudo guardar el progreso de la lección.",
         });
       }
     },

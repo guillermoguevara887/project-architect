@@ -2,6 +2,8 @@ import { and, asc, desc, eq, inArray, max } from "drizzle-orm";
 import { getDb } from "../db/client.js";
 import { languageLessons, languageProjects } from "../db/schema.js";
 import type {
+  LanguageLessonDifficulty,
+  LanguageLessonLearningStatus,
   LanguageLessonSource,
   LanguageLessonStatus,
   StructuredLanguageLesson,
@@ -51,6 +53,11 @@ export type FailLanguageLessonProcessingInput = OwnedLanguageProjectInput & {
 
 type OwnedLanguageLessonInput = OwnedLanguageProjectInput & {
   lessonId: string;
+};
+
+export type UpdateLanguageLessonProgressInput = OwnedLanguageLessonInput & {
+  learningStatus?: LanguageLessonLearningStatus;
+  difficulty?: LanguageLessonDifficulty | null;
 };
 
 export type ClaimLanguageLessonSimplificationInput =
@@ -117,6 +124,9 @@ export interface LanguageStore {
   updateLessonSourceContent(
     input: UpdateLanguageLessonInput,
   ): Promise<UpdateLanguageLessonResult>;
+  updateLessonLearningProgress(
+    input: UpdateLanguageLessonProgressInput,
+  ): Promise<LanguageLesson | null>;
   claimLessonForProcessing(
     input: ClaimLanguageLessonInput,
   ): Promise<ClaimLanguageLessonResult>;
@@ -460,6 +470,38 @@ export const languageStore: LanguageStore = {
           eq(languageLessons.languageProjectId, input.languageProjectId),
           eq(languageLessons.status, "processing"),
           eq(languageLessons.updatedAt, input.processingStartedAt),
+        ),
+      )
+      .returning();
+
+    return lesson ?? null;
+  },
+
+  async updateLessonLearningProgress(input) {
+    if (!(await ownsProject(input.languageProjectId, input.userId))) {
+      return null;
+    }
+
+    const progress: {
+      learningStatus?: LanguageLessonLearningStatus;
+      difficulty?: LanguageLessonDifficulty | null;
+      updatedAt: Date;
+    } = { updatedAt: new Date() };
+
+    if (input.learningStatus !== undefined) {
+      progress.learningStatus = input.learningStatus;
+    }
+    if (input.difficulty !== undefined) {
+      progress.difficulty = input.difficulty;
+    }
+
+    const [lesson] = await getDb()
+      .update(languageLessons)
+      .set(progress)
+      .where(
+        and(
+          eq(languageLessons.id, input.lessonId),
+          eq(languageLessons.languageProjectId, input.languageProjectId),
         ),
       )
       .returning();

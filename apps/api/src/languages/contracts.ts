@@ -14,6 +14,26 @@ export const languageLessonStatusSchema = z.enum([
 
 export type LanguageLessonStatus = z.infer<typeof languageLessonStatusSchema>;
 
+export const languageLessonLearningStatusSchema = z.enum([
+  "pending",
+  "in_progress",
+  "completed",
+]);
+
+export type LanguageLessonLearningStatus = z.infer<
+  typeof languageLessonLearningStatusSchema
+>;
+
+export const languageLessonDifficultySchema = z.enum([
+  "easy",
+  "normal",
+  "hard",
+]);
+
+export type LanguageLessonDifficulty = z.infer<
+  typeof languageLessonDifficultySchema
+>;
+
 export const languageLessonSourceSchema = z.enum([
   "assimil",
   "language_framework",
@@ -186,3 +206,14 @@ export const simplifyLanguageLessonSchema = z
     regenerate: z.boolean().default(false),
   })
   .strict();
+
+export const updateLanguageLessonProgressSchema = z
+  .object({
+    learningStatus: languageLessonLearningStatusSchema.optional(),
+    difficulty: languageLessonDifficultySchema.nullable().optional(),
+  })
+  .strict()
+  .refine(
+    (value) =>
+      value.learningStatus !== undefined || value.difficulty !== undefined,
+  );
