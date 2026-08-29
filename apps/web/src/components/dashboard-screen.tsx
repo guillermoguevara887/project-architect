@@ -9,12 +9,9 @@ type SessionUser = {
   username: string;
 };
 
-type DatabaseState = "checking" | "connected" | "disconnected";
-
 export function DashboardScreen() {
   const router = useRouter();
   const [user, setUser] = useState<SessionUser | null>(null);
-  const [database, setDatabase] = useState<DatabaseState>("checking");
 
   useEffect(() => {
     let active = true;
@@ -43,25 +40,8 @@ export function DashboardScreen() {
         if (active) {
           setUser(session.user);
         }
-
-        const databaseResponse = await fetch("/api/health/db", {
-          cache: "no-store",
-          credentials: "include",
-        });
-        const databaseResult = databaseResponse.ok
-          ? ((await databaseResponse.json()) as { database?: string })
-          : null;
-
-        if (active) {
-          setDatabase(
-            databaseResult?.database === "connected"
-              ? "connected"
-              : "disconnected",
-          );
-        }
       } catch {
         if (active) {
-          setDatabase("disconnected");
           router.replace("/");
         }
       }
@@ -91,8 +71,22 @@ export function DashboardScreen() {
             <h1 id="dashboard-title">Dashboard</h1>
           </div>
 
-          <Link className="primary-link" href="/account">
-            Cuenta
+          <Link className="primary-link account-link" href="/account">
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 24 24"
+              width="20"
+              height="20"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <circle cx="12" cy="8" r="4" />
+              <path d="M4 21a8 8 0 0 1 16 0" />
+            </svg>
+            <span>Cuenta</span>
           </Link>
         </header>
 
@@ -100,16 +94,6 @@ export function DashboardScreen() {
           <div>
             <dt>Username</dt>
             <dd>{user.username}</dd>
-          </div>
-          <div>
-            <dt>Database</dt>
-            <dd className={`database-status database-${database}`}>
-              {database === "connected"
-                ? "Connected"
-                : database === "disconnected"
-                  ? "Disconnected"
-                  : "Checking"}
-            </dd>
           </div>
         </dl>
 

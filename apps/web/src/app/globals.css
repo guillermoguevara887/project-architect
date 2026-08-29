@@ -38,7 +38,8 @@ body {
 
 .auth-card,
 .dashboard-card,
-.flow-card {
+.flow-card,
+.account-card {
   width: min(100%, 30rem);
   max-width: 100%;
   min-width: 0;
@@ -54,6 +55,10 @@ body {
 }
 
 .flow-card {
+  width: min(100%, 48rem);
+}
+
+.account-card {
   width: min(100%, 48rem);
 }
 
@@ -172,6 +177,35 @@ button:disabled {
   font-size: 0.9rem;
 }
 
+.form-success {
+  margin: 0.25rem 0;
+  color: #25663c;
+  font-size: 0.9rem;
+}
+
+.auth-intro {
+  margin: 1.25rem 0 0;
+  color: #556176;
+  line-height: 1.6;
+}
+
+.auth-secondary-link {
+  color: var(--accent);
+  font-size: 0.9rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.auth-secondary-link:hover {
+  text-decoration: underline;
+}
+
+.reset-complete {
+  display: grid;
+  gap: 1rem;
+  margin-top: 2rem;
+}
+
 .dashboard-header {
   display: flex;
   align-items: flex-start;
@@ -200,6 +234,14 @@ button:disabled {
   min-height: auto;
   background: #e8ecf4;
   color: #27344d;
+}
+
+.account-link {
+  gap: 0.55rem;
+}
+
+.account-link svg {
+  flex: 0 0 auto;
 }
 
 .status-list {
@@ -1865,6 +1907,88 @@ button:disabled {
   word-break: break-word;
 }
 
+.account-section {
+  margin-top: 2.25rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--border);
+}
+
+.account-section h2 {
+  margin: 0 0 1rem;
+  font-size: 1.15rem;
+}
+
+.account-facts {
+  display: grid;
+  gap: 0;
+  margin: 0;
+}
+
+.account-facts > div {
+  display: grid;
+  grid-template-columns: minmax(8rem, 1fr) minmax(0, 2fr);
+  gap: 1rem;
+  padding: 0.85rem 0;
+  border-top: 1px solid #edf0f4;
+}
+
+.account-facts dt {
+  color: #465269;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.account-facts dd {
+  min-width: 0;
+  margin: 0;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.account-editor {
+  margin-top: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: #f8f9fb;
+}
+
+.account-editor summary {
+  padding: 1rem;
+  color: #27344d;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.account-form {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0 1rem 1rem;
+}
+
+.account-form label {
+  color: #465269;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.account-form input {
+  width: 100%;
+  min-width: 0;
+  min-height: 2.9rem;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid #c7ced9;
+  border-radius: 0.65rem;
+  background: #fff;
+  color: var(--foreground);
+  font: inherit;
+}
+
+.account-form input:focus {
+  border-color: var(--accent);
+  outline: 3px solid rgb(49 87 213 / 14%);
+}
+
 .lesson-thought-audio-item .lesson-audio-error {
   grid-column: 1 / -1;
   margin: 0;
@@ -2503,7 +2627,8 @@ button:disabled {
 
   .auth-card,
   .dashboard-card,
-  .flow-card {
+  .flow-card,
+  .account-card {
     padding: 1.5rem;
   }
 
@@ -2527,6 +2652,7 @@ button:disabled {
   }
 
   .secondary-button,
+  .account-link,
   .journey-heading .primary-link,
   .competition-form > button,
   .journey-form > button {
@@ -2561,6 +2687,19 @@ button:disabled {
   .exercise-guide-actions > button,
   .exercise-form > button,
   .workspace-form > button {
+    width: 100%;
+  }
+
+  .account-facts > div {
+    grid-template-columns: 1fr;
+    gap: 0.35rem;
+  }
+
+  .account-facts dd {
+    text-align: left;
+  }
+
+  .account-form > button {
     width: 100%;
   }
 

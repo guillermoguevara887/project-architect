@@ -196,6 +196,7 @@ export const users = pgTable(
   {
     id: uuid("id").defaultRandom().primaryKey(),
     username: text("username").notNull(),
+    email: text("email"),
     passwordHash: text("password_hash").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
@@ -203,6 +204,42 @@ export const users = pgTable(
   },
   (table) => ({
     usernameUnique: uniqueIndex("users_username_unique").on(table.username),
+    emailUnique: uniqueIndex("users_email_unique")
+      .on(table.email)
+      .where(sql`${table.email} is not null`),
+    emailNormalizedCheck: check(
+      "users_email_normalized_check",
+      sql`${table.email} is null or ${table.email} = lower(btrim(${table.email}))`,
+    ),
+  }),
+);
+
+export const passwordResetTokens = pgTable(
+  "password_reset_tokens",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    tokenHashUnique: uniqueIndex("password_reset_tokens_token_hash_unique").on(
+      table.tokenHash,
+    ),
+    userCreatedAtIdx: index("password_reset_tokens_user_created_at_idx").on(
+      table.userId,
+      table.createdAt.desc(),
+    ),
+    expiryCheck: check(
+      "password_reset_tokens_expiry_check",
+      sql`${table.expiresAt} > ${table.createdAt}`,
+    ),
   }),
 );
 

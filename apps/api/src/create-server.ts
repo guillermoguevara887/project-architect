@@ -8,6 +8,15 @@ import {
   type ArchitectProjectStore,
 } from "./architect-projects/repository.js";
 import { registerArchitectProjectRoutes } from "./architect-projects/routes.js";
+import {
+  accountStore,
+  type AccountStore,
+} from "./account/repository.js";
+import {
+  resendPasswordResetMailer,
+  type PasswordResetMailer,
+} from "./account/email.js";
+import { registerAccountRoutes } from "./account/routes.js";
 import { authStore, type AuthStore } from "./auth/repository.js";
 import { registerAuthRoutes } from "./auth/routes.js";
 import { assertSessionConfiguration } from "./auth/session.js";
@@ -43,6 +52,10 @@ import { registerLanguageRoutes } from "./languages/routes.js";
 
 type ServerDependencies = {
   authStore?: AuthStore;
+  accountStore?: AccountStore;
+  passwordResetMailer?: PasswordResetMailer;
+  accountNow?: () => Date;
+  passwordResetTokenGenerator?: () => string;
   architectProjectStore?: ArchitectProjectStore;
   journeyStore?: JourneyStore;
   exerciseStore?: ExerciseStore;
@@ -137,6 +150,12 @@ export function configureServer(
   });
 
   registerAuthRoutes(server, configuredAuthStore);
+  registerAccountRoutes(server, {
+    accountStore: dependencies.accountStore ?? accountStore,
+    mailer: dependencies.passwordResetMailer ?? resendPasswordResetMailer,
+    now: dependencies.accountNow,
+    tokenGenerator: dependencies.passwordResetTokenGenerator,
+  });
   registerArchitectProjectRoutes(
     server,
     dependencies.architectProjectStore ?? architectProjectStore,

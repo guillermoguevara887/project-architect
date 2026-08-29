@@ -5,6 +5,15 @@ const COST = 16_384;
 const BLOCK_SIZE = 8;
 const PARALLELIZATION = 1;
 const MAX_MEMORY = 64 * 1024 * 1024;
+export const MIN_PASSWORD_LENGTH = 12;
+export const MAX_PASSWORD_LENGTH = 256;
+
+export function isValidNewPassword(password: string) {
+  return (
+    password.length >= MIN_PASSWORD_LENGTH &&
+    password.length <= MAX_PASSWORD_LENGTH
+  );
+}
 
 function deriveKey(
   password: string,

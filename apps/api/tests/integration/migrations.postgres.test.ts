@@ -1162,3 +1162,171 @@ test("structured exercise guide migration preserves legacy guides and enforces b
     await database.close();
   }
 });
+
+test("account recovery migration preserves users and enforces email and reset-token constraints", async () => {
+  const isolatedUrl = await createIsolatedDatabase("account_recovery");
+  const database = createPostgresMigrationDatabase(isolatedUrl);
+  const migrations = await loadMigrationFiles(migrationDirectory);
+  const accountMigrationId = "0014_add_account_recovery.sql";
+  const accountMigrationIndex = migrations.findIndex(
+    ({ id }) => id === accountMigrationId,
+  );
+  const migrationsBeforeAccount = migrations.slice(0, accountMigrationIndex);
+  const migrationsThroughAccount = migrations.slice(0, accountMigrationIndex + 1);
+  const legacyUserId = "74000000-0000-4000-8000-000000000001";
+
+  try {
+    assert.equal(accountMigrationIndex, migrations.length - 1);
+    assert.deepEqual(
+      await migratePending(database, migrationsBeforeAccount),
+      migrationsBeforeAccount.map(({ id }) => id),
+    );
+
+    await withSql(isolatedUrl, async (sql) => {
+      await sql`
+        INSERT INTO users (id, username, password_hash)
+        VALUES (${legacyUserId}, 'legacy-account', 'legacy-password-hash')
+      `;
+    });
+
+    assert.deepEqual(await migratePending(database, migrationsThroughAccount), [
+      accountMigrationId,
+    ]);
+
+    const state = await withSql(isolatedUrl, async (sql) => {
+      const [legacyUser] = await sql<
+        Array<{ email: string | null; passwordHash: string }>
+      >`
+        SELECT email, password_hash AS "passwordHash"
+        FROM users
+        WHERE id = ${legacyUserId}
+      `;
+      const columns = await sql<Array<{ columnName: string }>>`
+        SELECT column_name AS "columnName"
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'password_reset_tokens'
+        ORDER BY ordinal_position
+      `;
+      const indexes = await sql<Array<{ indexName: string }>>`
+        SELECT indexname AS "indexName"
+        FROM pg_indexes
+        WHERE schemaname = 'public'
+          AND tablename IN ('users', 'password_reset_tokens')
+      `;
+      const constraints = await sql<
+        Array<{ constraintName: string; definition: string }>
+      >`
+        SELECT conname AS "constraintName",
+               pg_get_constraintdef(oid) AS definition
+        FROM pg_constraint
+        WHERE conrelid IN ('users'::regclass, 'password_reset_tokens'::regclass)
+      `;
+
+      await sql`
+        UPDATE users
+        SET email = 'legacy@example.com'
+        WHERE id = ${legacyUserId}
+      `;
+      await assert.rejects(
+        sql`
+          INSERT INTO users (username, email, password_hash)
+          VALUES ('duplicate-email', 'legacy@example.com', 'hash')
+        `,
+        /users_email_unique/i,
+      );
+      await assert.rejects(
+        sql`
+          UPDATE users
+          SET email = 'UPPER@example.com'
+          WHERE id = ${legacyUserId}
+        `,
+        /users_email_normalized_check/i,
+      );
+
+      const tokenHash = "a".repeat(64);
+      await sql`
+        INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
+        VALUES (${legacyUserId}, ${tokenHash}, now() + interval '45 minutes')
+      `;
+      await assert.rejects(
+        sql`
+          INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
+          VALUES (${legacyUserId}, ${tokenHash}, now() + interval '45 minutes')
+        `,
+        /password_reset_tokens_token_hash_unique/i,
+      );
+      await assert.rejects(
+        sql`
+          INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
+          VALUES (${legacyUserId}, ${"b".repeat(64)}, now() - interval '1 minute')
+        `,
+        /password_reset_tokens_expiry_check/i,
+      );
+
+      const [token] = await sql<
+        Array<{ tokenHash: string; usedAt: Date | null }>
+      >`
+        SELECT token_hash AS "tokenHash", used_at AS "usedAt"
+        FROM password_reset_tokens
+        WHERE user_id = ${legacyUserId}
+      `;
+
+      return { columns, constraints, indexes, legacyUser, token };
+    });
+
+    assert.deepEqual(state.legacyUser, {
+      email: null,
+      passwordHash: "legacy-password-hash",
+    });
+    assert.deepEqual(
+      state.columns.map(({ columnName }) => columnName),
+      ["id", "user_id", "token_hash", "expires_at", "used_at", "created_at"],
+    );
+    assert.ok(
+      state.indexes.some(({ indexName }) => indexName === "users_email_unique"),
+    );
+    assert.ok(
+      state.indexes.some(
+        ({ indexName }) =>
+          indexName === "password_reset_tokens_token_hash_unique",
+      ),
+    );
+    assert.ok(
+      state.indexes.some(
+        ({ indexName }) =>
+          indexName === "password_reset_tokens_user_created_at_idx",
+      ),
+    );
+    assert.ok(
+      state.constraints.some(
+        ({ constraintName }) =>
+          constraintName === "users_email_normalized_check",
+      ),
+    );
+    assert.ok(
+      state.constraints.some(
+        ({ constraintName }) =>
+          constraintName === "password_reset_tokens_expiry_check",
+      ),
+    );
+    assert.ok(
+      state.constraints.some(
+        ({ definition }) =>
+          /FOREIGN KEY \(user_id\) REFERENCES users\(id\) ON DELETE CASCADE/i.test(
+            definition,
+          ),
+      ),
+    );
+    assert.deepEqual(state.token, {
+      tokenHash: "a".repeat(64),
+      usedAt: null,
+    });
+
+    const report = await getMigrationStatus(database, migrationsThroughAccount);
+    assert.equal(report.historyMode, "current");
+    assert.ok(report.migrations.every(({ state: status }) => status === "applied"));
+  } finally {
+    await database.close();
+  }
+});

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 
@@ -121,6 +122,10 @@ export function LoginScreen() {
           <button type="submit" disabled={submitting}>
             {submitting ? "Iniciando…" : "Iniciar sesión"}
           </button>
+
+          <Link className="auth-secondary-link" href="/forgot-password">
+            ¿Olvidaste tu contraseña?
+          </Link>
         </form>
       </section>
     </main>
