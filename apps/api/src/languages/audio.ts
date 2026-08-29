@@ -222,6 +222,14 @@ export const languageLessonAudioRequestSchema = z
       .strict(),
     z
       .object({
+        version: z.literal("original"),
+        section: z.literal("freeText"),
+        index: languageLessonAudioIndexSchema,
+        voice: languageStoryVoiceSchema,
+      })
+      .strict(),
+    z
+      .object({
         version: languageLessonAudioVersionSchema,
         section: z.literal("miniStory"),
         index: languageLessonAudioIndexSchema,
@@ -238,11 +246,14 @@ export const languageLessonAudioRequestSchema = z
       .strict(),
   ])
   .superRefine((input, context) => {
-    if (input.section === "miniStory" && input.index !== 0) {
+    if (
+      (input.section === "miniStory" || input.section === "freeText") &&
+      input.index !== 0
+    ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["index"],
-        message: "Mini story audio only supports index 0.",
+        message: `${input.section} audio only supports index 0.`,
       });
     }
   });
@@ -269,6 +280,10 @@ export function resolveLanguageLessonAudioText(
   content: StructuredLanguageLesson,
   target: Pick<LanguageLessonAudioRequest, "section" | "index">,
 ) {
+  if (target.section === "freeText") {
+    return null;
+  }
+
   if (target.section === "vocabulary") {
     return content.vocabulary[target.index]?.term ?? null;
   }

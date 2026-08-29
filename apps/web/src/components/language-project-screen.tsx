@@ -13,6 +13,7 @@ import {
   LANGUAGE_LESSON_SOURCE_OPTIONS,
   languageLessonCreationReducer,
   languageLessonFilterEmptyMessage,
+  languageLessonSubtitle,
   type LanguageLesson,
   type LanguageLessonFilter,
   type LanguageProject,
@@ -254,9 +255,14 @@ export function LanguageProjectScreen({ projectId }: { projectId: string }) {
                   href={`/languages/${project.id}/lessons/${lesson.id}`}
                   key={lesson.id}
                 >
-                  <strong>
-                    {formatLanguageLessonTitle(lesson, project.language)}
-                  </strong>
+                  <span className="language-list-card-title">
+                    <strong>
+                      {formatLanguageLessonTitle(lesson, project.language)}
+                    </strong>
+                    {languageLessonSubtitle(lesson) ? (
+                      <small>{languageLessonSubtitle(lesson)}</small>
+                    ) : null}
+                  </span>
                   <time dateTime={lesson.createdAt}>{formatLanguageDate(lesson.createdAt)}</time>
                 </Link>
               ))}

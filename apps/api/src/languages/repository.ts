@@ -60,6 +60,11 @@ export type UpdateLanguageLessonProgressInput = OwnedLanguageLessonInput & {
   difficulty?: LanguageLessonDifficulty | null;
 };
 
+export type PrepareFreeLanguageLessonInput = OwnedLanguageLessonInput & {
+  title: string;
+  sourceContent: string;
+};
+
 export type ClaimLanguageLessonSimplificationInput =
   OwnedLanguageLessonInput & {
     regenerate: boolean;
@@ -79,6 +84,12 @@ export type FailLanguageLessonSimplificationInput =
 export type UpdateLanguageLessonResult =
   | { kind: "updated"; lesson: LanguageLesson }
   | { kind: "not_found" }
+  | { kind: "not_editable" };
+
+export type PrepareFreeLanguageLessonResult =
+  | { kind: "prepared"; lesson: LanguageLesson }
+  | { kind: "not_found" }
+  | { kind: "wrong_source" }
   | { kind: "not_editable" };
 
 export type ClaimLanguageLessonResult =
@@ -127,6 +138,9 @@ export interface LanguageStore {
   updateLessonLearningProgress(
     input: UpdateLanguageLessonProgressInput,
   ): Promise<LanguageLesson | null>;
+  prepareFreeLesson(
+    input: PrepareFreeLanguageLessonInput,
+  ): Promise<PrepareFreeLanguageLessonResult>;
   claimLessonForProcessing(
     input: ClaimLanguageLessonInput,
   ): Promise<ClaimLanguageLessonResult>;
@@ -507,6 +521,80 @@ export const languageStore: LanguageStore = {
       .returning();
 
     return lesson ?? null;
+  },
+
+  async prepareFreeLesson(input) {
+    return getDb().transaction(async (transaction) => {
+      const [project] = await transaction
+        .select({ id: languageProjects.id })
+        .from(languageProjects)
+        .where(
+          and(
+            eq(languageProjects.id, input.languageProjectId),
+            eq(languageProjects.userId, input.userId),
+          ),
+        )
+        .limit(1);
+
+      if (!project) {
+        return { kind: "not_found" as const };
+      }
+
+      const [existing] = await transaction
+        .select()
+        .from(languageLessons)
+        .where(
+          and(
+            eq(languageLessons.id, input.lessonId),
+            eq(languageLessons.languageProjectId, input.languageProjectId),
+          ),
+        )
+        .limit(1)
+        .for("update");
+
+      if (!existing) {
+        return { kind: "not_found" as const };
+      }
+
+      if (existing.lessonSource !== "free") {
+        return { kind: "wrong_source" as const };
+      }
+
+      if (
+        existing.freeTitle !== null ||
+        !(existing.status === "draft" || existing.status === "failed")
+      ) {
+        return { kind: "not_editable" as const };
+      }
+
+      const preparedAt = new Date();
+      const [lesson] = await transaction
+        .update(languageLessons)
+        .set({
+          freeTitle: input.title,
+          sourceContent: input.sourceContent,
+          status: "ready",
+          structuredContent: null,
+          simplifiedStructuredContent: null,
+          simplificationStartedAt: null,
+          simplifiedAt: null,
+          processedAt: preparedAt,
+          updatedAt: preparedAt,
+        })
+        .where(
+          and(
+            eq(languageLessons.id, input.lessonId),
+            eq(languageLessons.languageProjectId, input.languageProjectId),
+            eq(languageLessons.lessonSource, "free"),
+            inArray(languageLessons.status, ["draft", "failed"]),
+          ),
+        )
+        .returning();
+
+      return lesson
+        ? { kind: "prepared" as const, lesson }
+        : { kind: "not_editable" as const };
+    });
   },
 
   async claimLessonForSimplification(input) {

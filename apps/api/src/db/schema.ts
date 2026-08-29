@@ -453,6 +453,7 @@ export const languageLessons = pgTable(
       .notNull(),
     sourceLessonNumber: integer("source_lesson_number").notNull(),
     sourceContent: text("source_content").default("").notNull(),
+    freeTitle: text("free_title"),
     status: text("status")
       .$type<LanguageLessonStatus>()
       .default("draft")
@@ -512,9 +513,13 @@ export const languageLessons = pgTable(
       "language_lessons_difficulty_check",
       sql`${table.difficulty} is null or ${table.difficulty} in ('easy', 'normal', 'hard')`,
     ),
+    freeTitleCheck: check(
+      "language_lessons_free_title_check",
+      sql`${table.freeTitle} is null or length(btrim(${table.freeTitle})) between 1 and 160`,
+    ),
     readyContentCheck: check(
       "language_lessons_ready_content_check",
-      sql`${table.status} <> 'ready' or (${table.structuredContent} is not null and ${table.processedAt} is not null)`,
+      sql`${table.status} <> 'ready' or (${table.processedAt} is not null and (${table.structuredContent} is not null or (${table.lessonSource} = 'free' and ${table.freeTitle} is not null and length(btrim(${table.sourceContent})) > 0)))`,
     ),
     simplifiedContentCheck: check(
       "language_lessons_simplified_content_check",

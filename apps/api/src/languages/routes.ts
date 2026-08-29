@@ -7,6 +7,7 @@ import {
   LANGUAGE_LESSON_SOURCE_MAX_LENGTH,
   languageLessonIdSchema,
   languageProjectIdSchema,
+  prepareFreeLanguageLessonSchema,
   processLanguageLessonSchema,
   simplifyLanguageLessonSchema,
   structuredLanguageLessonSchema,
@@ -46,6 +47,7 @@ function publicLessonSummary(lesson: LanguageLesson) {
     status,
     learningStatus: lesson.learningStatus,
     difficulty: lesson.difficulty,
+    freeTitle: lesson.freeTitle,
     processedAt: lesson.processedAt?.toISOString() ?? null,
     createdAt: lesson.createdAt.toISOString(),
     updatedAt: lesson.updatedAt.toISOString(),
@@ -56,6 +58,16 @@ function publicLesson(lesson: LanguageLesson) {
   const summary = publicLessonSummary(lesson);
 
   if (summary.status === "ready") {
+    if (lesson.lessonSource === "free" && lesson.freeTitle !== null) {
+      return {
+        ...summary,
+        sourceContent: lesson.sourceContent,
+        structuredContent: null,
+        simplifiedStructuredContent: null,
+        simplifiedAt: null,
+      };
+    }
+
     const simplifiedStructuredContent = lesson.simplifiedStructuredContent
       ? structuredLanguageLessonSchema.parse(
           lesson.simplifiedStructuredContent,
@@ -347,6 +359,71 @@ export function registerLanguageRoutes(
         return reply.code(503).send({
           error: "LANGUAGES_UNAVAILABLE",
           message: "No se pudo guardar el material.",
+        });
+      }
+    },
+  );
+
+  server.post<{ Params: { projectId: string; lessonId: string } }>(
+    "/languages/projects/:projectId/lessons/:lessonId/free/prepare",
+    async (request, reply) => {
+      try {
+        const userId = await authenticatedUserId(request, authStore);
+
+        if (!userId) {
+          return reply.code(401).send({ error: "UNAUTHORIZED" });
+        }
+
+        if (
+          !languageProjectIdSchema.safeParse(request.params.projectId).success ||
+          !languageLessonIdSchema.safeParse(request.params.lessonId).success
+        ) {
+          return reply.code(404).send({ error: "LANGUAGE_LESSON_NOT_FOUND" });
+        }
+
+        const parsedInput = prepareFreeLanguageLessonSchema.safeParse(
+          request.body,
+        );
+
+        if (!parsedInput.success) {
+          return reply.code(400).send({
+            error: "INVALID_LANGUAGE_FREE_LESSON",
+            message: "Completa el título y el texto de la lección libre.",
+          });
+        }
+
+        const result = await store.prepareFreeLesson({
+          languageProjectId: request.params.projectId,
+          lessonId: request.params.lessonId,
+          userId,
+          title: parsedInput.data.title,
+          sourceContent: parsedInput.data.sourceContent,
+        });
+
+        if (result.kind === "not_found") {
+          return reply.code(404).send({ error: "LANGUAGE_LESSON_NOT_FOUND" });
+        }
+
+        if (result.kind === "wrong_source") {
+          return reply.code(409).send({
+            error: "LANGUAGE_LESSON_NOT_FREE",
+            message: "Esta lección no es una Lección libre.",
+          });
+        }
+
+        if (result.kind === "not_editable") {
+          return reply.code(409).send({
+            error: "LANGUAGE_FREE_LESSON_NOT_EDITABLE",
+            message: "La lección libre ya fue preparada.",
+          });
+        }
+
+        return { lesson: publicLesson(result.lesson) };
+      } catch (error) {
+        server.log.error({ error }, "Free language lesson preparation failed.");
+        return reply.code(503).send({
+          error: "LANGUAGES_UNAVAILABLE",
+          message: "No se pudo preparar la lección libre.",
         });
       }
     },

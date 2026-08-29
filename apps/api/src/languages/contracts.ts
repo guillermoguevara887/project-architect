@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export const LANGUAGE_LESSON_SOURCE_MAX_LENGTH = 100_000;
+export const LANGUAGE_FREE_LESSON_TITLE_MAX_LENGTH = 160;
 
 export const languageProjectIdSchema = z.string().uuid();
 export const languageLessonIdSchema = z.string().uuid();
@@ -194,6 +195,16 @@ export const updateLanguageLessonSchema = z
 
 export const processLanguageLessonSchema = z
   .object({
+    sourceContent: z
+      .string()
+      .max(LANGUAGE_LESSON_SOURCE_MAX_LENGTH)
+      .refine((value) => value.trim().length > 0),
+  })
+  .strict();
+
+export const prepareFreeLanguageLessonSchema = z
+  .object({
+    title: z.string().trim().min(1).max(LANGUAGE_FREE_LESSON_TITLE_MAX_LENGTH),
     sourceContent: z
       .string()
       .max(LANGUAGE_LESSON_SOURCE_MAX_LENGTH)

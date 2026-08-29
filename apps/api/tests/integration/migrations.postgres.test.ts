@@ -1176,7 +1176,10 @@ test("account recovery migration preserves users and enforces email and reset-to
   const legacyUserId = "74000000-0000-4000-8000-000000000001";
 
   try {
-    assert.equal(accountMigrationIndex, migrations.length - 1);
+    assert.equal(
+      migrations[accountMigrationIndex + 1]?.id,
+      "0015_add_language_free_lesson_title.sql",
+    );
     assert.deepEqual(
       await migratePending(database, migrationsBeforeAccount),
       migrationsBeforeAccount.map(({ id }) => id),
@@ -1326,6 +1329,139 @@ test("account recovery migration preserves users and enforces email and reset-to
     const report = await getMigrationStatus(database, migrationsThroughAccount);
     assert.equal(report.historyMode, "current");
     assert.ok(report.migrations.every(({ state: status }) => status === "applied"));
+  } finally {
+    await database.close();
+  }
+});
+
+test("free lesson title migration preserves legacy lessons and permits ready exact-text lessons", async () => {
+  const isolatedUrl = await createIsolatedDatabase("language_free_lesson_title");
+  const database = createPostgresMigrationDatabase(isolatedUrl);
+  const migrations = await loadMigrationFiles(migrationDirectory);
+  const migrationId = "0015_add_language_free_lesson_title.sql";
+  const migrationIndex = migrations.findIndex(({ id }) => id === migrationId);
+  const before = migrations.slice(0, migrationIndex);
+  const through = migrations.slice(0, migrationIndex + 1);
+  const userId = "75000000-0000-4000-8000-000000000001";
+  const projectId = "75000000-0000-4000-8000-000000000002";
+  const legacyLessonId = "75000000-0000-4000-8000-000000000003";
+  const newLessonId = "75000000-0000-4000-8000-000000000004";
+
+  try {
+    assert.equal(migrationIndex, migrations.length - 1);
+    assert.deepEqual(
+      await migratePending(database, before),
+      before.map(({ id }) => id),
+    );
+
+    await withSql(isolatedUrl, async (sql) => {
+      await sql`
+        INSERT INTO users (id, username, password_hash)
+        VALUES (${userId}, 'free-lesson-user', 'not-a-real-hash')
+      `;
+      await sql`
+        INSERT INTO language_projects (id, user_id, language, level)
+        VALUES (${projectId}, ${userId}, 'Deutsch', 'Nivel 2')
+      `;
+      await sql`
+        INSERT INTO language_lessons (
+          id, language_project_id, lesson_number, lesson_source,
+          source_lesson_number, source_content, status,
+          structured_content, processed_at
+        ) VALUES (
+          ${legacyLessonId}, ${projectId}, 1, 'free', 1,
+          'Historischer Inhalt', 'ready', ${sql.json({ vocabulary: [] })}, now()
+        )
+      `;
+      await sql`
+        INSERT INTO language_lessons (
+          id, language_project_id, lesson_number, lesson_source,
+          source_lesson_number, source_content, status
+        ) VALUES (
+          ${newLessonId}, ${projectId}, 2, 'free', 2, '', 'draft'
+        )
+      `;
+    });
+
+    assert.deepEqual(await migratePending(database, through), [migrationId]);
+
+    const state = await withSql(isolatedUrl, async (sql) => {
+      const beforePrepare = await sql<
+        Array<{ id: string; freeTitle: string | null; structuredContent: unknown }>
+      >`
+        SELECT id, free_title AS "freeTitle",
+               structured_content AS "structuredContent"
+        FROM language_lessons
+        WHERE id IN (${legacyLessonId}, ${newLessonId})
+        ORDER BY lesson_number
+      `;
+
+      const exactText = "  Erste Zeile.\n\nZweite Zeile.  ";
+      await sql`
+        UPDATE language_lessons
+        SET free_title = 'Mein Text', source_content = ${exactText},
+            status = 'ready', processed_at = now()
+        WHERE id = ${newLessonId}
+      `;
+      await assert.rejects(
+        sql`
+          UPDATE language_lessons
+          SET free_title = '   '
+          WHERE id = ${newLessonId}
+        `,
+        /language_lessons_free_title_check/i,
+      );
+      await assert.rejects(
+        sql`
+          UPDATE language_lessons
+          SET free_title = ${"a".repeat(161)}
+          WHERE id = ${newLessonId}
+        `,
+        /language_lessons_free_title_check/i,
+      );
+      await assert.rejects(
+        sql`
+          INSERT INTO language_lessons (
+            language_project_id, lesson_number, lesson_source,
+            source_lesson_number, source_content, status, processed_at
+          ) VALUES (
+            ${projectId}, 3, 'language_framework', 1,
+            'Kein strukturiertes Ergebnis', 'ready', now()
+          )
+        `,
+        /language_lessons_ready_content_check/i,
+      );
+
+      const [prepared] = await sql<
+        Array<{
+          freeTitle: string;
+          sourceContent: string;
+          status: string;
+          structuredContent: unknown;
+        }>
+      >`
+        SELECT free_title AS "freeTitle", source_content AS "sourceContent",
+               status, structured_content AS "structuredContent"
+        FROM language_lessons
+        WHERE id = ${newLessonId}
+      `;
+      return { beforePrepare, exactText, prepared };
+    });
+
+    assert.equal(state.beforePrepare[0]?.freeTitle, null);
+    assert.deepEqual(state.beforePrepare[0]?.structuredContent, {
+      vocabulary: [],
+    });
+    assert.equal(state.beforePrepare[1]?.freeTitle, null);
+    assert.deepEqual(state.prepared, {
+      freeTitle: "Mein Text",
+      sourceContent: state.exactText,
+      status: "ready",
+      structuredContent: null,
+    });
+    const report = await getMigrationStatus(database, through);
+    assert.equal(report.historyMode, "current");
+    assert.ok(report.migrations.every(({ state }) => state === "applied"));
   } finally {
     await database.close();
   }

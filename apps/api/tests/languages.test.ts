@@ -19,8 +19,10 @@ import type {
   PutLanguageAudioInput,
 } from "../src/languages/audio-storage.js";
 import {
+  LANGUAGE_FREE_LESSON_TITLE_MAX_LENGTH,
   languageLessonDifficultySchema,
   languageLessonLearningStatusSchema,
+  prepareFreeLanguageLessonSchema,
   updateLanguageLessonProgressSchema,
   type LanguageLessonDifficulty,
   type LanguageLessonLearningStatus,
@@ -45,6 +47,7 @@ import type {
   LanguageLesson,
   LanguageProject,
   LanguageStore,
+  PrepareFreeLanguageLessonInput,
   UpdateLanguageLessonInput,
   UpdateLanguageLessonProgressInput,
 } from "../src/languages/repository.js";
@@ -253,6 +256,7 @@ class MemoryLanguageStore implements LanguageStore {
       lessonSource: input.lessonSource,
       sourceLessonNumber,
       sourceContent: "",
+      freeTitle: null,
       status: "draft",
       learningStatus: "pending",
       difficulty: null,
@@ -424,6 +428,41 @@ class MemoryLanguageStore implements LanguageStore {
     }
     lesson.updatedAt = this.now();
     return lesson;
+  }
+
+  async prepareFreeLesson(input: PrepareFreeLanguageLessonInput) {
+    if (!this.ownsProject(input.languageProjectId, input.userId)) {
+      return { kind: "not_found" as const };
+    }
+
+    const lesson = this.lessons.find(
+      (candidate) =>
+        candidate.id === input.lessonId &&
+        candidate.languageProjectId === input.languageProjectId,
+    );
+
+    if (!lesson) return { kind: "not_found" as const };
+    if (lesson.lessonSource !== "free") {
+      return { kind: "wrong_source" as const };
+    }
+    if (
+      lesson.freeTitle !== null ||
+      (lesson.status !== "draft" && lesson.status !== "failed")
+    ) {
+      return { kind: "not_editable" as const };
+    }
+
+    const preparedAt = this.now();
+    lesson.freeTitle = input.title;
+    lesson.sourceContent = input.sourceContent;
+    lesson.status = "ready";
+    lesson.structuredContent = null;
+    lesson.simplifiedStructuredContent = null;
+    lesson.simplificationStartedAt = null;
+    lesson.simplifiedAt = null;
+    lesson.processedAt = preparedAt;
+    lesson.updatedAt = preparedAt;
+    return { kind: "prepared" as const, lesson };
   }
 
   async claimLessonForSimplification(
@@ -790,6 +829,24 @@ async function processLesson(
   });
 }
 
+async function prepareFreeLesson(
+  server: ReturnType<typeof createServer>,
+  projectId: string,
+  lessonId: string,
+  cookie: string,
+  payload: unknown = {
+    title: "Am Bahnhof",
+    sourceContent: "  Ich warte am Bahnhof.\nDer Zug kommt gleich.  ",
+  },
+) {
+  return server.inject({
+    method: "POST",
+    url: `/languages/projects/${projectId}/lessons/${lessonId}/free/prepare`,
+    headers: { cookie },
+    payload,
+  });
+}
+
 async function simplifyLesson(
   server: ReturnType<typeof createServer>,
   projectId: string,
@@ -1004,6 +1061,226 @@ test("lesson progress updates either field or both without changing lesson conte
     });
     assert.equal(invalid.statusCode, 400);
     assert.equal(invalid.json().error, "INVALID_LANGUAGE_LESSON_PROGRESS");
+  } finally {
+    await server.close();
+  }
+});
+
+test("free lesson preparation contract is strict and preserves source text", () => {
+  const exactText = "  Primera línea.\n\nSegunda línea.  ";
+  const valid = prepareFreeLanguageLessonSchema.parse({
+    title: "  Am Bahnhof  ",
+    sourceContent: exactText,
+  });
+
+  assert.equal(LANGUAGE_FREE_LESSON_TITLE_MAX_LENGTH, 160);
+  assert.equal(valid.title, "Am Bahnhof");
+  assert.equal(valid.sourceContent, exactText);
+  assert.equal(
+    prepareFreeLanguageLessonSchema.safeParse({
+      title: " ",
+      sourceContent: "Texto",
+    }).success,
+    false,
+  );
+  assert.equal(
+    prepareFreeLanguageLessonSchema.safeParse({
+      title: "a".repeat(161),
+      sourceContent: "Texto",
+    }).success,
+    false,
+  );
+  assert.equal(
+    prepareFreeLanguageLessonSchema.safeParse({
+      title: "Título",
+      sourceContent: " \n ",
+    }).success,
+    false,
+  );
+  assert.equal(
+    prepareFreeLanguageLessonSchema.safeParse({
+      title: "Título",
+      sourceContent: "a".repeat(100_001),
+    }).success,
+    false,
+  );
+  assert.equal(
+    prepareFreeLanguageLessonSchema.safeParse({
+      title: "Título",
+      sourceContent: "Texto",
+      provider: "elevenlabs",
+    }).success,
+    false,
+  );
+});
+
+test("free lesson preparation requires auth, ownership and a free lesson", async () => {
+  const { server } = testServer();
+  const ownerCookie = sessionCookie(firstUser.id);
+  const otherCookie = sessionCookie(secondUser.id);
+
+  try {
+    const project = await createProject(server, ownerCookie);
+    const freeLesson = await createLesson(server, project.id, ownerCookie, "free");
+    const frameworkLesson = await createLesson(
+      server,
+      project.id,
+      ownerCookie,
+      "language_framework",
+    );
+
+    const unauthenticated = await server.inject({
+      method: "POST",
+      url: `/languages/projects/${project.id}/lessons/${freeLesson.id}/free/prepare`,
+      payload: { title: "Título", sourceContent: "Texto" },
+    });
+    assert.equal(unauthenticated.statusCode, 401);
+    assert.equal(unauthenticated.json().error, "UNAUTHORIZED");
+
+    const forbidden = await prepareFreeLesson(
+      server,
+      project.id,
+      freeLesson.id,
+      otherCookie,
+    );
+    assert.equal(forbidden.statusCode, 404);
+    assert.equal(forbidden.json().error, "LANGUAGE_LESSON_NOT_FOUND");
+
+    const missing = await prepareFreeLesson(
+      server,
+      project.id,
+      randomUUID(),
+      ownerCookie,
+    );
+    assert.equal(missing.statusCode, 404);
+
+    const wrongSource = await prepareFreeLesson(
+      server,
+      project.id,
+      frameworkLesson.id,
+      ownerCookie,
+    );
+    assert.equal(wrongSource.statusCode, 409);
+    assert.equal(wrongSource.json().error, "LANGUAGE_LESSON_NOT_FREE");
+  } finally {
+    await server.close();
+  }
+});
+
+test("preparing a free lesson stores exact text and becomes ready without OpenAI", async () => {
+  const { processor, server, store } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+  const exactText = "  Ich warte am Bahnhof.\n\nDer Zug kommt gleich.  ";
+
+  try {
+    const project = await createProject(server, cookie);
+    const lesson = await createLesson(server, project.id, cookie, "free");
+    const response = await prepareFreeLesson(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      { title: "  Am Bahnhof  ", sourceContent: exactText },
+    );
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().lesson.freeTitle, "Am Bahnhof");
+    assert.equal(response.json().lesson.sourceContent, exactText);
+    assert.equal(response.json().lesson.status, "ready");
+    assert.equal(response.json().lesson.structuredContent, null);
+    assert.equal(response.json().lesson.simplifiedStructuredContent, null);
+    assert.ok(response.json().lesson.processedAt);
+    assert.equal(processor.calls.length, 0);
+
+    const stored = store.lessons.find(({ id }) => id === lesson.id);
+    assert.ok(stored);
+    assert.equal(stored.sourceContent, exactText);
+    assert.equal(stored.structuredContent, null);
+
+    const duplicate = await prepareFreeLesson(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+    );
+    assert.equal(duplicate.statusCode, 409);
+    assert.equal(
+      duplicate.json().error,
+      "LANGUAGE_FREE_LESSON_NOT_EDITABLE",
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("new and legacy free lessons keep distinct public representations", async () => {
+  const { server } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+
+  try {
+    const project = await createProject(server, cookie);
+    const prepared = await createLesson(server, project.id, cookie, "free");
+    const legacy = await createLesson(server, project.id, cookie, "free");
+    const framework = await createLesson(
+      server,
+      project.id,
+      cookie,
+      "language_framework",
+    );
+    const assimil = await createLesson(
+      server,
+      project.id,
+      cookie,
+      "assimil",
+    );
+    await prepareFreeLesson(server, project.id, prepared.id, cookie);
+    await processLesson(server, project.id, legacy.id, cookie, "Legacy source");
+    await processLesson(server, project.id, framework.id, cookie, "Framework source");
+    await processLesson(server, project.id, assimil.id, cookie, "Assimil source");
+
+    const preparedDetail = await server.inject({
+      method: "GET",
+      url: `/languages/projects/${project.id}/lessons/${prepared.id}`,
+      headers: { cookie },
+    });
+    const legacyDetail = await server.inject({
+      method: "GET",
+      url: `/languages/projects/${project.id}/lessons/${legacy.id}`,
+      headers: { cookie },
+    });
+    const frameworkDetail = await server.inject({
+      method: "GET",
+      url: `/languages/projects/${project.id}/lessons/${framework.id}`,
+      headers: { cookie },
+    });
+    const assimilDetail = await server.inject({
+      method: "GET",
+      url: `/languages/projects/${project.id}/lessons/${assimil.id}`,
+      headers: { cookie },
+    });
+    const listing = await server.inject({
+      method: "GET",
+      url: `/languages/projects/${project.id}/lessons`,
+      headers: { cookie },
+    });
+
+    assert.equal(preparedDetail.json().lesson.freeTitle, "Am Bahnhof");
+    assert.match(preparedDetail.json().lesson.sourceContent, /Bahnhof/);
+    assert.equal(preparedDetail.json().lesson.structuredContent, null);
+    assert.equal(legacyDetail.json().lesson.freeTitle, null);
+    assert.deepEqual(legacyDetail.json().lesson.structuredContent, structuredLesson);
+    assert.equal(frameworkDetail.json().lesson.freeTitle, null);
+    assert.deepEqual(
+      frameworkDetail.json().lesson.structuredContent,
+      structuredLesson,
+    );
+    assert.equal(assimilDetail.json().lesson.freeTitle, null);
+    assert.deepEqual(
+      assimilDetail.json().lesson.structuredContent,
+      structuredLesson,
+    );
+    assert.equal(listing.json().lessons[0].freeTitle, "Am Bahnhof");
+    assert.equal(listing.json().lessons[1].freeTitle, null);
   } finally {
     await server.close();
   }
@@ -2189,6 +2466,218 @@ test("German mini story uses ElevenLabs for original and simplified content and 
   }
 });
 
+test("prepared free lesson audio resolves only persisted text through ElevenLabs and reuses cache", async () => {
+  const {
+    audioStore,
+    audioProvider,
+    audioStorage,
+    elevenLabsProvider,
+    server,
+  } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+  const exactText = "  Primero.\n\nSegundo con espacios finales.  ";
+
+  try {
+    const project = await createProject(server, cookie, "Deutsch");
+    const lesson = await createLesson(server, project.id, cookie, "free");
+    const prepared = await prepareFreeLesson(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      { title: "  Mein eigener Text  ", sourceContent: exactText },
+    );
+    assert.equal(prepared.statusCode, 200);
+
+    const female = await requestLessonAudio(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      { version: "original", section: "freeText", index: 0, voice: "female" },
+    );
+    const cachedFemale = await requestLessonAudio(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      { version: "original", section: "freeText", index: 0, voice: "female" },
+    );
+    const male = await requestLessonAudio(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      { version: "original", section: "freeText", index: 0, voice: "male" },
+    );
+
+    assert.equal(female.statusCode, 200);
+    assert.equal(cachedFemale.statusCode, 200);
+    assert.equal(male.statusCode, 200);
+    assert.equal(audioProvider.calls.length, 0);
+    assert.deepEqual(elevenLabsProvider.calls, [
+      { text: exactText, language: "Deutsch" },
+      { text: exactText, language: "Deutsch" },
+    ]);
+    assert.deepEqual(
+      elevenLabsProvider.configurations.map(({ model, voice }) => ({
+        model,
+        voice,
+      })),
+      [
+        {
+          model: "eleven_multilingual_v2",
+          voice: "test-german-female-voice",
+        },
+        {
+          model: "eleven_multilingual_v2",
+          voice: "test-german-male-voice",
+        },
+      ],
+    );
+    assert.equal(audioStore.assets.length, 2);
+    assert.equal(audioStorage.puts.length, 2);
+    assert.equal(audioStorage.gets.length, 1);
+    assert.ok(
+      audioStore.assets.every(({ storageKey }) =>
+        /^language-audio\/[a-f0-9]{64}\.mp3$/.test(storageKey),
+      ),
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("free lesson audio rejects browser text, invalid targets and unavailable configuration", async () => {
+  const invalid = testServer();
+  const unsupported = testServer();
+  const missingVoice = testServer();
+  const cookie = sessionCookie(firstUser.id);
+  const femaleVoice = process.env.ELEVENLABS_VOICE_ID_DE_FEMALE;
+
+  try {
+    const invalidProject = await createProject(invalid.server, cookie, "Alemán");
+    const invalidLesson = await createLesson(
+      invalid.server,
+      invalidProject.id,
+      cookie,
+      "free",
+    );
+    await prepareFreeLesson(
+      invalid.server,
+      invalidProject.id,
+      invalidLesson.id,
+      cookie,
+    );
+    const invalidPayloads = [
+      { version: "original", section: "freeText", index: 0 },
+      {
+        version: "original",
+        section: "freeText",
+        index: 0,
+        voice: "female",
+        text: "Texto elegido por el navegador",
+      },
+      {
+        version: "original",
+        section: "freeText",
+        index: 0,
+        voice: "female",
+        provider: "elevenlabs",
+      },
+      {
+        version: "original",
+        section: "freeText",
+        index: 0,
+        voice: "arbitrary-voice-id",
+      },
+      { version: "original", section: "freeText", index: 1, voice: "female" },
+      { version: "simplified", section: "freeText", index: 0, voice: "female" },
+    ];
+    for (const payload of invalidPayloads) {
+      const response = await requestLessonAudio(
+        invalid.server,
+        invalidProject.id,
+        invalidLesson.id,
+        cookie,
+        payload,
+      );
+      assert.equal(response.statusCode, 400);
+    }
+
+    const unsupportedProject = await createProject(
+      unsupported.server,
+      cookie,
+      "Klingon",
+    );
+    const unsupportedLesson = await createLesson(
+      unsupported.server,
+      unsupportedProject.id,
+      cookie,
+      "free",
+    );
+    await prepareFreeLesson(
+      unsupported.server,
+      unsupportedProject.id,
+      unsupportedLesson.id,
+      cookie,
+    );
+    const unavailable = await requestLessonAudio(
+      unsupported.server,
+      unsupportedProject.id,
+      unsupportedLesson.id,
+      cookie,
+      { version: "original", section: "freeText", index: 0, voice: "female" },
+    );
+
+    const missingProject = await createProject(
+      missingVoice.server,
+      cookie,
+      "Alemán",
+    );
+    const missingLesson = await createLesson(
+      missingVoice.server,
+      missingProject.id,
+      cookie,
+      "free",
+    );
+    await prepareFreeLesson(
+      missingVoice.server,
+      missingProject.id,
+      missingLesson.id,
+      cookie,
+    );
+    delete process.env.ELEVENLABS_VOICE_ID_DE_FEMALE;
+    const voiceUnavailable = await requestLessonAudio(
+      missingVoice.server,
+      missingProject.id,
+      missingLesson.id,
+      cookie,
+      { version: "original", section: "freeText", index: 0, voice: "female" },
+    );
+
+    assert.equal(unavailable.statusCode, 409);
+    assert.equal(unavailable.json().error, "LANGUAGE_FREE_AUDIO_UNAVAILABLE");
+    assert.equal(voiceUnavailable.statusCode, 409);
+    assert.equal(
+      voiceUnavailable.json().error,
+      "LANGUAGE_FREE_AUDIO_VOICE_UNAVAILABLE",
+    );
+    for (const dependencies of [invalid, unsupported, missingVoice]) {
+      assert.equal(dependencies.audioProvider.calls.length, 0);
+      assert.equal(dependencies.elevenLabsProvider.calls.length, 0);
+      assert.equal(dependencies.audioStore.assets.length, 0);
+    }
+  } finally {
+    if (femaleVoice) {
+      process.env.ELEVENLABS_VOICE_ID_DE_FEMALE = femaleVoice;
+    }
+    await invalid.server.close();
+    await unsupported.server.close();
+    await missingVoice.server.close();
+  }
+});
+
 test("dialogue uses voiced ElevenLabs targets and reuses each stored line asset", async () => {
   const {
     store,
@@ -2910,4 +3399,24 @@ test("lesson progress migration defaults historical lessons and constrains metad
   assert.match(migration, /'easy', 'normal', 'hard'/);
   assert.doesNotMatch(migration, /\b(?:DROP|TRUNCATE)\b|\bDELETE\s+FROM\b/i);
   assert.doesNotMatch(migration, /\bUPDATE\s+"language_lessons"/i);
+});
+
+test("free lesson title migration is additive and preserves historical structured lessons", async () => {
+  const migration = await readFile(
+    new URL(
+      "../drizzle/0015_add_language_free_lesson_title.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+
+  assert.match(migration, /ALTER TABLE "language_lessons"/);
+  assert.match(migration, /ADD COLUMN "free_title" text/);
+  assert.match(migration, /language_lessons_free_title_check/);
+  assert.match(migration, /length\(btrim\("free_title"\)\) BETWEEN 1 AND 160/);
+  assert.match(migration, /"structured_content" IS NOT NULL/);
+  assert.match(migration, /"lesson_source" = 'free'/);
+  assert.match(migration, /length\(btrim\("source_content"\)\) > 0/);
+  assert.doesNotMatch(migration, /\b(?:TRUNCATE|DELETE\s+FROM|UPDATE)\b/i);
+  assert.doesNotMatch(migration, /CREATE TABLE/i);
 });

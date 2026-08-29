@@ -19,10 +19,13 @@ import {
   formatLanguageLessonTitle,
   getOrCreateLanguageAudioElement,
   isJapaneseLanguage,
+  isPreparedFreeLanguageLesson,
   LANGUAGE_AUDIO_PLAYBACK_RATE_OPTIONS,
   LANGUAGE_LESSON_DIFFICULTY_OPTIONS,
   LANGUAGE_LESSON_LEARNING_STATUS_OPTIONS,
   languageDialogueLineIsActive,
+  languageFreeAudioDownloadFilename,
+  languageFreeVoiceChangeStopsPlayback,
   languageLessonAudioButtonLabel,
   languageLessonAudioErrorMessage,
   languageLessonAudioKey,
@@ -55,6 +58,7 @@ import {
 import { useSessionGuard } from "@/lib/use-session-guard";
 
 const SOURCE_CONTENT_MAX_LENGTH = 100_000;
+const FREE_LESSON_TITLE_MAX_LENGTH = 160;
 
 function LanguageLessonProgressControls({
   learningStatus,
@@ -361,16 +365,18 @@ function LanguageAudioRateControl({
 
 function LanguageStoryVoiceControl({
   voice,
+  accessibleLabel = "Voz de la mini historia",
   onVoiceChange,
 }: {
   voice: LanguageStoryVoice;
+  accessibleLabel?: string;
   onVoiceChange: (voice: LanguageStoryVoice) => void;
 }) {
   return (
     <div className="lesson-story-voice-control">
       <span className="lesson-story-control-label">Voz</span>
       <div
-        aria-label="Voz de la mini historia"
+        aria-label={accessibleLabel}
         className="lesson-story-voice-selector"
         role="group"
       >
@@ -385,6 +391,125 @@ function LanguageStoryVoiceControl({
           </button>
         ))}
       </div>
+    </div>
+  );
+}
+
+function FreeReadyLesson({
+  title,
+  sourceContent,
+  copiedField,
+  copyError,
+  audioPlayback,
+  audioPlaybackRate,
+  voice,
+  download,
+  onCopyTitle,
+  onCopyText,
+  onPlayAudio,
+  onDownload,
+  onPlaybackRateChange,
+  onVoiceChange,
+}: {
+  title: string;
+  sourceContent: string;
+  copiedField: "title" | "text" | null;
+  copyError: string | null;
+  audioPlayback: LanguageLessonAudioPlayback | null;
+  audioPlaybackRate: LanguageAudioPlaybackRate;
+  voice: LanguageStoryVoice;
+  download: { loading: boolean; error: string | null };
+  onCopyTitle: () => void;
+  onCopyText: () => void;
+  onPlayAudio: () => void;
+  onDownload: () => void;
+  onPlaybackRateChange: (playbackRate: LanguageAudioPlaybackRate) => void;
+  onVoiceChange: (voice: LanguageStoryVoice) => void;
+}) {
+  const audioKey = languageLessonAudioKey("original", "freeText", 0, voice);
+  const playback = audioPlayback?.key === audioKey ? audioPlayback : null;
+
+  return (
+    <div className="free-lesson-ready">
+      <section aria-labelledby="free-lesson-title-heading">
+        <header className="free-lesson-section-header">
+          <h2 id="free-lesson-title-heading">Título</h2>
+          <button
+            aria-label={copiedField === "title" ? "Título copiado" : "Copiar título"}
+            className="copy-button"
+            type="button"
+            onClick={onCopyTitle}
+          >
+            <CopyIcon />
+            <span>{copiedField === "title" ? "Copiado" : "Copiar título"}</span>
+          </button>
+        </header>
+        <p className="free-lesson-title">{title}</p>
+      </section>
+
+      <section aria-labelledby="free-lesson-text-heading">
+        <header className="free-lesson-section-header">
+          <h2 id="free-lesson-text-heading">Texto</h2>
+          <button
+            aria-label={copiedField === "text" ? "Texto copiado" : "Copiar texto"}
+            className="copy-button"
+            type="button"
+            onClick={onCopyText}
+          >
+            <CopyIcon />
+            <span>{copiedField === "text" ? "Copiado" : "Copiar texto"}</span>
+          </button>
+        </header>
+        <p className="free-lesson-text">{sourceContent}</p>
+      </section>
+
+      <section aria-labelledby="free-lesson-audio-heading">
+        <header className="free-lesson-section-header">
+          <h2 id="free-lesson-audio-heading">Audio</h2>
+          <div className="free-lesson-audio-actions">
+            <LessonAudioButton
+              accessibleLabel="texto de la lección libre"
+              playback={playback}
+              text={sourceContent}
+              onPlay={onPlayAudio}
+            />
+            <button
+              aria-busy={download.loading}
+              className="lesson-story-download-button"
+              disabled={download.loading || playback?.status === "loading"}
+              type="button"
+              onClick={onDownload}
+            >
+              <DownloadIcon />
+              <span>
+                {download.loading ? "Preparando descarga…" : "Descargar MP3"}
+              </span>
+            </button>
+          </div>
+        </header>
+        <div className="free-lesson-audio-controls">
+          <LanguageStoryVoiceControl
+            accessibleLabel="Voz de la lección libre"
+            voice={voice}
+            onVoiceChange={onVoiceChange}
+          />
+          <LanguageAudioRateControl
+            playbackRate={audioPlaybackRate}
+            onPlaybackRateChange={onPlaybackRateChange}
+          />
+        </div>
+        {download.error ? (
+          <p className="lesson-story-download-error" role="alert">
+            {download.error}
+          </p>
+        ) : null}
+      </section>
+
+      {copyError ? (
+        <p className="form-error" role="alert">
+          {copyError}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -872,6 +997,7 @@ export function LanguageLessonScreen({
   const authorized = useSessionGuard();
   const [project, setProject] = useState<LanguageProject | null>(null);
   const [lesson, setLesson] = useState<LanguageLesson | null>(null);
+  const [freeTitle, setFreeTitle] = useState("");
   const [sourceContent, setSourceContent] = useState("");
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -881,6 +1007,8 @@ export function LanguageLessonScreen({
   >(null);
   const progressUpdatingRef = useRef(false);
   const [processing, setProcessing] = useState(false);
+  const [preparingFree, setPreparingFree] = useState(false);
+  const preparingFreeRef = useRef(false);
   const [simplificationAction, setSimplificationAction] = useState<
     "simplify" | "regenerate" | null
   >(null);
@@ -899,6 +1027,10 @@ export function LanguageLessonScreen({
   const [deleting, setDeleting] = useState(false);
   const [copiedSection, setCopiedSection] =
     useState<LessonSectionKey | null>(null);
+  const [freeCopiedField, setFreeCopiedField] = useState<
+    "title" | "text" | null
+  >(null);
+  const [freeCopyError, setFreeCopyError] = useState<string | null>(null);
   const [audioPlayback, setAudioPlayback] =
     useState<LanguageLessonAudioPlayback | null>(null);
   const [dialoguePlayback, setDialoguePlayback] = useState<Pick<
@@ -914,6 +1046,11 @@ export function LanguageLessonScreen({
     error: string | null;
   }>({ loading: false, error: null });
   const storyDownloadLoadingRef = useRef(false);
+  const [freeDownload, setFreeDownload] = useState<{
+    loading: boolean;
+    error: string | null;
+  }>({ loading: false, error: null });
+  const freeDownloadLoadingRef = useRef(false);
   const audioPlaybackRef = useRef<LanguageLessonAudioPlayback | null>(null);
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
   const audioObjectUrlRef = useRef<string | null>(null);
@@ -954,6 +1091,10 @@ export function LanguageLessonScreen({
       languageStoryVoiceChangeStopsPlayback(
         audioPlaybackRef.current,
         contentVersion,
+        storyVoice,
+      ) ||
+      languageFreeVoiceChangeStopsPlayback(
+        audioPlaybackRef.current,
         storyVoice,
       )
     ) {
@@ -1056,6 +1197,7 @@ export function LanguageLessonScreen({
         if (active) {
           setProject(projectResult.project);
           setLesson(lessonResult.lesson);
+          setFreeTitle(lessonResult.lesson.freeTitle ?? "");
           setSourceContent(lessonResult.lesson.sourceContent ?? "");
           setContentVersion("original");
         }
@@ -1094,6 +1236,53 @@ export function LanguageLessonScreen({
 
     return () => window.clearInterval(interval);
   }, [authorized, lesson?.status, lessonId, processing, projectId]);
+
+  async function prepareFreeLesson(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (preparingFreeRef.current) return;
+
+    preparingFreeRef.current = true;
+    setPreparingFree(true);
+    setActionError(null);
+
+    try {
+      const response = await fetch(
+        `/api/languages/projects/${encodeURIComponent(projectId)}/lessons/${encodeURIComponent(lessonId)}/free/prepare`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ title: freeTitle, sourceContent }),
+        },
+      );
+
+      if (response.status === 401) {
+        router.replace("/");
+        return;
+      }
+
+      const result = (await response.json()) as {
+        lesson?: LanguageLesson;
+        message?: string;
+      };
+
+      if (!response.ok || !result.lesson) {
+        setActionError(
+          result.message ?? "No se pudo preparar la lección libre.",
+        );
+        return;
+      }
+
+      setLesson(result.lesson);
+      setFreeTitle(result.lesson.freeTitle ?? "");
+      setSourceContent(result.lesson.sourceContent ?? "");
+    } catch {
+      setActionError("No se pudo preparar la lección libre.");
+    } finally {
+      preparingFreeRef.current = false;
+      setPreparingFree(false);
+    }
+  }
 
   async function processLesson(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1305,6 +1494,29 @@ export function LanguageLessonScreen({
     }
   }
 
+  async function copyFreeLessonField(field: "title" | "text") {
+    if (!lesson || !isPreparedFreeLanguageLesson(lesson)) return;
+
+    const value = field === "title" ? lesson.freeTitle : lesson.sourceContent;
+
+    if (!value) return;
+
+    setFreeCopyError(null);
+    try {
+      await navigator.clipboard.writeText(value);
+      setFreeCopiedField(field);
+      window.setTimeout(() => {
+        setFreeCopiedField((current) => (current === field ? null : current));
+      }, 1_500);
+    } catch {
+      setFreeCopyError(
+        field === "title"
+          ? "No se pudo copiar el título."
+          : "No se pudo copiar el texto.",
+      );
+    }
+  }
+
   async function playLanguageAudio(
     section: LanguageLessonAudioSection,
     index: number,
@@ -1312,12 +1524,13 @@ export function LanguageLessonScreen({
     dialogueSequenceId?: number,
   ): Promise<LanguageAudioPlaybackCompletion> {
     const voice =
-      section === "miniStory"
+      section === "miniStory" || section === "freeText"
         ? storyVoice
         : section === "dialogue"
           ? dialogueVoice
           : undefined;
-    const key = languageLessonAudioKey(contentVersion, section, index, voice);
+    const audioVersion = section === "freeText" ? "original" : contentVersion;
+    const key = languageLessonAudioKey(audioVersion, section, index, voice);
     const toggleAction = languageLessonAudioToggleAction(
       audioPlaybackRef.current,
       key,
@@ -1359,7 +1572,7 @@ export function LanguageLessonScreen({
           headers: { "content-type": "application/json" },
           body: JSON.stringify(
             languageLessonAudioRequest(
-              contentVersion,
+              audioVersion,
               section,
               index,
               voice,
@@ -1576,6 +1789,80 @@ export function LanguageLessonScreen({
     }
   }
 
+  async function downloadFreeLessonAudio() {
+    if (
+      freeDownloadLoadingRef.current ||
+      !lesson ||
+      !isPreparedFreeLanguageLesson(lesson)
+    ) {
+      return;
+    }
+
+    const voice = storyVoice;
+    const freeAudioKey = languageLessonAudioKey(
+      "original",
+      "freeText",
+      0,
+      voice,
+    );
+
+    if (
+      audioPlaybackRef.current?.key === freeAudioKey &&
+      audioPlaybackRef.current.status === "loading"
+    ) {
+      return;
+    }
+
+    freeDownloadLoadingRef.current = true;
+    setFreeDownload({ loading: true, error: null });
+
+    try {
+      const response = await fetch(
+        `/api/languages/projects/${encodeURIComponent(projectId)}/lessons/${encodeURIComponent(lessonId)}/audio`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(
+            languageLessonAudioRequest("original", "freeText", 0, voice),
+          ),
+        },
+      );
+
+      if (response.status === 401) {
+        setFreeDownload({ loading: false, error: null });
+        router.replace("/");
+        return;
+      }
+
+      if (!response.ok) {
+        const result = (await response.json()) as {
+          error?: string;
+          message?: string;
+        };
+        throw new Error(
+          languageLessonAudioErrorMessage(response.status, result),
+        );
+      }
+
+      downloadLanguageAudioBlob(
+        await response.blob(),
+        languageFreeAudioDownloadFilename(lesson.freeTitle, voice),
+      );
+      setFreeDownload({ loading: false, error: null });
+    } catch (error) {
+      setFreeDownload({
+        loading: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "No se pudo descargar el audio. Intenta nuevamente.",
+      });
+    } finally {
+      freeDownloadLoadingRef.current = false;
+    }
+  }
+
   if (!authorized || (!lesson && !loadError)) {
     return (
       <main className="flow-shell">
@@ -1600,8 +1887,9 @@ export function LanguageLessonScreen({
     );
   }
 
+  const preparedFreeLesson = isPreparedFreeLanguageLesson(lesson);
   const readyContent =
-    lesson.status === "ready"
+    lesson.status === "ready" && !preparedFreeLesson
       ? languageLessonContentForVersion(lesson, contentVersion)
       : null;
 
@@ -1646,7 +1934,61 @@ export function LanguageLessonScreen({
           </section>
         ) : null}
 
-        {lesson.status !== "ready" && lesson.status !== "processing" ? (
+        {lesson.lessonSource === "free" &&
+        lesson.status !== "ready" &&
+        lesson.status !== "processing" ? (
+          <form className="lesson-form free-lesson-form" onSubmit={prepareFreeLesson}>
+            <div className="free-lesson-form-intro">
+              <h2>Preparar lección libre</h2>
+              <p>Pega un texto para escucharlo y descargarlo como MP3.</p>
+              <small>
+                Podrás copiar el título y el texto para usarlos donde quieras.
+              </small>
+            </div>
+            <label htmlFor="free-lesson-title">Título</label>
+            <input
+              id="free-lesson-title"
+              maxLength={FREE_LESSON_TITLE_MAX_LENGTH}
+              required
+              type="text"
+              value={freeTitle}
+              onChange={(event) => setFreeTitle(event.target.value)}
+            />
+            <small className="lesson-input-limit">
+              Máximo {FREE_LESSON_TITLE_MAX_LENGTH} caracteres.
+            </small>
+            <label htmlFor="free-lesson-text">Texto</label>
+            <textarea
+              id="free-lesson-text"
+              maxLength={SOURCE_CONTENT_MAX_LENGTH}
+              placeholder="Pega aquí el texto completo."
+              required
+              rows={18}
+              value={sourceContent}
+              onChange={(event) => setSourceContent(event.target.value)}
+            />
+            <small className="lesson-input-limit">
+              Máximo {SOURCE_CONTENT_MAX_LENGTH.toLocaleString("es")} caracteres.
+            </small>
+            {actionError ? (
+              <p className="form-error" role="alert">
+                {actionError}
+              </p>
+            ) : null}
+            <button
+              disabled={
+                preparingFree || !freeTitle.trim() || !sourceContent.trim()
+              }
+              type="submit"
+            >
+              {preparingFree ? "Preparando…" : "Preparar lección libre"}
+            </button>
+          </form>
+        ) : null}
+
+        {lesson.lessonSource !== "free" &&
+        lesson.status !== "ready" &&
+        lesson.status !== "processing" ? (
           <form className="lesson-form" onSubmit={processLesson}>
             <label htmlFor="source-content">Material de la lección</label>
             <textarea
@@ -1754,7 +2096,26 @@ export function LanguageLessonScreen({
           />
         ) : null}
 
-        {lesson.status === "ready" && !readyContent ? (
+        {lesson.status === "ready" && preparedFreeLesson ? (
+          <FreeReadyLesson
+            audioPlayback={audioPlayback}
+            audioPlaybackRate={audioPlaybackRate}
+            copiedField={freeCopiedField}
+            copyError={freeCopyError}
+            download={freeDownload}
+            sourceContent={lesson.sourceContent ?? ""}
+            title={lesson.freeTitle}
+            voice={storyVoice}
+            onCopyText={() => void copyFreeLessonField("text")}
+            onCopyTitle={() => void copyFreeLessonField("title")}
+            onDownload={() => void downloadFreeLessonAudio()}
+            onPlayAudio={() => void playLanguageAudio("freeText", 0)}
+            onPlaybackRateChange={updateLanguageAudioPlaybackRate}
+            onVoiceChange={updateLanguageStoryVoice}
+          />
+        ) : null}
+
+        {lesson.status === "ready" && !preparedFreeLesson && !readyContent ? (
           <p className="form-error lesson-ready-error" role="alert">
             No se pudo mostrar el contenido estructurado de esta lección.
           </p>
@@ -1764,7 +2125,7 @@ export function LanguageLessonScreen({
           <button
             className="lesson-delete-button"
             type="button"
-            disabled={deleting || processing || simplifying}
+            disabled={deleting || processing || preparingFree || simplifying}
             onClick={() => {
               stopLanguageAudio();
               void deleteLesson();

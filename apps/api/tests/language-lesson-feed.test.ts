@@ -13,6 +13,7 @@ import {
   formatLanguageLessonTitle,
   getOrCreateLanguageAudioElement,
   INITIAL_LANGUAGE_LESSON_CREATION_STATE,
+  isPreparedFreeLanguageLesson,
   isJapaneseLanguage,
   LANGUAGE_AUDIO_PLAYBACK_RATE_OPTIONS,
   LANGUAGE_LESSON_DIFFICULTY_OPTIONS,
@@ -20,6 +21,8 @@ import {
   LANGUAGE_LESSON_SOURCE_OPTIONS,
   LANGUAGE_STORY_VOICE_OPTIONS,
   languageDialogueLineIsActive,
+  languageFreeAudioDownloadFilename,
+  languageFreeVoiceChangeStopsPlayback,
   languageLessonAudioButtonLabel,
   languageAudioPlaybackErrorMessage,
   languageLessonAudioErrorMessage,
@@ -79,6 +82,23 @@ test("lesson audio UI builds positional requests without arbitrary text", () => 
       voice: "male",
     },
   );
+  assert.deepEqual(
+    languageLessonAudioRequest("original", "freeText", 0, "female"),
+    {
+      version: "original",
+      section: "freeText",
+      index: 0,
+      voice: "female",
+    },
+  );
+  assert.equal(
+    "text" in languageLessonAudioRequest("original", "freeText", 0, "female"),
+    false,
+  );
+  assert.equal(
+    languageLessonAudioKey("original", "freeText", 0, "male"),
+    "original:freeText:0:male",
+  );
   assert.equal(
     "text" in
       languageLessonAudioRequest("original", "miniStory", 0, "female"),
@@ -127,7 +147,7 @@ test("lesson audio UI builds positional requests without arbitrary text", () => 
   );
   assert.throws(
     () => languageLessonAudioRequest("original", "vocabulary", 0, "female"),
-    /only valid for mini story/,
+    /only valid for voiced language audio/,
   );
   assert.throws(
     () =>
@@ -137,7 +157,15 @@ test("lesson audio UI builds positional requests without arbitrary text", () => 
         0,
         "male",
       ),
-    /only valid for mini story/,
+    /only valid for voiced language audio/,
+  );
+  assert.throws(
+    () => languageLessonAudioRequest("original", "freeText", 0),
+    /requires a voice/,
+  );
+  assert.throws(
+    () => languageLessonAudioRequest("simplified", "freeText", 0, "female"),
+    /original version/,
   );
 });
 
@@ -859,7 +887,7 @@ test("lesson audio controls use an accessible spinner and non-color playing cue"
   assert.match(miniStorySection, /<LanguageStoryVoiceControl/);
   assert.equal(
     component.match(/className="lesson-story-download-button"/g)?.length,
-    1,
+    2,
   );
   assert.match(miniStorySection, /Descargar MP3/);
   assert.match(miniStorySection, /Preparando descarga…/);
@@ -926,7 +954,7 @@ test("lesson audio controls use an accessible spinner and non-color playing cue"
     component.match(/className="lesson-story-voice-selector"/g)?.length,
     1,
   );
-  assert.match(component, /aria-label="Voz de la mini historia"/);
+  assert.match(component, /accessibleLabel = "Voz de la mini historia"/);
   assert.match(component, /aria-pressed=\{voice === option\.value\}/);
   assert.match(
     component,
@@ -1070,6 +1098,72 @@ test("continuing lesson creation keeps the selected source and blocks duplicate 
   assert.equal(guard.start(), true);
 });
 
+test("prepared free lessons are distinguished from historical structured free lessons", () => {
+  const prepared = {
+    lessonSource: "free" as const,
+    freeTitle: "Una tarde en Berlín",
+  };
+  const historical = {
+    lessonSource: "free" as const,
+    freeTitle: null,
+  };
+
+  assert.equal(isPreparedFreeLanguageLesson(prepared), true);
+  assert.equal(isPreparedFreeLanguageLesson(historical), false);
+  assert.equal(
+    isPreparedFreeLanguageLesson({
+      lessonSource: "assimil" as const,
+      freeTitle: "No debe activar el formato libre",
+    }),
+    false,
+  );
+});
+
+test("free lesson audio uses voice-specific keys and safe friendly filenames", () => {
+  const active = {
+    key: languageLessonAudioKey("original", "freeText", 0, "female"),
+    status: "playing" as const,
+  };
+
+  assert.equal(languageFreeVoiceChangeStopsPlayback(active, "female"), true);
+  assert.equal(languageFreeVoiceChangeStopsPlayback(active, "male"), false);
+  assert.equal(
+    languageFreeAudioDownloadFilename("  Café / conversación: 你好  ", "male"),
+    "memoos-cafe-conversacion-hombre.mp3",
+  );
+  assert.doesNotMatch(
+    languageFreeAudioDownloadFilename("Mi texto", "female"),
+    /VOICE_ID|[0-9a-f]{32}/i,
+  );
+});
+
+test("free lesson UI prepares exact text and keeps copy, audio and download independent", async () => {
+  const component = await readFile(
+    new URL(
+      "../../web/src/components/language-lesson-screen.tsx",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+
+  assert.match(component, /\/free\/prepare/);
+  assert.match(component, /title: freeTitle,\s*sourceContent/);
+  assert.match(component, /Preparar lección libre/);
+  assert.match(component, /isPreparedFreeLanguageLesson\(lesson\)/);
+  assert.match(component, /<FreeReadyLesson/);
+  assert.match(component, /copyFreeLessonField\("title"\)/);
+  assert.match(component, /copyFreeLessonField\("text"\)/);
+  assert.match(component, /playLanguageAudio\("freeText", 0\)/);
+  assert.match(
+    component,
+    /languageLessonAudioRequest\("original", "freeText", 0, voice\)/,
+  );
+  assert.doesNotMatch(
+    component.match(/async function prepareFreeLesson[\s\S]*?\n  }/m)?.[0] ?? "",
+    /process|simplif|OpenAI|ElevenLabs|R2/,
+  );
+});
+
 function lesson(
   id: string,
   lessonNumber: number,
@@ -1082,6 +1176,7 @@ function lesson(
     lessonNumber,
     lessonSource,
     sourceLessonNumber,
+    freeTitle: null,
     status: "draft",
     learningStatus: "pending",
     difficulty: null,

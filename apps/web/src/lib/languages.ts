@@ -179,6 +179,7 @@ export type LanguageLesson = {
   status: LanguageLessonStatus;
   learningStatus: LanguageLessonLearningStatus;
   difficulty: LanguageLessonDifficulty | null;
+  freeTitle: string | null;
   sourceContent?: string;
   structuredContent?: StructuredLanguageLesson | null;
   simplifiedStructuredContent?: StructuredLanguageLesson | null;
@@ -231,6 +232,7 @@ export type LanguageLessonAudioSection =
   | "vocabulary"
   | "phrases"
   | "automaticThoughts"
+  | "freeText"
   | "miniStory"
   | "dialogue";
 
@@ -276,7 +278,11 @@ export type LanguageAudioPlaybackCompletion =
 function languageLessonAudioSectionRequiresVoice(
   section: LanguageLessonAudioSection,
 ) {
-  return section === "miniStory" || section === "dialogue";
+  return (
+    section === "freeText" ||
+    section === "miniStory" ||
+    section === "dialogue"
+  );
 }
 
 export function languageLessonAudioKey(
@@ -291,7 +297,7 @@ export function languageLessonAudioKey(
   }
 
   if (voice) {
-    throw new Error("Voice is only valid for mini story or dialogue audio.");
+    throw new Error("Voice is only valid for voiced language audio.");
   }
   return `${version}:${section}:${index}`;
 }
@@ -369,6 +375,13 @@ export function languageStoryVoiceChangeStopsPlayback(
   );
 }
 
+export function languageFreeVoiceChangeStopsPlayback(
+  playback: LanguageLessonAudioPlayback | null,
+  voice: LanguageStoryVoice,
+) {
+  return playback?.key === languageLessonAudioKey("original", "freeText", 0, voice);
+}
+
 export function languageLessonAudioButtonLabel(
   text: string,
   status: LanguageLessonAudioPlayback["status"] | "idle",
@@ -413,6 +426,17 @@ export function languageLessonAudioErrorMessage(
     return "La voz del diálogo todavía no está disponible.";
   }
 
+  if (status === 409 && result.error === "LANGUAGE_FREE_AUDIO_UNAVAILABLE") {
+    return "El audio de la lección libre todavía no está disponible para este idioma.";
+  }
+
+  if (
+    status === 409 &&
+    result.error === "LANGUAGE_FREE_AUDIO_VOICE_UNAVAILABLE"
+  ) {
+    return "La voz de la lección libre todavía no está disponible.";
+  }
+
   return result.message ?? "No se pudo preparar la pronunciación.";
 }
 
@@ -429,13 +453,17 @@ export function languageLessonAudioRequest(
   index: number,
   voice?: LanguageStoryVoice,
 ) {
+  if (section === "freeText" && version !== "original") {
+    throw new Error("Free lesson audio only supports the original version.");
+  }
+
   if (languageLessonAudioSectionRequiresVoice(section)) {
     if (!voice) throw new Error(`${section} audio requires a voice.`);
     return { version, section, index, voice };
   }
 
   if (voice) {
-    throw new Error("Voice is only valid for mini story or dialogue audio.");
+    throw new Error("Voice is only valid for voiced language audio.");
   }
   return { version, section, index };
 }
@@ -455,6 +483,22 @@ export function languageStoryAudioDownloadFilename(
   const voiceLabel = voice === "female" ? "mujer" : "hombre";
 
   return `memoos-${languageSlug || "idioma"}-mini-historia-${versionLabel}-${voiceLabel}.mp3`;
+}
+
+export function languageFreeAudioDownloadFilename(
+  title: string,
+  voice: LanguageStoryVoice,
+) {
+  const titleSlug = title
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLocaleLowerCase("und")
+    .replace(/[^a-z0-9]+/gu, "-")
+    .replace(/^-+|-+$/gu, "")
+    .slice(0, 80);
+  const voiceLabel = voice === "female" ? "mujer" : "hombre";
+
+  return `memoos-${titleSlug || "leccion-libre"}-${voiceLabel}.mp3`;
 }
 
 export function languageStoryAudioDownloadDisabled(
@@ -584,6 +628,18 @@ export function canRegenerateLanguageLesson(
   lesson: Pick<LanguageLesson, "simplifiedStructuredContent">,
 ) {
   return Boolean(lesson.simplifiedStructuredContent);
+}
+
+export function isPreparedFreeLanguageLesson<
+  T extends Pick<LanguageLesson, "lessonSource" | "freeTitle">,
+>(lesson: T): lesson is T & { lessonSource: "free"; freeTitle: string } {
+  return lesson.lessonSource === "free" && lesson.freeTitle !== null;
+}
+
+export function languageLessonSubtitle(
+  lesson: Pick<LanguageLesson, "lessonSource" | "freeTitle">,
+) {
+  return isPreparedFreeLanguageLesson(lesson) ? lesson.freeTitle : null;
 }
 
 export function formatLanguageLessonTitle(
