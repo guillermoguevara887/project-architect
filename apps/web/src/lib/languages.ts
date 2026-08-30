@@ -51,6 +51,8 @@ export const LANGUAGE_LESSON_SOURCE_OPTIONS = [
 export type LanguageLessonSource =
   (typeof LANGUAGE_LESSON_SOURCE_OPTIONS)[number]["value"];
 
+export type LanguageLessonSplitPart = "A" | "B";
+
 export type LanguageLessonCreationState = {
   status: "closed" | "choosing" | "creating";
   lessonSource: LanguageLessonSource;
@@ -176,6 +178,8 @@ export type LanguageLesson = {
   lessonNumber: number;
   lessonSource: LanguageLessonSource;
   sourceLessonNumber: number;
+  splitParentLessonId: string | null;
+  splitPart: LanguageLessonSplitPart | null;
   status: LanguageLessonStatus;
   learningStatus: LanguageLessonLearningStatus;
   difficulty: LanguageLessonDifficulty | null;

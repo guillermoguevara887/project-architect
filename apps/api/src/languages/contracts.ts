@@ -43,6 +43,8 @@ export const languageLessonSourceSchema = z.enum([
 
 export type LanguageLessonSource = z.infer<typeof languageLessonSourceSchema>;
 
+export type LanguageLessonSplitPart = "A" | "B";
+
 const requiredText = z.string().trim().min(1);
 
 const freeLanguageLessonAnalysisItemSchema = z

@@ -49,6 +49,8 @@ function publicLessonSummary(lesson: LanguageLesson) {
     lessonNumber: lesson.lessonNumber,
     lessonSource: lesson.lessonSource,
     sourceLessonNumber: lesson.sourceLessonNumber,
+    splitParentLessonId: lesson.splitParentLessonId,
+    splitPart: lesson.splitPart,
     status,
     learningStatus: lesson.learningStatus,
     difficulty: lesson.difficulty,

@@ -260,6 +260,8 @@ class MemoryLanguageStore implements LanguageStore {
       lessonNumber,
       lessonSource: input.lessonSource,
       sourceLessonNumber,
+      splitParentLessonId: null,
+      splitPart: null,
       sourceContent: "",
       freeTitle: null,
       freeAnalysis: null,
@@ -1336,25 +1338,37 @@ test("new and legacy free lessons keep distinct public representations", async (
 
     assert.equal(preparedDetail.json().lesson.freeTitle, "Am Bahnhof");
     assert.equal(preparedDetail.json().lesson.freeAnalysis, null);
+    assert.equal(preparedDetail.json().lesson.splitParentLessonId, null);
+    assert.equal(preparedDetail.json().lesson.splitPart, null);
     assert.match(preparedDetail.json().lesson.sourceContent, /Bahnhof/);
     assert.equal(preparedDetail.json().lesson.structuredContent, null);
     assert.equal(legacyDetail.json().lesson.freeTitle, null);
     assert.equal(legacyDetail.json().lesson.freeAnalysis, null);
+    assert.equal(legacyDetail.json().lesson.splitParentLessonId, null);
+    assert.equal(legacyDetail.json().lesson.splitPart, null);
     assert.deepEqual(legacyDetail.json().lesson.structuredContent, structuredLesson);
     assert.equal(frameworkDetail.json().lesson.freeTitle, null);
     assert.equal(frameworkDetail.json().lesson.freeAnalysis, null);
+    assert.equal(frameworkDetail.json().lesson.splitParentLessonId, null);
+    assert.equal(frameworkDetail.json().lesson.splitPart, null);
     assert.deepEqual(
       frameworkDetail.json().lesson.structuredContent,
       structuredLesson,
     );
     assert.equal(assimilDetail.json().lesson.freeTitle, null);
     assert.equal(assimilDetail.json().lesson.freeAnalysis, null);
+    assert.equal(assimilDetail.json().lesson.splitParentLessonId, null);
+    assert.equal(assimilDetail.json().lesson.splitPart, null);
     assert.deepEqual(
       assimilDetail.json().lesson.structuredContent,
       structuredLesson,
     );
     assert.equal(listing.json().lessons[0].freeTitle, "Am Bahnhof");
     assert.equal(listing.json().lessons[1].freeTitle, null);
+    for (const lesson of listing.json().lessons) {
+      assert.equal(lesson.splitParentLessonId, null);
+      assert.equal(lesson.splitPart, null);
+    }
   } finally {
     await server.close();
   }
@@ -3704,5 +3718,43 @@ test("free analysis migration adds only nullable JSONB without backfill", async 
   assert.doesNotMatch(
     migration,
     /free_title|source_content|structured_content|status|learning_status|difficulty|language_audio_assets/i,
+  );
+});
+
+test("lesson split migration adds only nullable relationships and partial uniqueness", async () => {
+  const migration = await readFile(
+    new URL(
+      "../drizzle/0017_add_language_lesson_split_relationship.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+
+  assert.match(migration, /ADD COLUMN "split_parent_lesson_id" uuid/);
+  assert.match(migration, /ADD COLUMN "split_part" text/);
+  assert.match(migration, /language_lessons_split_parent_fkey/);
+  assert.match(migration, /REFERENCES "language_lessons" \("id"\)/);
+  assert.match(migration, /ON DELETE CASCADE/);
+  assert.match(migration, /language_lessons_split_pair_check/);
+  assert.match(migration, /"split_part" IS NOT NULL/);
+  assert.match(migration, /"split_part" IN \('A', 'B'\)/);
+  assert.match(migration, /language_lessons_split_self_check/);
+  assert.match(migration, /language_lessons_split_framework_only_check/);
+  assert.match(migration, /"lesson_source" = 'language_framework'/);
+  assert.match(
+    migration,
+    /CREATE UNIQUE INDEX "language_lessons_project_source_number_unique"[\s\S]*WHERE "split_parent_lesson_id" IS NULL/,
+  );
+  assert.match(
+    migration,
+    /CREATE UNIQUE INDEX "language_lessons_split_parent_part_unique"[\s\S]*WHERE "split_parent_lesson_id" IS NOT NULL/,
+  );
+  assert.doesNotMatch(
+    migration,
+    /\b(?:UPDATE|DELETE\s+FROM|INSERT|TRUNCATE|CREATE\s+TABLE)\b/i,
+  );
+  assert.doesNotMatch(
+    migration,
+    /free_title|free_analysis|source_content|structured_content|simplified_structured_content|learning_status|difficulty|language_audio_assets|users|exercises/i,
   );
 });

@@ -1213,6 +1213,8 @@ function lesson(
     lessonNumber,
     lessonSource,
     sourceLessonNumber,
+    splitParentLessonId: null,
+    splitPart: null,
     freeTitle: null,
     freeAnalysis: null,
     status: "draft",

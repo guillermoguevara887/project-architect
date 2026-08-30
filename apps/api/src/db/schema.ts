@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   boolean,
   check,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -17,6 +18,7 @@ import type {
   LanguageLessonDifficulty,
   LanguageLessonLearningStatus,
   LanguageLessonSource,
+  LanguageLessonSplitPart,
   LanguageLessonStatus,
   StructuredLanguageLesson,
 } from "../languages/contracts.js";
@@ -453,6 +455,8 @@ export const languageLessons = pgTable(
       .default("free")
       .notNull(),
     sourceLessonNumber: integer("source_lesson_number").notNull(),
+    splitParentLessonId: uuid("split_parent_lesson_id"),
+    splitPart: text("split_part").$type<LanguageLessonSplitPart>(),
     sourceContent: text("source_content").default("").notNull(),
     freeTitle: text("free_title"),
     freeAnalysis: jsonb("free_analysis").$type<FreeLanguageLessonAnalysis>(),
@@ -486,11 +490,23 @@ export const languageLessons = pgTable(
     ).on(table.languageProjectId, table.lessonNumber),
     projectSourceLessonNumberUnique: uniqueIndex(
       "language_lessons_project_source_number_unique",
-    ).on(
-      table.languageProjectId,
-      table.lessonSource,
-      table.sourceLessonNumber,
-    ),
+    )
+      .on(
+        table.languageProjectId,
+        table.lessonSource,
+        table.sourceLessonNumber,
+      )
+      .where(sql`${table.splitParentLessonId} is null`),
+    splitParentPartUnique: uniqueIndex(
+      "language_lessons_split_parent_part_unique",
+    )
+      .on(table.splitParentLessonId, table.splitPart)
+      .where(sql`${table.splitParentLessonId} is not null`),
+    splitParentForeignKey: foreignKey({
+      columns: [table.splitParentLessonId],
+      foreignColumns: [table.id],
+      name: "language_lessons_split_parent_fkey",
+    }).onDelete("cascade"),
     lessonNumberCheck: check(
       "language_lessons_number_check",
       sql`${table.lessonNumber} > 0`,
@@ -502,6 +518,18 @@ export const languageLessons = pgTable(
     sourceLessonNumberCheck: check(
       "language_lessons_source_number_check",
       sql`${table.sourceLessonNumber} > 0`,
+    ),
+    splitPairCheck: check(
+      "language_lessons_split_pair_check",
+      sql`(${table.splitParentLessonId} is null and ${table.splitPart} is null) or (${table.splitParentLessonId} is not null and ${table.splitPart} is not null and ${table.splitPart} in ('A', 'B'))`,
+    ),
+    splitSelfCheck: check(
+      "language_lessons_split_self_check",
+      sql`${table.splitParentLessonId} is null or ${table.splitParentLessonId} <> ${table.id}`,
+    ),
+    splitFrameworkOnlyCheck: check(
+      "language_lessons_split_framework_only_check",
+      sql`${table.splitParentLessonId} is null or ${table.lessonSource} = 'language_framework'`,
     ),
     statusCheck: check(
       "language_lessons_status_check",

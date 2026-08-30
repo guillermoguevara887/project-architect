@@ -1493,7 +1493,10 @@ test("free analysis migration preserves lessons and stores optional analysis JSO
   };
 
   try {
-    assert.equal(migrationIndex, migrations.length - 1);
+    assert.equal(
+      migrations[migrationIndex + 1]?.id,
+      "0017_add_language_lesson_split_relationship.sql",
+    );
     assert.deepEqual(
       await migratePending(database, before),
       before.map(({ id }) => id),
@@ -1563,6 +1566,295 @@ test("free analysis migration preserves lessons and stores optional analysis JSO
       learningStatus: "completed",
       difficulty: "hard",
     });
+    const report = await getMigrationStatus(database, through);
+    assert.equal(report.historyMode, "current");
+    assert.ok(report.migrations.every(({ state }) => state === "applied"));
+  } finally {
+    await database.close();
+  }
+});
+
+test("lesson split relationship migration preserves roots and enforces A/B children", async () => {
+  const isolatedUrl = await createIsolatedDatabase("language_lesson_split");
+  const database = createPostgresMigrationDatabase(isolatedUrl);
+  const migrations = await loadMigrationFiles(migrationDirectory);
+  const migrationId = "0017_add_language_lesson_split_relationship.sql";
+  const migrationIndex = migrations.findIndex(({ id }) => id === migrationId);
+  const before = migrations.slice(0, migrationIndex);
+  const through = migrations.slice(0, migrationIndex + 1);
+  const userId = "77000000-0000-4000-8000-000000000001";
+  const projectId = "77000000-0000-4000-8000-000000000002";
+  const parentId = "77000000-0000-4000-8000-000000000003";
+  const freeId = "77000000-0000-4000-8000-000000000004";
+  const assimilId = "77000000-0000-4000-8000-000000000005";
+  const partAId = "77000000-0000-4000-8000-000000000006";
+  const partBId = "77000000-0000-4000-8000-000000000007";
+
+  try {
+    assert.equal(migrationIndex, migrations.length - 1);
+    assert.deepEqual(
+      await migratePending(database, before),
+      before.map(({ id }) => id),
+    );
+
+    await withSql(isolatedUrl, async (sql) => {
+      await sql`
+        INSERT INTO users (id, username, password_hash)
+        VALUES (${userId}, 'lesson-split-user', 'not-a-real-hash')
+      `;
+      await sql`
+        INSERT INTO language_projects (id, user_id, language, level)
+        VALUES (${projectId}, ${userId}, 'Deutsch', 'A1')
+      `;
+      await sql`
+        INSERT INTO language_lessons (
+          id, language_project_id, lesson_number, lesson_source,
+          source_lesson_number, source_content, status, structured_content,
+          simplified_structured_content, processed_at, simplified_at,
+          learning_status, difficulty
+        ) VALUES (
+          ${parentId}, ${projectId}, 1, 'language_framework', 1,
+          'Historischer Rahmeninhalt', 'ready',
+          ${sql.json({ marker: "original" })},
+          ${sql.json({ marker: "simplified" })}, now(), now(),
+          'completed', 'hard'
+        )
+      `;
+      await sql`
+        INSERT INTO language_lessons (
+          id, language_project_id, lesson_number, lesson_source,
+          source_lesson_number
+        ) VALUES (${freeId}, ${projectId}, 2, 'free', 1)
+      `;
+      await sql`
+        INSERT INTO language_lessons (
+          id, language_project_id, lesson_number, lesson_source,
+          source_lesson_number
+        ) VALUES (${assimilId}, ${projectId}, 3, 'assimil', 1)
+      `;
+    });
+
+    assert.deepEqual(await migratePending(database, through), [migrationId]);
+
+    const state = await withSql(isolatedUrl, async (sql) => {
+      const historical = await sql<
+        Array<{
+          id: string;
+          splitParentLessonId: string | null;
+          splitPart: string | null;
+          sourceContent: string;
+          structuredContent: unknown;
+          simplifiedStructuredContent: unknown;
+          learningStatus: string;
+          difficulty: string | null;
+        }>
+      >`
+        SELECT id,
+               split_parent_lesson_id AS "splitParentLessonId",
+               split_part AS "splitPart",
+               source_content AS "sourceContent",
+               structured_content AS "structuredContent",
+               simplified_structured_content AS "simplifiedStructuredContent",
+               learning_status AS "learningStatus",
+               difficulty
+        FROM language_lessons
+        WHERE id IN (${parentId}, ${freeId}, ${assimilId})
+        ORDER BY lesson_number
+      `;
+
+      await sql`
+        INSERT INTO language_lessons (
+          language_project_id, lesson_number, lesson_source,
+          source_lesson_number
+        ) VALUES (${projectId}, 4, 'language_framework', 2)
+      `;
+
+      await assert.rejects(
+        sql`
+          INSERT INTO language_lessons (
+            language_project_id, lesson_number, lesson_source,
+            source_lesson_number, split_part
+          ) VALUES (${projectId}, 5, 'language_framework', 3, 'A')
+        `,
+        /language_lessons_split_pair_check/i,
+      );
+      await assert.rejects(
+        sql`
+          INSERT INTO language_lessons (
+            language_project_id, lesson_number, lesson_source,
+            source_lesson_number, split_parent_lesson_id
+          ) VALUES (${projectId}, 6, 'language_framework', 1, ${parentId})
+        `,
+        /language_lessons_split_pair_check/i,
+      );
+      await assert.rejects(
+        sql`
+          INSERT INTO language_lessons (
+            language_project_id, lesson_number, lesson_source,
+            source_lesson_number, split_parent_lesson_id, split_part
+          ) VALUES (
+            ${projectId}, 7, 'language_framework', 1, ${parentId}, 'C'
+          )
+        `,
+        /language_lessons_split_pair_check/i,
+      );
+      await assert.rejects(
+        sql`
+          INSERT INTO language_lessons (
+            id, language_project_id, lesson_number, lesson_source,
+            source_lesson_number, split_parent_lesson_id, split_part
+          ) VALUES (
+            '77000000-0000-4000-8000-000000000008', ${projectId}, 8,
+            'language_framework', 1,
+            '77000000-0000-4000-8000-000000000008', 'A'
+          )
+        `,
+        /language_lessons_split_self_check/i,
+      );
+      await assert.rejects(
+        sql`
+          INSERT INTO language_lessons (
+            language_project_id, lesson_number, lesson_source,
+            source_lesson_number, split_parent_lesson_id, split_part
+          ) VALUES (${projectId}, 9, 'free', 1, ${parentId}, 'A')
+        `,
+        /language_lessons_split_framework_only_check/i,
+      );
+      await assert.rejects(
+        sql`
+          INSERT INTO language_lessons (
+            language_project_id, lesson_number, lesson_source,
+            source_lesson_number, split_parent_lesson_id, split_part
+          ) VALUES (${projectId}, 10, 'assimil', 1, ${parentId}, 'A')
+        `,
+        /language_lessons_split_framework_only_check/i,
+      );
+
+      await sql`
+        INSERT INTO language_lessons (
+          id, language_project_id, lesson_number, lesson_source,
+          source_lesson_number, split_parent_lesson_id, split_part
+        ) VALUES (
+          ${partAId}, ${projectId}, 11, 'language_framework', 1,
+          ${parentId}, 'A'
+        )
+      `;
+      await sql`
+        INSERT INTO language_lessons (
+          id, language_project_id, lesson_number, lesson_source,
+          source_lesson_number, split_parent_lesson_id, split_part
+        ) VALUES (
+          ${partBId}, ${projectId}, 12, 'language_framework', 1,
+          ${parentId}, 'B'
+        )
+      `;
+
+      await assert.rejects(
+        sql`
+          INSERT INTO language_lessons (
+            language_project_id, lesson_number, lesson_source,
+            source_lesson_number
+          ) VALUES (${projectId}, 13, 'language_framework', 1)
+        `,
+        /language_lessons_project_source_number_unique/i,
+      );
+      await assert.rejects(
+        sql`
+          INSERT INTO language_lessons (
+            language_project_id, lesson_number, lesson_source,
+            source_lesson_number, split_parent_lesson_id, split_part
+          ) VALUES (
+            ${projectId}, 14, 'language_framework', 1, ${parentId}, 'A'
+          )
+        `,
+        /language_lessons_split_parent_part_unique/i,
+      );
+      await assert.rejects(
+        sql`
+          INSERT INTO language_lessons (
+            language_project_id, lesson_number, lesson_source,
+            source_lesson_number, split_parent_lesson_id, split_part
+          ) VALUES (
+            ${projectId}, 15, 'language_framework', 1, ${parentId}, 'B'
+          )
+        `,
+        /language_lessons_split_parent_part_unique/i,
+      );
+
+      const childrenBeforeDelete = await sql<
+        Array<{
+          id: string;
+          sourceLessonNumber: number;
+          splitParentLessonId: string;
+          splitPart: string;
+        }>
+      >`
+        SELECT id, source_lesson_number AS "sourceLessonNumber",
+               split_parent_lesson_id AS "splitParentLessonId",
+               split_part AS "splitPart"
+        FROM language_lessons
+        WHERE split_parent_lesson_id = ${parentId}
+        ORDER BY split_part
+      `;
+      await sql`DELETE FROM language_lessons WHERE id = ${parentId}`;
+      const [childState] = await sql<Array<{ childCount: number }>>`
+        SELECT count(*)::integer AS "childCount"
+        FROM language_lessons
+        WHERE id IN (${partAId}, ${partBId})
+      `;
+
+      return {
+        historical,
+        childrenBeforeDelete,
+        childCount: childState?.childCount,
+      };
+    });
+
+    assert.deepEqual(
+      state.historical.map(({ id, splitParentLessonId, splitPart }) => ({
+        id,
+        splitParentLessonId,
+        splitPart,
+      })),
+      [parentId, freeId, assimilId].map((id) => ({
+        id,
+        splitParentLessonId: null,
+        splitPart: null,
+      })),
+    );
+    assert.deepEqual(state.historical[0], {
+      id: parentId,
+      splitParentLessonId: null,
+      splitPart: null,
+      sourceContent: "Historischer Rahmeninhalt",
+      structuredContent: { marker: "original" },
+      simplifiedStructuredContent: { marker: "simplified" },
+      learningStatus: "completed",
+      difficulty: "hard",
+    });
+    assert.deepEqual(
+      state.childrenBeforeDelete.map(
+        ({ sourceLessonNumber, splitParentLessonId, splitPart }) => ({
+          sourceLessonNumber,
+          splitParentLessonId,
+          splitPart,
+        }),
+      ),
+      [
+        {
+          sourceLessonNumber: 1,
+          splitParentLessonId: parentId,
+          splitPart: "A",
+        },
+        {
+          sourceLessonNumber: 1,
+          splitParentLessonId: parentId,
+          splitPart: "B",
+        },
+      ],
+    );
+    assert.equal(state.childCount, 0);
+
     const report = await getMigrationStatus(database, through);
     assert.equal(report.historyMode, "current");
     assert.ok(report.migrations.every(({ state }) => state === "applied"));
