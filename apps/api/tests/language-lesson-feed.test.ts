@@ -1164,6 +1164,43 @@ test("free lesson UI prepares exact text and keeps copy, audio and download inde
   );
 });
 
+test("Free L1 analysis is optional, retryable and does not replace its existing UI", async () => {
+  const component = await readFile(
+    new URL(
+      "../../web/src/components/language-lesson-screen.tsx",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  const styles = await readFile(
+    new URL("../../web/src/app/globals.css", import.meta.url),
+    "utf8",
+  );
+  const handler = component.match(
+    /async function analyzeFreeLesson\(\)[\s\S]*?\n  }\n/m,
+  )?.[0];
+
+  assert.ok(handler);
+  assert.match(component, /Frases y patrones útiles/);
+  assert.match(component, /Extrae hasta 5 estructuras útiles del texto/);
+  assert.match(component, /Analizar texto/);
+  assert.match(component, /Analizando…/);
+  assert.match(component, /analysis\.items\.slice\(0, 5\)/);
+  assert.match(component, /analysisError[\s\S]*?role="alert"/);
+  assert.match(handler, /analyzingFreeRef\.current/);
+  assert.match(handler, /\/free\/analyze/);
+  assert.doesNotMatch(handler, /body:|sourceContent|language:|level:|prompt|model/);
+  assert.doesNotMatch(component, /Regenerar análisis/);
+  assert.match(component, /Copiar título/);
+  assert.match(component, /Copiar texto/);
+  assert.match(component, /Descargar MP3/);
+  assert.match(component, /playLanguageAudio\("freeText", 0\)/);
+  assert.match(component, /<LanguageLessonProgressControls/);
+  assert.equal(component.match(/new Audio\(\)/g)?.length, 1);
+  assert.match(styles, /\.free-lesson-analysis-list/);
+  assert.match(styles, /\.free-lesson-analysis-empty/);
+});
+
 function lesson(
   id: string,
   lessonNumber: number,
@@ -1177,6 +1214,7 @@ function lesson(
     lessonSource,
     sourceLessonNumber,
     freeTitle: null,
+    freeAnalysis: null,
     status: "draft",
     learningStatus: "pending",
     difficulty: null,

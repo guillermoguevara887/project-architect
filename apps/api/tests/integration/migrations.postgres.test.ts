@@ -1348,7 +1348,10 @@ test("free lesson title migration preserves legacy lessons and permits ready exa
   const newLessonId = "75000000-0000-4000-8000-000000000004";
 
   try {
-    assert.equal(migrationIndex, migrations.length - 1);
+    assert.equal(
+      migrations[migrationIndex + 1]?.id,
+      "0016_add_language_free_analysis.sql",
+    );
     assert.deepEqual(
       await migratePending(database, before),
       before.map(({ id }) => id),
@@ -1458,6 +1461,107 @@ test("free lesson title migration preserves legacy lessons and permits ready exa
       sourceContent: state.exactText,
       status: "ready",
       structuredContent: null,
+    });
+    const report = await getMigrationStatus(database, through);
+    assert.equal(report.historyMode, "current");
+    assert.ok(report.migrations.every(({ state }) => state === "applied"));
+  } finally {
+    await database.close();
+  }
+});
+
+test("free analysis migration preserves lessons and stores optional analysis JSON", async () => {
+  const isolatedUrl = await createIsolatedDatabase("language_free_analysis");
+  const database = createPostgresMigrationDatabase(isolatedUrl);
+  const migrations = await loadMigrationFiles(migrationDirectory);
+  const migrationId = "0016_add_language_free_analysis.sql";
+  const migrationIndex = migrations.findIndex(({ id }) => id === migrationId);
+  const before = migrations.slice(0, migrationIndex);
+  const through = migrations.slice(0, migrationIndex + 1);
+  const userId = "76000000-0000-4000-8000-000000000001";
+  const projectId = "76000000-0000-4000-8000-000000000002";
+  const lessonId = "76000000-0000-4000-8000-000000000003";
+  const sourceContent = "Ich warte am Bahnhof.";
+  const analysis = {
+    items: [
+      {
+        phrase: sourceContent,
+        pattern: "auf + Akkusativ warten",
+        explanation: "Se usa para expresar que esperas algo.",
+      },
+    ],
+  };
+
+  try {
+    assert.equal(migrationIndex, migrations.length - 1);
+    assert.deepEqual(
+      await migratePending(database, before),
+      before.map(({ id }) => id),
+    );
+
+    await withSql(isolatedUrl, async (sql) => {
+      await sql`
+        INSERT INTO users (id, username, password_hash)
+        VALUES (${userId}, 'free-analysis-user', 'not-a-real-hash')
+      `;
+      await sql`
+        INSERT INTO language_projects (id, user_id, language, level)
+        VALUES (${projectId}, ${userId}, 'Deutsch', 'B1')
+      `;
+      await sql`
+        INSERT INTO language_lessons (
+          id, language_project_id, lesson_number, lesson_source,
+          source_lesson_number, free_title, source_content, status,
+          processed_at, learning_status, difficulty
+        ) VALUES (
+          ${lessonId}, ${projectId}, 1, 'free', 1, 'Am Bahnhof',
+          ${sourceContent}, 'ready', now(), 'completed', 'hard'
+        )
+      `;
+    });
+
+    assert.deepEqual(await migratePending(database, through), [migrationId]);
+
+    const state = await withSql(isolatedUrl, async (sql) => {
+      const [afterMigration] = await sql<
+        Array<{ freeAnalysis: unknown }>
+      >`
+        SELECT free_analysis AS "freeAnalysis"
+        FROM language_lessons
+        WHERE id = ${lessonId}
+      `;
+      await sql`
+        UPDATE language_lessons
+        SET free_analysis = ${sql.json(analysis)}
+        WHERE id = ${lessonId}
+      `;
+      const [persisted] = await sql<
+        Array<{
+          freeAnalysis: unknown;
+          freeTitle: string;
+          sourceContent: string;
+          status: string;
+          learningStatus: string;
+          difficulty: string;
+        }>
+      >`
+        SELECT free_analysis AS "freeAnalysis", free_title AS "freeTitle",
+               source_content AS "sourceContent", status,
+               learning_status AS "learningStatus", difficulty
+        FROM language_lessons
+        WHERE id = ${lessonId}
+      `;
+      return { afterMigration, persisted };
+    });
+
+    assert.equal(state.afterMigration.freeAnalysis, null);
+    assert.deepEqual(state.persisted, {
+      freeAnalysis: analysis,
+      freeTitle: "Am Bahnhof",
+      sourceContent,
+      status: "ready",
+      learningStatus: "completed",
+      difficulty: "hard",
     });
     const report = await getMigrationStatus(database, through);
     assert.equal(report.historyMode, "current");

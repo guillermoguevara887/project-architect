@@ -13,6 +13,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import type {
+  FreeLanguageLessonAnalysis,
   LanguageLessonDifficulty,
   LanguageLessonLearningStatus,
   LanguageLessonSource,
@@ -454,6 +455,7 @@ export const languageLessons = pgTable(
     sourceLessonNumber: integer("source_lesson_number").notNull(),
     sourceContent: text("source_content").default("").notNull(),
     freeTitle: text("free_title"),
+    freeAnalysis: jsonb("free_analysis").$type<FreeLanguageLessonAnalysis>(),
     status: text("status")
       .$type<LanguageLessonStatus>()
       .default("draft")

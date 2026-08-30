@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { AuthStore } from "../auth/repository.js";
 import { readSessionUserId } from "../auth/session.js";
 import {
+  freeLanguageLessonAnalysisSchema,
   createLanguageLessonSchema,
   createLanguageProjectSchema,
   LANGUAGE_LESSON_SOURCE_MAX_LENGTH,
@@ -14,6 +15,10 @@ import {
   updateLanguageLessonSchema,
   updateLanguageLessonProgressSchema,
 } from "./contracts.js";
+import {
+  FreeLanguageLessonAnalysisError,
+  type FreeLanguageLessonAnalyzer,
+} from "./free-analyzer.js";
 import {
   LanguageLessonProcessingError,
   type LanguageLessonProcessor,
@@ -48,6 +53,9 @@ function publicLessonSummary(lesson: LanguageLesson) {
     learningStatus: lesson.learningStatus,
     difficulty: lesson.difficulty,
     freeTitle: lesson.freeTitle,
+    freeAnalysis: lesson.freeAnalysis
+      ? freeLanguageLessonAnalysisSchema.parse(lesson.freeAnalysis)
+      : null,
     processedAt: lesson.processedAt?.toISOString() ?? null,
     createdAt: lesson.createdAt.toISOString(),
     updatedAt: lesson.updatedAt.toISOString(),
@@ -112,6 +120,7 @@ export function registerLanguageRoutes(
   store: LanguageStore,
   authStore: AuthStore,
   processor: LanguageLessonProcessor,
+  freeAnalyzer: FreeLanguageLessonAnalyzer,
 ) {
   server.get("/languages/projects", async (request, reply) => {
     try {
@@ -424,6 +433,107 @@ export function registerLanguageRoutes(
         return reply.code(503).send({
           error: "LANGUAGES_UNAVAILABLE",
           message: "No se pudo preparar la lección libre.",
+        });
+      }
+    },
+  );
+
+  server.post<{ Params: { projectId: string; lessonId: string } }>(
+    "/languages/projects/:projectId/lessons/:lessonId/free/analyze",
+    async (request, reply) => {
+      const { projectId, lessonId } = request.params;
+
+      try {
+        const userId = await authenticatedUserId(request, authStore);
+        if (!userId) {
+          return reply.code(401).send({ error: "UNAUTHORIZED" });
+        }
+
+        if (
+          !languageProjectIdSchema.safeParse(projectId).success ||
+          !languageLessonIdSchema.safeParse(lessonId).success
+        ) {
+          return reply.code(404).send({ error: "LANGUAGE_LESSON_NOT_FOUND" });
+        }
+
+        if (request.body !== undefined) {
+          return reply.code(400).send({
+            error: "INVALID_LANGUAGE_FREE_ANALYSIS_REQUEST",
+            message: "El análisis no acepta contenido enviado por el navegador.",
+          });
+        }
+
+        const project = await store.findProjectByIdForUser(projectId, userId);
+        const lesson = await store.findLessonByIdForUser(
+          lessonId,
+          projectId,
+          userId,
+        );
+
+        if (!project || !lesson) {
+          return reply.code(404).send({ error: "LANGUAGE_LESSON_NOT_FOUND" });
+        }
+
+        if (lesson.lessonSource !== "free") {
+          return reply.code(409).send({
+            error: "LANGUAGE_LESSON_NOT_FREE",
+            message: "Esta lección no es una Lección libre.",
+          });
+        }
+
+        if (
+          lesson.freeTitle === null ||
+          lesson.status !== "ready" ||
+          !lesson.sourceContent.trim()
+        ) {
+          return reply.code(409).send({
+            error: "LANGUAGE_FREE_ANALYSIS_UNAVAILABLE",
+            message: "El análisis no está disponible para esta lección.",
+          });
+        }
+
+        if (lesson.freeAnalysis !== null) {
+          return { lesson: publicLesson(lesson) };
+        }
+
+        const analysis = await freeAnalyzer.analyze({
+          language: project.language,
+          level: project.level,
+          sourceContent: lesson.sourceContent,
+        });
+        const result = await store.saveFreeLessonAnalysis({
+          languageProjectId: projectId,
+          lessonId,
+          userId,
+          analysis,
+        });
+
+        if (result.kind === "not_found") {
+          return reply.code(404).send({ error: "LANGUAGE_LESSON_NOT_FOUND" });
+        }
+        if (result.kind === "not_eligible") {
+          return reply.code(409).send({
+            error: "LANGUAGE_FREE_ANALYSIS_UNAVAILABLE",
+            message: "La lección cambió mientras se analizaba.",
+          });
+        }
+
+        return { lesson: publicLesson(result.lesson) };
+      } catch (error) {
+        server.log.error(
+          {
+            projectId,
+            lessonId,
+            errorType:
+              error instanceof FreeLanguageLessonAnalysisError
+                ? error.code
+                : "unexpected",
+          },
+          "Free language lesson analysis failed.",
+        );
+        return reply.code(502).send({
+          error: "LANGUAGE_FREE_ANALYSIS_FAILED",
+          message: "No se pudo analizar el texto. Intenta nuevamente.",
         });
       }
     },

@@ -30,6 +30,10 @@ import { exerciseTutor, type ExerciseTutor } from "./exercises/tutor.js";
 import { journeyStore, type JourneyStore } from "./journey/repository.js";
 import { registerJourneyRoutes } from "./journey/routes.js";
 import {
+  freeLanguageLessonAnalyzer,
+  type FreeLanguageLessonAnalyzer,
+} from "./languages/free-analyzer.js";
+import {
   languageLessonProcessor,
   type LanguageLessonProcessor,
 } from "./languages/lesson-processor.js";
@@ -62,6 +66,7 @@ type ServerDependencies = {
   exerciseTutor?: ExerciseTutor;
   languageStore?: LanguageStore;
   languageLessonProcessor?: LanguageLessonProcessor;
+  freeLanguageLessonAnalyzer?: FreeLanguageLessonAnalyzer;
   languageAudioStore?: LanguageAudioStore;
   languageAudioProvider?: LanguageAudioProvider;
   elevenLabsLanguageAudioProvider?: LanguageAudioProvider;
@@ -177,6 +182,7 @@ export function configureServer(
     dependencies.languageStore ?? languageStore,
     configuredAuthStore,
     dependencies.languageLessonProcessor ?? languageLessonProcessor,
+    dependencies.freeLanguageLessonAnalyzer ?? freeLanguageLessonAnalyzer,
   );
   registerLanguageAudioRoutes(server, {
     authStore: configuredAuthStore,

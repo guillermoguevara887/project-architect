@@ -1180,6 +1180,65 @@ button:disabled {
   border: 0;
 }
 
+.free-lesson-analysis-empty {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.9rem;
+  margin-top: 0.9rem;
+}
+
+.free-lesson-analysis-empty p {
+  margin: 0;
+  color: #64748b;
+}
+
+.free-lesson-analysis-empty button {
+  flex: 0 0 auto;
+  min-height: 2.75rem;
+  padding: 0.65rem 1rem;
+}
+
+.free-lesson-analysis-list {
+  display: grid;
+  gap: 0;
+  margin: 0.9rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.free-lesson-analysis-list li {
+  min-width: 0;
+  padding: 0.9rem 0;
+  border-top: 1px solid rgb(14 165 164 / 18%);
+}
+
+.free-lesson-analysis-list li:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.free-lesson-analysis-list li:last-child {
+  padding-bottom: 0;
+}
+
+.free-lesson-analysis-list strong {
+  color: #0f2147;
+  overflow-wrap: anywhere;
+}
+
+.free-lesson-analysis-list p {
+  margin: 0.4rem 0 0;
+  color: #64748b;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.free-lesson-analysis-list p span {
+  color: #0f2147;
+  font-weight: 700;
+}
+
 .language-lessons {
   margin-top: 3rem;
 }
@@ -2922,6 +2981,15 @@ button:disabled {
 
   .free-lesson-audio-controls {
     display: grid;
+  }
+
+  .free-lesson-analysis-empty {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .free-lesson-analysis-empty button {
+    width: 100%;
   }
 
   .lesson-dialogue-play-button {

@@ -2,6 +2,7 @@ import { and, asc, desc, eq, inArray, max } from "drizzle-orm";
 import { getDb } from "../db/client.js";
 import { languageLessons, languageProjects } from "../db/schema.js";
 import type {
+  FreeLanguageLessonAnalysis,
   LanguageLessonDifficulty,
   LanguageLessonLearningStatus,
   LanguageLessonSource,
@@ -65,6 +66,10 @@ export type PrepareFreeLanguageLessonInput = OwnedLanguageLessonInput & {
   sourceContent: string;
 };
 
+export type SaveFreeLanguageLessonAnalysisInput = OwnedLanguageLessonInput & {
+  analysis: FreeLanguageLessonAnalysis;
+};
+
 export type ClaimLanguageLessonSimplificationInput =
   OwnedLanguageLessonInput & {
     regenerate: boolean;
@@ -91,6 +96,12 @@ export type PrepareFreeLanguageLessonResult =
   | { kind: "not_found" }
   | { kind: "wrong_source" }
   | { kind: "not_editable" };
+
+export type SaveFreeLanguageLessonAnalysisResult =
+  | { kind: "saved"; lesson: LanguageLesson }
+  | { kind: "existing"; lesson: LanguageLesson }
+  | { kind: "not_found" }
+  | { kind: "not_eligible" };
 
 export type ClaimLanguageLessonResult =
   | {
@@ -141,6 +152,9 @@ export interface LanguageStore {
   prepareFreeLesson(
     input: PrepareFreeLanguageLessonInput,
   ): Promise<PrepareFreeLanguageLessonResult>;
+  saveFreeLessonAnalysis(
+    input: SaveFreeLanguageLessonAnalysisInput,
+  ): Promise<SaveFreeLanguageLessonAnalysisResult>;
   claimLessonForProcessing(
     input: ClaimLanguageLessonInput,
   ): Promise<ClaimLanguageLessonResult>;
@@ -594,6 +608,65 @@ export const languageStore: LanguageStore = {
       return lesson
         ? { kind: "prepared" as const, lesson }
         : { kind: "not_editable" as const };
+    });
+  },
+
+  async saveFreeLessonAnalysis(input) {
+    return getDb().transaction(async (transaction) => {
+      const [project] = await transaction
+        .select({ id: languageProjects.id })
+        .from(languageProjects)
+        .where(
+          and(
+            eq(languageProjects.id, input.languageProjectId),
+            eq(languageProjects.userId, input.userId),
+          ),
+        )
+        .limit(1);
+
+      if (!project) return { kind: "not_found" as const };
+
+      const [existing] = await transaction
+        .select()
+        .from(languageLessons)
+        .where(
+          and(
+            eq(languageLessons.id, input.lessonId),
+            eq(languageLessons.languageProjectId, input.languageProjectId),
+          ),
+        )
+        .limit(1)
+        .for("update");
+
+      if (!existing) return { kind: "not_found" as const };
+
+      if (
+        existing.lessonSource !== "free" ||
+        existing.freeTitle === null ||
+        existing.status !== "ready" ||
+        !existing.sourceContent.trim()
+      ) {
+        return { kind: "not_eligible" as const };
+      }
+
+      if (existing.freeAnalysis !== null) {
+        return { kind: "existing" as const, lesson: existing };
+      }
+
+      const [lesson] = await transaction
+        .update(languageLessons)
+        .set({ freeAnalysis: input.analysis, updatedAt: new Date() })
+        .where(
+          and(
+            eq(languageLessons.id, input.lessonId),
+            eq(languageLessons.languageProjectId, input.languageProjectId),
+          ),
+        )
+        .returning();
+
+      return lesson
+        ? { kind: "saved" as const, lesson }
+        : { kind: "not_found" as const };
     });
   },
 

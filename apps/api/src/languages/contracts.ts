@@ -45,6 +45,24 @@ export type LanguageLessonSource = z.infer<typeof languageLessonSourceSchema>;
 
 const requiredText = z.string().trim().min(1);
 
+const freeLanguageLessonAnalysisItemSchema = z
+  .object({
+    phrase: requiredText.max(500),
+    pattern: requiredText.max(200),
+    explanation: requiredText.max(500),
+  })
+  .strict();
+
+export const freeLanguageLessonAnalysisSchema = z
+  .object({
+    items: z.array(freeLanguageLessonAnalysisItemSchema).min(1).max(5),
+  })
+  .strict();
+
+export type FreeLanguageLessonAnalysis = z.infer<
+  typeof freeLanguageLessonAnalysisSchema
+>;
+
 const languageLessonKanjiSchema = z
   .array(
     z

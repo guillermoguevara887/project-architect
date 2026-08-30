@@ -180,6 +180,13 @@ export type LanguageLesson = {
   learningStatus: LanguageLessonLearningStatus;
   difficulty: LanguageLessonDifficulty | null;
   freeTitle: string | null;
+  freeAnalysis: {
+    items: Array<{
+      phrase: string;
+      pattern: string;
+      explanation: string;
+    }>;
+  } | null;
   sourceContent?: string;
   structuredContent?: StructuredLanguageLesson | null;
   simplifiedStructuredContent?: StructuredLanguageLesson | null;

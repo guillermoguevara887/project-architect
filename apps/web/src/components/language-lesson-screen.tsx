@@ -404,12 +404,16 @@ function FreeReadyLesson({
   audioPlaybackRate,
   voice,
   download,
+  analysis,
+  analyzing,
+  analysisError,
   onCopyTitle,
   onCopyText,
   onPlayAudio,
   onDownload,
   onPlaybackRateChange,
   onVoiceChange,
+  onAnalyze,
 }: {
   title: string;
   sourceContent: string;
@@ -419,12 +423,16 @@ function FreeReadyLesson({
   audioPlaybackRate: LanguageAudioPlaybackRate;
   voice: LanguageStoryVoice;
   download: { loading: boolean; error: string | null };
+  analysis: LanguageLesson["freeAnalysis"];
+  analyzing: boolean;
+  analysisError: string | null;
   onCopyTitle: () => void;
   onCopyText: () => void;
   onPlayAudio: () => void;
   onDownload: () => void;
   onPlaybackRateChange: (playbackRate: LanguageAudioPlaybackRate) => void;
   onVoiceChange: (voice: LanguageStoryVoice) => void;
+  onAnalyze: () => void;
 }) {
   const audioKey = languageLessonAudioKey("original", "freeText", 0, voice);
   const playback = audioPlayback?.key === audioKey ? audioPlayback : null;
@@ -501,6 +509,37 @@ function FreeReadyLesson({
         {download.error ? (
           <p className="lesson-story-download-error" role="alert">
             {download.error}
+          </p>
+        ) : null}
+      </section>
+
+      <section aria-labelledby="free-lesson-analysis-heading">
+        <header className="free-lesson-section-header">
+          <h2 id="free-lesson-analysis-heading">Frases y patrones útiles</h2>
+        </header>
+        {analysis ? (
+          <ol className="free-lesson-analysis-list">
+            {analysis.items.slice(0, 5).map((item) => (
+              <li key={`${item.phrase}-${item.pattern}`}>
+                <strong>{item.phrase}</strong>
+                <p>
+                  <span>Patrón:</span> {item.pattern}
+                </p>
+                <p>{item.explanation}</p>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <div className="free-lesson-analysis-empty">
+            <p>Extrae hasta 5 estructuras útiles del texto.</p>
+            <button disabled={analyzing} type="button" onClick={onAnalyze}>
+              {analyzing ? "Analizando…" : "Analizar texto"}
+            </button>
+          </div>
+        )}
+        {analysisError ? (
+          <p className="form-error" role="alert">
+            {analysisError}
           </p>
         ) : null}
       </section>
@@ -1009,6 +1048,11 @@ export function LanguageLessonScreen({
   const [processing, setProcessing] = useState(false);
   const [preparingFree, setPreparingFree] = useState(false);
   const preparingFreeRef = useRef(false);
+  const [analyzingFree, setAnalyzingFree] = useState(false);
+  const analyzingFreeRef = useRef(false);
+  const [freeAnalysisError, setFreeAnalysisError] = useState<string | null>(
+    null,
+  );
   const [simplificationAction, setSimplificationAction] = useState<
     "simplify" | "regenerate" | null
   >(null);
@@ -1281,6 +1325,55 @@ export function LanguageLessonScreen({
     } finally {
       preparingFreeRef.current = false;
       setPreparingFree(false);
+    }
+  }
+
+  async function analyzeFreeLesson() {
+    if (
+      analyzingFreeRef.current ||
+      !lesson ||
+      !isPreparedFreeLanguageLesson(lesson) ||
+      lesson.status !== "ready" ||
+      lesson.freeAnalysis !== null
+    ) {
+      return;
+    }
+
+    analyzingFreeRef.current = true;
+    setAnalyzingFree(true);
+    setFreeAnalysisError(null);
+
+    try {
+      const response = await fetch(
+        `/api/languages/projects/${encodeURIComponent(projectId)}/lessons/${encodeURIComponent(lessonId)}/free/analyze`,
+        { method: "POST", credentials: "include" },
+      );
+
+      if (response.status === 401) {
+        router.replace("/");
+        return;
+      }
+
+      const result = (await response.json()) as {
+        lesson?: LanguageLesson;
+        message?: string;
+      };
+
+      if (!response.ok || !result.lesson) {
+        setFreeAnalysisError(
+          result.message ?? "No se pudo analizar el texto. Intenta nuevamente.",
+        );
+        return;
+      }
+
+      setLesson(result.lesson);
+    } catch {
+      setFreeAnalysisError(
+        "No se pudo analizar el texto. Intenta nuevamente.",
+      );
+    } finally {
+      analyzingFreeRef.current = false;
+      setAnalyzingFree(false);
     }
   }
 
@@ -2098,6 +2191,9 @@ export function LanguageLessonScreen({
 
         {lesson.status === "ready" && preparedFreeLesson ? (
           <FreeReadyLesson
+            analysis={lesson.freeAnalysis}
+            analysisError={freeAnalysisError}
+            analyzing={analyzingFree}
             audioPlayback={audioPlayback}
             audioPlaybackRate={audioPlaybackRate}
             copiedField={freeCopiedField}
@@ -2112,6 +2208,7 @@ export function LanguageLessonScreen({
             onPlayAudio={() => void playLanguageAudio("freeText", 0)}
             onPlaybackRateChange={updateLanguageAudioPlaybackRate}
             onVoiceChange={updateLanguageStoryVoice}
+            onAnalyze={() => void analyzeFreeLesson()}
           />
         ) : null}
 
@@ -2125,7 +2222,13 @@ export function LanguageLessonScreen({
           <button
             className="lesson-delete-button"
             type="button"
-            disabled={deleting || processing || preparingFree || simplifying}
+            disabled={
+              deleting ||
+              processing ||
+              preparingFree ||
+              analyzingFree ||
+              simplifying
+            }
             onClick={() => {
               stopLanguageAudio();
               void deleteLesson();
