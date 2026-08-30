@@ -5,10 +5,12 @@ import type {
   FreeLanguageLessonAnalysis,
   LanguageLessonDifficulty,
   LanguageLessonLearningStatus,
+  LanguageLessonSplitPart,
   LanguageLessonSource,
   LanguageLessonStatus,
   StructuredLanguageLesson,
 } from "./contracts.js";
+import { languageLessonIsSplitEligible } from "./lesson-splitter.js";
 
 export const LANGUAGE_LESSON_PROCESSING_TIMEOUT_MS = 15 * 60 * 1_000;
 export const LANGUAGE_LESSON_SIMPLIFICATION_TIMEOUT_MS = 15 * 60 * 1_000;
@@ -86,6 +88,45 @@ export type FailLanguageLessonSimplificationInput =
     simplificationStartedAt: Date;
   };
 
+export type LanguageLessonSplitParts = Record<
+  LanguageLessonSplitPart,
+  LanguageLesson
+>;
+
+export type InspectLanguageLessonSplitInput = OwnedLanguageLessonInput;
+
+export type CreateLanguageLessonSplitChildrenInput =
+  OwnedLanguageLessonInput & {
+    partA: StructuredLanguageLesson;
+    partB: StructuredLanguageLesson;
+  };
+
+export type InspectLanguageLessonSplitResult =
+  | {
+      kind: "eligible";
+      project: LanguageProject;
+      parent: LanguageLesson;
+    }
+  | {
+      kind: "existing";
+      project: LanguageProject;
+      parent: LanguageLesson;
+      parts: LanguageLessonSplitParts;
+    }
+  | { kind: "not_found" }
+  | { kind: "not_eligible" }
+  | { kind: "inconsistent" };
+
+export type CreateLanguageLessonSplitChildrenResult =
+  | {
+      kind: "created" | "existing";
+      parent: LanguageLesson;
+      parts: LanguageLessonSplitParts;
+    }
+  | { kind: "not_found" }
+  | { kind: "not_eligible" }
+  | { kind: "inconsistent" };
+
 export type UpdateLanguageLessonResult =
   | { kind: "updated"; lesson: LanguageLesson }
   | { kind: "not_found" }
@@ -143,6 +184,12 @@ export interface LanguageStore {
     projectId: string,
     userId: string,
   ): Promise<LanguageLesson | null>;
+  inspectLessonSplit(
+    input: InspectLanguageLessonSplitInput,
+  ): Promise<InspectLanguageLessonSplitResult>;
+  createLessonSplitChildren(
+    input: CreateLanguageLessonSplitChildrenInput,
+  ): Promise<CreateLanguageLessonSplitChildrenResult>;
   updateLessonSourceContent(
     input: UpdateLanguageLessonInput,
   ): Promise<UpdateLanguageLessonResult>;
@@ -204,6 +251,16 @@ async function ownsProject(projectId: string, userId: string) {
     .limit(1);
 
   return Boolean(project);
+}
+
+function existingLanguageLessonSplit(
+  children: LanguageLesson[],
+): LanguageLessonSplitParts | null {
+  if (children.length !== 2) return null;
+
+  const partA = children.find(({ splitPart }) => splitPart === "A");
+  const partB = children.find(({ splitPart }) => splitPart === "B");
+  return partA && partB ? { A: partA, B: partB } : null;
 }
 
 export const languageStore: LanguageStore = {
@@ -326,6 +383,159 @@ export const languageStore: LanguageStore = {
       .limit(1);
 
     return lesson ?? null;
+  },
+
+  async inspectLessonSplit(input) {
+    const [project] = await getDb()
+      .select()
+      .from(languageProjects)
+      .where(
+        and(
+          eq(languageProjects.id, input.languageProjectId),
+          eq(languageProjects.userId, input.userId),
+        ),
+      )
+      .limit(1);
+
+    if (!project) return { kind: "not_found" as const };
+
+    const [parent] = await getDb()
+      .select()
+      .from(languageLessons)
+      .where(
+        and(
+          eq(languageLessons.id, input.lessonId),
+          eq(languageLessons.languageProjectId, project.id),
+        ),
+      )
+      .limit(1);
+
+    if (!parent) return { kind: "not_found" as const };
+    if (!languageLessonIsSplitEligible(project.level, parent)) {
+      return { kind: "not_eligible" as const };
+    }
+
+    const children = await getDb()
+      .select()
+      .from(languageLessons)
+      .where(eq(languageLessons.splitParentLessonId, parent.id))
+      .orderBy(asc(languageLessons.lessonNumber));
+
+    if (children.length === 0) {
+      return { kind: "eligible" as const, project, parent };
+    }
+
+    const parts = existingLanguageLessonSplit(children);
+    return parts
+      ? { kind: "existing" as const, project, parent, parts }
+      : { kind: "inconsistent" as const };
+  },
+
+  async createLessonSplitChildren(input) {
+    return getDb().transaction(async (transaction) => {
+      const [project] = await transaction
+        .select()
+        .from(languageProjects)
+        .where(
+          and(
+            eq(languageProjects.id, input.languageProjectId),
+            eq(languageProjects.userId, input.userId),
+          ),
+        )
+        .limit(1)
+        .for("update");
+
+      if (!project) return { kind: "not_found" as const };
+
+      const [parent] = await transaction
+        .select()
+        .from(languageLessons)
+        .where(
+          and(
+            eq(languageLessons.id, input.lessonId),
+            eq(languageLessons.languageProjectId, project.id),
+          ),
+        )
+        .limit(1)
+        .for("update");
+
+      if (!parent) return { kind: "not_found" as const };
+      if (!languageLessonIsSplitEligible(project.level, parent)) {
+        return { kind: "not_eligible" as const };
+      }
+
+      const children = await transaction
+        .select()
+        .from(languageLessons)
+        .where(eq(languageLessons.splitParentLessonId, parent.id))
+        .orderBy(asc(languageLessons.lessonNumber))
+        .for("update");
+
+      if (children.length > 0) {
+        const parts = existingLanguageLessonSplit(children);
+        return parts
+          ? { kind: "existing" as const, parent, parts }
+          : { kind: "inconsistent" as const };
+      }
+
+      const [latestLesson] = await transaction
+        .select({ lessonNumber: max(languageLessons.lessonNumber) })
+        .from(languageLessons)
+        .where(eq(languageLessons.languageProjectId, project.id));
+      const partALessonNumber = (latestLesson?.lessonNumber ?? 0) + 1;
+      const processedAt = new Date();
+      const commonValues = {
+        languageProjectId: project.id,
+        lessonSource: "language_framework" as const,
+        sourceLessonNumber: parent.sourceLessonNumber,
+        splitParentLessonId: parent.id,
+        sourceContent: "",
+        freeTitle: null,
+        freeAnalysis: null,
+        status: "ready" as const,
+        learningStatus: "pending" as const,
+        difficulty: null,
+        simplifiedStructuredContent: null,
+        simplificationStartedAt: null,
+        simplifiedAt: null,
+        processedAt,
+        updatedAt: processedAt,
+      };
+
+      const [partA] = await transaction
+        .insert(languageLessons)
+        .values({
+          ...commonValues,
+          lessonNumber: partALessonNumber,
+          splitPart: "A",
+          structuredContent: input.partA,
+        })
+        .returning();
+
+      if (!partA) {
+        throw new Error("Language lesson split part A could not be created.");
+      }
+
+      const [partB] = await transaction
+        .insert(languageLessons)
+        .values({
+          ...commonValues,
+          lessonNumber: partALessonNumber + 1,
+          splitPart: "B",
+          structuredContent: input.partB,
+        })
+        .returning();
+
+      if (!partB) {
+        throw new Error("Language lesson split part B could not be created.");
+      }
+
+      return {
+        kind: "created" as const,
+        parent,
+        parts: { A: partA, B: partB },
+      };
+    });
   },
 
   async updateLessonSourceContent(input) {

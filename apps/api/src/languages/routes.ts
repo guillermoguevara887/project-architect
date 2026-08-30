@@ -23,8 +23,10 @@ import {
   LanguageLessonProcessingError,
   type LanguageLessonProcessor,
 } from "./lesson-processor.js";
+import type { LanguageLessonSplitter } from "./lesson-splitter.js";
 import type {
   LanguageLesson,
+  LanguageLessonSplitParts,
   LanguageProject,
   LanguageStore,
 } from "./repository.js";
@@ -103,6 +105,19 @@ function publicLesson(lesson: LanguageLesson) {
   };
 }
 
+function publicLessonSplit(
+  parent: LanguageLesson,
+  parts: LanguageLessonSplitParts,
+) {
+  return {
+    parent: publicLesson(parent),
+    parts: {
+      A: publicLesson(parts.A),
+      B: publicLesson(parts.B),
+    },
+  };
+}
+
 async function authenticatedUserId(
   request: FastifyRequest,
   authStore: AuthStore,
@@ -122,6 +137,7 @@ export function registerLanguageRoutes(
   store: LanguageStore,
   authStore: AuthStore,
   processor: LanguageLessonProcessor,
+  splitter: LanguageLessonSplitter,
   freeAnalyzer: FreeLanguageLessonAnalyzer,
 ) {
   server.get("/languages/projects", async (request, reply) => {
@@ -672,6 +688,123 @@ export function registerLanguageRoutes(
         return reply.code(502).send({
           error: "LANGUAGE_LESSON_PROCESSING_FAILED",
           message: "No se pudo procesar la lección. Intenta nuevamente.",
+        });
+      }
+    },
+  );
+
+  server.post<{ Params: { projectId: string; lessonId: string } }>(
+    "/languages/projects/:projectId/lessons/:lessonId/split",
+    async (request, reply) => {
+      const { projectId, lessonId } = request.params;
+
+      try {
+        const userId = await authenticatedUserId(request, authStore);
+
+        if (!userId) {
+          return reply.code(401).send({ error: "UNAUTHORIZED" });
+        }
+
+        if (
+          !languageProjectIdSchema.safeParse(projectId).success ||
+          !languageLessonIdSchema.safeParse(lessonId).success
+        ) {
+          return reply.code(404).send({ error: "LANGUAGE_LESSON_NOT_FOUND" });
+        }
+
+        if (request.body !== undefined) {
+          return reply.code(400).send({
+            error: "INVALID_LANGUAGE_LESSON_SPLIT_REQUEST",
+            message: "La división no acepta contenido enviado por el navegador.",
+          });
+        }
+
+        const inspection = await store.inspectLessonSplit({
+          languageProjectId: projectId,
+          lessonId,
+          userId,
+        });
+
+        if (inspection.kind === "not_found") {
+          return reply.code(404).send({ error: "LANGUAGE_LESSON_NOT_FOUND" });
+        }
+
+        if (inspection.kind === "not_eligible") {
+          return reply.code(409).send({
+            error: "LANGUAGE_LESSON_SPLIT_UNAVAILABLE",
+            message: "Esta lección no se puede dividir.",
+          });
+        }
+
+        if (inspection.kind === "inconsistent") {
+          return reply.code(409).send({
+            error: "LANGUAGE_LESSON_SPLIT_INCONSISTENT",
+            message: "Las partes de esta lección están incompletas.",
+          });
+        }
+
+        if (inspection.kind === "existing") {
+          return publicLessonSplit(inspection.parent, inspection.parts);
+        }
+
+        const structuredContent = structuredLanguageLessonSchema.safeParse(
+          inspection.parent.structuredContent,
+        );
+
+        if (!structuredContent.success) {
+          return reply.code(409).send({
+            error: "LANGUAGE_LESSON_SPLIT_UNAVAILABLE",
+            message: "Esta lección no se puede dividir.",
+          });
+        }
+
+        const split = await splitter.split({
+          language: inspection.project.language,
+          level: inspection.project.level,
+          structuredContent: structuredContent.data,
+        });
+        const result = await store.createLessonSplitChildren({
+          languageProjectId: projectId,
+          lessonId,
+          userId,
+          partA: split.partA,
+          partB: split.partB,
+        });
+
+        if (result.kind === "not_found") {
+          return reply.code(404).send({ error: "LANGUAGE_LESSON_NOT_FOUND" });
+        }
+
+        if (result.kind === "not_eligible") {
+          return reply.code(409).send({
+            error: "LANGUAGE_LESSON_STATE_CHANGED",
+            message: "La lección cambió mientras se dividía.",
+          });
+        }
+
+        if (result.kind === "inconsistent") {
+          return reply.code(409).send({
+            error: "LANGUAGE_LESSON_SPLIT_INCONSISTENT",
+            message: "Las partes de esta lección están incompletas.",
+          });
+        }
+
+        return publicLessonSplit(result.parent, result.parts);
+      } catch (error) {
+        server.log.error(
+          {
+            projectId,
+            lessonId,
+            errorType:
+              error instanceof LanguageLessonProcessingError
+                ? error.code
+                : "unexpected",
+          },
+          "Language lesson split failed.",
+        );
+        return reply.code(502).send({
+          error: "LANGUAGE_LESSON_SPLIT_FAILED",
+          message: "No se pudo dividir la lección. Intenta nuevamente.",
         });
       }
     },

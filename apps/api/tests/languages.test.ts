@@ -39,16 +39,25 @@ import {
   type ProcessLanguageLessonInput,
   type SimplifyLanguageLessonInput,
 } from "../src/languages/lesson-processor.js";
+import {
+  languageLessonIsSplitEligible,
+  type LanguageLessonSplitter,
+  type SplitLanguageLessonInput,
+  type SplitLanguageLessonResult,
+} from "../src/languages/lesson-splitter.js";
 import type {
   ClaimLanguageLessonInput,
   ClaimLanguageLessonSimplificationInput,
   CompleteLanguageLessonProcessingInput,
   CompleteLanguageLessonSimplificationInput,
+  CreateLanguageLessonSplitChildrenInput,
   CreateLanguageProjectInput,
   CreateNextLanguageLessonInput,
   FailLanguageLessonProcessingInput,
   FailLanguageLessonSimplificationInput,
+  InspectLanguageLessonSplitInput,
   LanguageLesson,
+  LanguageLessonSplitParts,
   LanguageProject,
   LanguageStore,
   PrepareFreeLanguageLessonInput,
@@ -169,6 +178,11 @@ const regeneratedLesson: StructuredLanguageLesson = {
   },
 };
 
+const splitResult: SplitLanguageLessonResult = {
+  partA: structuredLesson,
+  partB: regeneratedLesson,
+};
+
 class MemoryAuthStore implements AuthStore {
   private readonly users = [firstUser, secondUser];
 
@@ -184,6 +198,7 @@ class MemoryAuthStore implements AuthStore {
 class MemoryLanguageStore implements LanguageStore {
   readonly projects: LanguageProject[] = [];
   readonly lessons: LanguageLesson[] = [];
+  failSplitAfterPartA = false;
   private timestamp = Date.parse("2026-08-16T12:00:00.000Z");
 
   private now() {
@@ -195,6 +210,17 @@ class MemoryLanguageStore implements LanguageStore {
     return this.projects.some(
       (project) => project.id === projectId && project.userId === userId,
     );
+  }
+
+  private splitParts(parentId: string): LanguageLessonSplitParts | null {
+    const children = this.lessons.filter(
+      ({ splitParentLessonId }) => splitParentLessonId === parentId,
+    );
+    if (children.length !== 2) return null;
+
+    const partA = children.find(({ splitPart }) => splitPart === "A");
+    const partB = children.find(({ splitPart }) => splitPart === "B");
+    return partA && partB ? { A: partA, B: partB } : null;
   }
 
   async listProjects(userId: string) {
@@ -306,6 +332,115 @@ class MemoryLanguageStore implements LanguageStore {
           lesson.id === lessonId && lesson.languageProjectId === projectId,
       ) ?? null
     );
+  }
+
+  async inspectLessonSplit(input: InspectLanguageLessonSplitInput) {
+    const project = this.projects.find(
+      ({ id, userId }) =>
+        id === input.languageProjectId && userId === input.userId,
+    );
+    const parent = this.lessons.find(
+      ({ id, languageProjectId }) =>
+        id === input.lessonId &&
+        languageProjectId === input.languageProjectId,
+    );
+
+    if (!project || !parent) return { kind: "not_found" as const };
+    if (!languageLessonIsSplitEligible(project.level, parent)) {
+      return { kind: "not_eligible" as const };
+    }
+
+    const children = this.lessons.filter(
+      ({ splitParentLessonId }) => splitParentLessonId === parent.id,
+    );
+    if (children.length === 0) {
+      return { kind: "eligible" as const, project, parent };
+    }
+
+    const parts = this.splitParts(parent.id);
+    return parts
+      ? { kind: "existing" as const, project, parent, parts }
+      : { kind: "inconsistent" as const };
+  }
+
+  async createLessonSplitChildren(
+    input: CreateLanguageLessonSplitChildrenInput,
+  ) {
+    const inspection = await this.inspectLessonSplit(input);
+    if (
+      inspection.kind === "not_found" ||
+      inspection.kind === "not_eligible" ||
+      inspection.kind === "inconsistent"
+    ) {
+      return inspection;
+    }
+    if (inspection.kind === "existing") {
+      return {
+        kind: "existing" as const,
+        parent: inspection.parent,
+        parts: inspection.parts,
+      };
+    }
+
+    const parent = inspection.parent;
+    const lessonNumber =
+      Math.max(
+        0,
+        ...this.lessons
+          .filter(
+            ({ languageProjectId }) =>
+              languageProjectId === input.languageProjectId,
+          )
+          .map((lesson) => lesson.lessonNumber),
+      ) + 1;
+    const originalLength = this.lessons.length;
+    const createPart = (
+      splitPart: "A" | "B",
+      partLessonNumber: number,
+      structuredContent: StructuredLanguageLesson,
+    ): LanguageLesson => {
+      const now = this.now();
+      return {
+        id: randomUUID(),
+        languageProjectId: parent.languageProjectId,
+        lessonNumber: partLessonNumber,
+        lessonSource: "language_framework",
+        sourceLessonNumber: parent.sourceLessonNumber,
+        splitParentLessonId: parent.id,
+        splitPart,
+        sourceContent: "",
+        freeTitle: null,
+        freeAnalysis: null,
+        status: "ready",
+        learningStatus: "pending",
+        difficulty: null,
+        structuredContent,
+        simplifiedStructuredContent: null,
+        simplificationStartedAt: null,
+        simplifiedAt: null,
+        processedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      };
+    };
+
+    try {
+      const partA = createPart("A", lessonNumber, input.partA);
+      this.lessons.push(partA);
+      if (this.failSplitAfterPartA) {
+        throw new Error("Simulated part B insertion failure.");
+      }
+      const partB = createPart("B", lessonNumber + 1, input.partB);
+      this.lessons.push(partB);
+      return {
+        kind: "created" as const,
+        parent,
+        parts: { A: partA, B: partB },
+      };
+    } catch (error) {
+      this.lessons.splice(originalLength);
+      throw error;
+    }
   }
 
   async updateLessonSourceContent(input: UpdateLanguageLessonInput) {
@@ -641,6 +776,18 @@ class FakeLanguageLessonProcessor implements LanguageLessonProcessor {
   }
 }
 
+class FakeLanguageLessonSplitter implements LanguageLessonSplitter {
+  readonly calls: SplitLanguageLessonInput[] = [];
+  result = splitResult;
+  error: Error | null = null;
+
+  async split(input: SplitLanguageLessonInput) {
+    this.calls.push(input);
+    if (this.error) throw this.error;
+    return this.result;
+  }
+}
+
 class MemoryLanguageAudioStore implements LanguageAudioStore {
   readonly assets: LanguageAudioAsset[] = [];
   private timestamp = Date.parse("2026-08-16T16:00:00.000Z");
@@ -801,10 +948,12 @@ function testServer(
   audioStorage = new MemoryLanguageAudioStorage(),
   elevenLabsProvider = new FakeLanguageAudioProvider(),
   freeAnalyzer = new FakeFreeLanguageLessonAnalyzer(),
+  splitter = new FakeLanguageLessonSplitter(),
 ) {
   return {
     store,
     processor,
+    splitter,
     audioStore,
     audioProvider,
     audioStorage,
@@ -816,6 +965,7 @@ function testServer(
         authStore: new MemoryAuthStore(),
         languageStore: store,
         languageLessonProcessor: processor,
+        languageLessonSplitter: splitter,
         freeLanguageLessonAnalyzer: freeAnalyzer,
         languageAudioStore: audioStore,
         languageAudioProvider: audioProvider,
@@ -883,6 +1033,21 @@ async function processLesson(
     url: `/languages/projects/${projectId}/lessons/${lessonId}/process`,
     headers: { cookie },
     payload: { sourceContent },
+  });
+}
+
+async function splitLesson(
+  server: ReturnType<typeof createServer>,
+  projectId: string,
+  lessonId: string,
+  cookie?: string,
+  payload?: unknown,
+) {
+  return server.inject({
+    method: "POST",
+    url: `/languages/projects/${projectId}/lessons/${lessonId}/split`,
+    ...(cookie ? { headers: { cookie } } : {}),
+    ...(payload !== undefined ? { payload } : {}),
   });
 }
 
@@ -1857,6 +2022,364 @@ test("empty input is rejected before processing", async () => {
 
     assert.equal(response.statusCode, 400);
     assert.equal(processor.calls.length, 0);
+  } finally {
+    await server.close();
+  }
+});
+
+test("lesson split requires authentication, ownership, an existing parent and no browser body", async () => {
+  const { splitter, server } = testServer();
+  const ownerCookie = sessionCookie(firstUser.id);
+  const otherCookie = sessionCookie(secondUser.id);
+
+  try {
+    const project = await createProject(server, ownerCookie, "Alemán", "A1");
+    const lesson = await createLesson(
+      server,
+      project.id,
+      ownerCookie,
+      "language_framework",
+    );
+    await processLesson(server, project.id, lesson.id, ownerCookie);
+
+    assert.equal(
+      (await splitLesson(server, project.id, lesson.id)).statusCode,
+      401,
+    );
+    assert.equal(
+      (await splitLesson(server, project.id, lesson.id, otherCookie)).statusCode,
+      404,
+    );
+    assert.equal(
+      (
+        await splitLesson(
+          server,
+          project.id,
+          "11000000-0000-4000-8000-000000000001",
+          ownerCookie,
+        )
+      ).statusCode,
+      404,
+    );
+
+    const injected = await splitLesson(
+      server,
+      project.id,
+      lesson.id,
+      ownerCookie,
+      {
+        language: "Japanese",
+        level: "A1",
+        structuredContent: regeneratedLesson,
+        splitPart: "B",
+      },
+    );
+    assert.equal(injected.statusCode, 400);
+    assert.equal(injected.json().error, "INVALID_LANGUAGE_LESSON_SPLIT_REQUEST");
+    assert.equal(splitter.calls.length, 0);
+  } finally {
+    await server.close();
+  }
+});
+
+test("lesson split accepts only ready A1 framework roots", async () => {
+  const { store, splitter, server } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+
+  try {
+    const a1 = await createProject(server, cookie, "Alemán", "A1 Beginner");
+    const free = await createLesson(server, a1.id, cookie, "free");
+    const assimil = await createLesson(server, a1.id, cookie, "assimil");
+    const draft = await createLesson(server, a1.id, cookie, "language_framework");
+    const child = await createLesson(server, a1.id, cookie, "language_framework");
+    await processLesson(server, a1.id, free.id, cookie);
+    await processLesson(server, a1.id, assimil.id, cookie);
+    await processLesson(server, a1.id, child.id, cookie);
+
+    for (const lesson of [free, assimil, draft]) {
+      const response = await splitLesson(server, a1.id, lesson.id, cookie);
+      assert.equal(response.statusCode, 409);
+      assert.equal(response.json().error, "LANGUAGE_LESSON_SPLIT_UNAVAILABLE");
+    }
+
+    const storedChild = store.lessons.find(({ id }) => id === child.id);
+    assert.ok(storedChild);
+    storedChild.splitParentLessonId = randomUUID();
+    storedChild.splitPart = "A";
+    assert.equal(
+      (await splitLesson(server, a1.id, child.id, cookie)).statusCode,
+      409,
+    );
+    storedChild.splitPart = "B";
+    assert.equal(
+      (await splitLesson(server, a1.id, child.id, cookie)).statusCode,
+      409,
+    );
+
+    const a2 = await createProject(server, cookie, "Alemán", "A2");
+    const a2Lesson = await createLesson(
+      server,
+      a2.id,
+      cookie,
+      "language_framework",
+    );
+    await processLesson(server, a2.id, a2Lesson.id, cookie);
+    assert.equal(
+      (await splitLesson(server, a2.id, a2Lesson.id, cookie)).statusCode,
+      409,
+    );
+
+    for (const status of ["processing", "failed"] as const) {
+      const statusProject = await createProject(server, cookie, "Alemán", "A1");
+      const statusLesson = await createLesson(
+        server,
+        statusProject.id,
+        cookie,
+        "language_framework",
+      );
+      const stored = store.lessons.find(({ id }) => id === statusLesson.id);
+      assert.ok(stored);
+      stored.status = status;
+      stored.structuredContent = structuredLesson;
+      assert.equal(
+        (
+          await splitLesson(
+            server,
+            statusProject.id,
+            statusLesson.id,
+            cookie,
+          )
+        ).statusCode,
+        409,
+      );
+    }
+
+    assert.equal(splitter.calls.length, 0);
+  } finally {
+    await server.close();
+  }
+});
+
+test("A1 framework split uses server data once and persists two ready technical lessons", async () => {
+  const { store, splitter, server } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+  const sourceContent = "Contenido privado del Marco A1";
+
+  try {
+    const project = await createProject(server, cookie, "Alemán", "a1 inicial");
+    const parent = await createLesson(
+      server,
+      project.id,
+      cookie,
+      "language_framework",
+    );
+    await processLesson(
+      server,
+      project.id,
+      parent.id,
+      cookie,
+      sourceContent,
+    );
+    await createLesson(server, project.id, cookie, "free");
+    const storedParent = store.lessons.find(({ id }) => id === parent.id);
+    assert.ok(storedParent);
+    storedParent.simplifiedStructuredContent = simplifiedLesson;
+    storedParent.simplificationStartedAt = null;
+    storedParent.simplifiedAt = new Date("2026-08-20T12:00:00.000Z");
+    storedParent.learningStatus = "in_progress";
+    storedParent.difficulty = "hard";
+    const parentBefore = structuredClone(storedParent);
+
+    const response = await splitLesson(
+      server,
+      project.id,
+      parent.id,
+      cookie,
+    );
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(splitter.calls, [
+      {
+        language: "Alemán",
+        level: "a1 inicial",
+        structuredContent: structuredLesson,
+      },
+    ]);
+    const parts = response.json().parts as Record<"A" | "B", LanguageLesson>;
+    assert.equal(response.json().parent.id, parent.id);
+    assert.deepEqual(
+      [parts.A.splitPart, parts.B.splitPart],
+      ["A", "B"],
+    );
+    assert.deepEqual(
+      [parts.A.lessonNumber, parts.B.lessonNumber],
+      [3, 4],
+    );
+    assert.ok(Number.isInteger(parts.A.lessonNumber));
+    assert.ok(Number.isInteger(parts.B.lessonNumber));
+    for (const part of [parts.A, parts.B]) {
+      assert.equal(part.lessonSource, "language_framework");
+      assert.equal(part.sourceLessonNumber, parent.sourceLessonNumber);
+      assert.equal(part.splitParentLessonId, parent.id);
+      assert.equal(part.status, "ready");
+      assert.equal(part.learningStatus, "pending");
+      assert.equal(part.difficulty, null);
+      assert.equal(part.simplifiedStructuredContent, null);
+      assert.equal(part.simplifiedAt, null);
+    }
+    const storedParts = store.lessons.filter(
+      ({ splitParentLessonId }) => splitParentLessonId === parent.id,
+    );
+    assert.equal(storedParts.length, 2);
+    assert.deepEqual(
+      storedParts.map(({ sourceContent }) => sourceContent),
+      ["", ""],
+    );
+    assert.deepEqual(
+      storedParts.map(({ freeTitle, freeAnalysis }) => ({
+        freeTitle,
+        freeAnalysis,
+      })),
+      [
+        { freeTitle: null, freeAnalysis: null },
+        { freeTitle: null, freeAnalysis: null },
+      ],
+    );
+    assert.deepEqual(
+      store.lessons.find(({ id }) => id === parent.id),
+      parentBefore,
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("a completed split is idempotent and never invokes OpenAI again", async () => {
+  const { splitter, server } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+
+  try {
+    const project = await createProject(server, cookie, "Alemán", "A1");
+    const parent = await createLesson(
+      server,
+      project.id,
+      cookie,
+      "language_framework",
+    );
+    await processLesson(server, project.id, parent.id, cookie);
+    const first = await splitLesson(server, project.id, parent.id, cookie);
+    const second = await splitLesson(server, project.id, parent.id, cookie);
+
+    assert.equal(first.statusCode, 200);
+    assert.equal(second.statusCode, 200);
+    assert.equal(splitter.calls.length, 1);
+    assert.deepEqual(
+      {
+        A: second.json().parts.A.id,
+        B: second.json().parts.B.id,
+      },
+      {
+        A: first.json().parts.A.id,
+        B: first.json().parts.B.id,
+      },
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("a lone A or B child reports an invariant conflict without repair or OpenAI", async () => {
+  for (const splitPart of ["A", "B"] as const) {
+    const { store, splitter, server } = testServer();
+    const cookie = sessionCookie(firstUser.id);
+
+    try {
+      const project = await createProject(server, cookie, "Alemán", "A1");
+      const parent = await createLesson(
+        server,
+        project.id,
+        cookie,
+        "language_framework",
+      );
+      await processLesson(server, project.id, parent.id, cookie);
+      const storedParent = store.lessons.find(({ id }) => id === parent.id);
+      assert.ok(storedParent);
+      const now = new Date();
+      store.lessons.push({
+        ...structuredClone(storedParent),
+        id: randomUUID(),
+        lessonNumber: 2,
+        splitParentLessonId: parent.id,
+        splitPart,
+        sourceContent: "",
+        learningStatus: "pending",
+        difficulty: null,
+        simplifiedStructuredContent: null,
+        simplificationStartedAt: null,
+        simplifiedAt: null,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      const response = await splitLesson(
+        server,
+        project.id,
+        parent.id,
+        cookie,
+      );
+      assert.equal(response.statusCode, 409);
+      assert.equal(response.json().error, "LANGUAGE_LESSON_SPLIT_INCONSISTENT");
+      assert.equal(splitter.calls.length, 0);
+      assert.equal(
+        store.lessons.filter(
+          ({ splitParentLessonId }) => splitParentLessonId === parent.id,
+        ).length,
+        1,
+      );
+    } finally {
+      await server.close();
+    }
+  }
+});
+
+test("part B insertion failure rolls back part A and preserves the parent", async () => {
+  const store = new MemoryLanguageStore();
+  store.failSplitAfterPartA = true;
+  const { splitter, server } = testServer(store);
+  const cookie = sessionCookie(firstUser.id);
+
+  try {
+    const project = await createProject(server, cookie, "Alemán", "A1");
+    const parent = await createLesson(
+      server,
+      project.id,
+      cookie,
+      "language_framework",
+    );
+    await processLesson(server, project.id, parent.id, cookie);
+    const parentBefore = structuredClone(
+      store.lessons.find(({ id }) => id === parent.id),
+    );
+    const response = await splitLesson(
+      server,
+      project.id,
+      parent.id,
+      cookie,
+    );
+
+    assert.equal(response.statusCode, 502);
+    assert.equal(response.json().error, "LANGUAGE_LESSON_SPLIT_FAILED");
+    assert.equal(splitter.calls.length, 1);
+    assert.equal(
+      store.lessons.filter(
+        ({ splitParentLessonId }) => splitParentLessonId === parent.id,
+      ).length,
+      0,
+    );
+    assert.deepEqual(
+      store.lessons.find(({ id }) => id === parent.id),
+      parentBefore,
+    );
   } finally {
     await server.close();
   }

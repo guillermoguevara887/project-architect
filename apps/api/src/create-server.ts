@@ -38,6 +38,10 @@ import {
   type LanguageLessonProcessor,
 } from "./languages/lesson-processor.js";
 import {
+  languageLessonSplitter,
+  type LanguageLessonSplitter,
+} from "./languages/lesson-splitter.js";
+import {
   elevenLabsLanguageAudioProvider,
   languageAudioProvider,
   type LanguageAudioProvider,
@@ -66,6 +70,7 @@ type ServerDependencies = {
   exerciseTutor?: ExerciseTutor;
   languageStore?: LanguageStore;
   languageLessonProcessor?: LanguageLessonProcessor;
+  languageLessonSplitter?: LanguageLessonSplitter;
   freeLanguageLessonAnalyzer?: FreeLanguageLessonAnalyzer;
   languageAudioStore?: LanguageAudioStore;
   languageAudioProvider?: LanguageAudioProvider;
@@ -182,6 +187,7 @@ export function configureServer(
     dependencies.languageStore ?? languageStore,
     configuredAuthStore,
     dependencies.languageLessonProcessor ?? languageLessonProcessor,
+    dependencies.languageLessonSplitter ?? languageLessonSplitter,
     dependencies.freeLanguageLessonAnalyzer ?? freeLanguageLessonAnalyzer,
   );
   registerLanguageAudioRoutes(server, {

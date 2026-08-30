@@ -3,6 +3,7 @@ import { after, test } from "node:test";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
+import { closeDbConnection } from "../../src/db/client.js";
 import {
   bootstrapLegacyMigrationHistory,
   checksumMigrationSql,
@@ -12,6 +13,7 @@ import {
   type MigrationFile,
 } from "../../src/db/migrations.js";
 import { createPostgresMigrationDatabase } from "../../src/db/postgres-migration-database.js";
+import { languageStore } from "../../src/languages/repository.js";
 
 const databaseUrl = process.env.MIGRATION_TEST_DATABASE_URL;
 
@@ -1860,5 +1862,201 @@ test("lesson split relationship migration preserves roots and enforces A/B child
     assert.ok(report.migrations.every(({ state }) => state === "applied"));
   } finally {
     await database.close();
+  }
+});
+
+test("split repository creates A/B atomically, idempotently and preserves the parent", async () => {
+  const isolatedUrl = await createIsolatedDatabase("lesson_split_repository");
+  const migrationDatabase = createPostgresMigrationDatabase(isolatedUrl);
+  const migrations = await loadMigrationFiles(migrationDirectory);
+  const previousDatabaseUrl = process.env.DATABASE_URL;
+  const userId = "78000000-0000-4000-8000-000000000001";
+  const projectId = "78000000-0000-4000-8000-000000000002";
+  const parentId = "78000000-0000-4000-8000-000000000003";
+  const rollbackParentId = "78000000-0000-4000-8000-000000000004";
+  const partA = {
+    vocabulary: [{ term: "müde", meaning: "cansado", example: "Ich bin müde." }],
+    phrases: [{ text: "Ich bin müde.", translation: "Estoy cansado.", note: null }],
+    patterns: [
+      {
+        name: "Ich bin …",
+        explanation: "Describe un estado.",
+        examples: ["Ich bin müde."],
+      },
+    ],
+    miniStory: { text: "Lukas ist müde." },
+    automaticThoughts: [{ text: "Ich bin müde." }],
+    dialogue: [{ speaker: "Lukas", text: "Ich bin müde." }],
+    nextLevelBridge: [
+      {
+        base: "Ich bin müde.",
+        advanced: "Ich bin sehr müde.",
+        note: "Añade intensidad.",
+      },
+    ],
+    review: { keyVocabulary: ["müde"], keyPatterns: ["Ich bin …"] },
+    kanji: [],
+  };
+  const partB = {
+    ...partA,
+    vocabulary: [
+      {
+        term: "aufstehen",
+        meaning: "levantarse",
+        example: "Ich stehe früh auf.",
+      },
+    ],
+    miniStory: { text: "Lukas steht früh auf." },
+    review: {
+      keyVocabulary: ["aufstehen"],
+      keyPatterns: ["Ich stehe … auf"],
+    },
+  };
+
+  try {
+    assert.deepEqual(await migratePending(migrationDatabase, migrations), migrations.map(({ id }) => id));
+    await withSql(isolatedUrl, async (sql) => {
+      await sql`
+        INSERT INTO users (id, username, password_hash)
+        VALUES (${userId}, 'split-repository-user', 'not-a-real-hash')
+      `;
+      await sql`
+        INSERT INTO language_projects (id, user_id, language, level)
+        VALUES (${projectId}, ${userId}, 'Deutsch', 'A1 Beginner')
+      `;
+      await sql`
+        INSERT INTO language_lessons (
+          id, language_project_id, lesson_number, lesson_source,
+          source_lesson_number, source_content, status, structured_content,
+          simplified_structured_content, simplification_started_at,
+          simplified_at, processed_at, learning_status, difficulty
+        ) VALUES (
+          ${parentId}, ${projectId}, 1, 'language_framework', 1,
+          'Parent source remains private', 'ready', ${sql.json(partA)},
+          ${sql.json(partB)}, null, now(), now(), 'in_progress', 'hard'
+        )
+      `;
+      await sql`
+        INSERT INTO language_lessons (
+          id, language_project_id, lesson_number, lesson_source,
+          source_lesson_number, source_content, status, structured_content,
+          processed_at
+        ) VALUES (
+          ${rollbackParentId}, ${projectId}, 2, 'language_framework', 2,
+          'Rollback parent source', 'ready', ${sql.json(partA)}, now()
+        )
+      `;
+      await sql.unsafe(`
+        ALTER TABLE language_lessons
+        ADD CONSTRAINT language_lessons_test_reject_part_b
+        CHECK (
+          split_parent_lesson_id <> '${rollbackParentId}'::uuid
+          OR split_part <> 'B'
+        )
+      `);
+    });
+
+    process.env.DATABASE_URL = isolatedUrl;
+    const parentBefore = await withSql(isolatedUrl, async (sql) =>
+      sql`
+        SELECT * FROM language_lessons WHERE id = ${parentId}
+      `,
+    );
+    const created = await languageStore.createLessonSplitChildren({
+      languageProjectId: projectId,
+      lessonId: parentId,
+      userId,
+      partA,
+      partB,
+    });
+    assert.equal(created.kind, "created");
+    if (created.kind !== "created") assert.fail("Expected split creation.");
+
+    assert.deepEqual(
+      [created.parts.A.lessonNumber, created.parts.B.lessonNumber],
+      [3, 4],
+    );
+    assert.deepEqual(
+      [created.parts.A.splitPart, created.parts.B.splitPart],
+      ["A", "B"],
+    );
+    for (const child of [created.parts.A, created.parts.B]) {
+      assert.equal(child.splitParentLessonId, parentId);
+      assert.equal(child.lessonSource, "language_framework");
+      assert.equal(child.sourceLessonNumber, 1);
+      assert.equal(child.status, "ready");
+      assert.equal(child.learningStatus, "pending");
+      assert.equal(child.difficulty, null);
+      assert.equal(child.sourceContent, "");
+      assert.equal(child.simplifiedStructuredContent, null);
+      assert.equal(child.simplificationStartedAt, null);
+      assert.equal(child.simplifiedAt, null);
+      assert.equal(child.freeTitle, null);
+      assert.equal(child.freeAnalysis, null);
+      assert.ok(child.processedAt);
+    }
+
+    const repeated = await languageStore.createLessonSplitChildren({
+      languageProjectId: projectId,
+      lessonId: parentId,
+      userId,
+      partA,
+      partB,
+    });
+    assert.equal(repeated.kind, "existing");
+    if (repeated.kind !== "existing") assert.fail("Expected existing split.");
+    assert.deepEqual(
+      [repeated.parts.A.id, repeated.parts.B.id],
+      [created.parts.A.id, created.parts.B.id],
+    );
+
+    await assert.rejects(
+      languageStore.createLessonSplitChildren({
+        languageProjectId: projectId,
+        lessonId: rollbackParentId,
+        userId,
+        partA,
+        partB,
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        const cause = "cause" in error ? error.cause : undefined;
+        assert.match(
+          cause instanceof Error ? cause.message : String(cause),
+          /language_lessons_test_reject_part_b/i,
+        );
+        return true;
+      },
+    );
+
+    const stateAfter = await withSql(isolatedUrl, async (sql) => {
+      const parentAfter = await sql`
+        SELECT * FROM language_lessons WHERE id = ${parentId}
+      `;
+      const [rollbackChildren] = await sql<Array<{ count: number }>>`
+        SELECT count(*)::integer AS count
+        FROM language_lessons
+        WHERE split_parent_lesson_id = ${rollbackParentId}
+      `;
+      const [createdChildren] = await sql<Array<{ count: number }>>`
+        SELECT count(*)::integer AS count
+        FROM language_lessons
+        WHERE split_parent_lesson_id = ${parentId}
+      `;
+      return {
+        parentAfter,
+        rollbackChildCount: rollbackChildren?.count,
+        createdChildCount: createdChildren?.count,
+      };
+    });
+
+    assert.deepEqual(stateAfter.parentAfter, parentBefore);
+    assert.equal(stateAfter.createdChildCount, 2);
+    assert.equal(stateAfter.rollbackChildCount, 0);
+  } finally {
+    await closeDbConnection();
+    if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = previousDatabaseUrl;
+    await migrationDatabase.close();
   }
 });
