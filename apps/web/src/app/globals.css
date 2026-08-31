@@ -1502,6 +1502,34 @@ button:disabled {
   margin-top: 2rem;
 }
 
+.lesson-very-simplification-controls {
+  justify-content: space-between;
+  margin-top: 1.4rem;
+  padding: 1rem;
+  border: 1px solid #bfe8e4;
+  border-radius: 1rem;
+  background: #f4fbfa;
+}
+
+.lesson-very-simplification-copy {
+  min-width: 0;
+  flex: 1 1 20rem;
+}
+
+.lesson-very-simplification-copy h2 {
+  margin: 0;
+  color: #0f2147;
+  font-size: 1rem;
+}
+
+.lesson-very-simplification-copy p {
+  max-width: 42rem;
+  margin: 0.3rem 0 0;
+  color: #64748b;
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+
 .lesson-simplify-button {
   min-height: 2.75rem;
   padding: 0.65rem 1rem;

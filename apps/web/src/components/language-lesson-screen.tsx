@@ -14,6 +14,7 @@ import {
   assignLanguageDialogueVoices,
   canRegenerateLanguageLesson,
   createLanguageLessonSplitSubmissionGuard,
+  createLanguageLessonVerySimplificationSubmissionGuard,
   DEFAULT_LANGUAGE_AUDIO_PLAYBACK_RATE,
   DEFAULT_LANGUAGE_STORY_VOICE,
   downloadLanguageAudioBlob,
@@ -35,13 +36,16 @@ import {
   languageLessonAudioToggleAction,
   languageAudioPlaybackErrorMessage,
   languageLessonContentForVersion,
+  languageLessonContentVersionOptions,
   languageLessonKanjiCopyText,
   languageLessonCanSplit,
+  languageLessonCanVerySimplify,
   languageLessonAllowsSimplification,
   languageLessonShowsProgress,
   languageLessonSplitErrorMessage,
   languageLessonSplitResponseIsValid,
   languageLessonSplitState,
+  languageLessonVerySimplificationErrorMessage,
   languageStoryAudioDownloadDisabled,
   languageStoryAudioDownloadFilename,
   languageStoryVoiceChangeStopsPlayback,
@@ -1070,6 +1074,15 @@ export function LanguageLessonScreen({
   const [simplificationAction, setSimplificationAction] = useState<
     "simplify" | "regenerate" | null
   >(null);
+  const [verySimplificationAction, setVerySimplificationAction] = useState<
+    "create" | "regenerate" | null
+  >(null);
+  const verySimplificationGuard = useRef(
+    createLanguageLessonVerySimplificationSubmissionGuard(),
+  );
+  const [verySimplificationError, setVerySimplificationError] = useState<
+    string | null
+  >(null);
   const [contentVersion, setContentVersion] =
     useState<LanguageLessonContentVersion>("original");
   const [storyVoice, setStoryVoice] = useState<LanguageStoryVoice>(
@@ -1191,6 +1204,16 @@ export function LanguageLessonScreen({
     stopCurrentLanguageAudio();
   }
 
+  function selectLanguageLessonContentVersion(
+    version: LanguageLessonContentVersion,
+  ) {
+    stopLanguageAudio();
+    updateAudioPlayback(null);
+    setContentVersion(version);
+    setCopiedSection(null);
+    setStoryDownload((current) => ({ ...current, error: null }));
+  }
+
   useEffect(() => {
     return () => {
       dialogueSequenceIdRef.current += 1;
@@ -1278,6 +1301,7 @@ export function LanguageLessonScreen({
           setFreeTitle(lessonResult.lesson.freeTitle ?? "");
           setSourceContent(lessonResult.lesson.sourceContent ?? "");
           setContentVersion("original");
+          setVerySimplificationError(null);
         }
       } catch {
         if (active) setLoadError("No se pudo cargar la lección.");
@@ -1555,6 +1579,58 @@ export function LanguageLessonScreen({
       );
     } finally {
       setSimplificationAction(null);
+    }
+  }
+
+  async function verySimplifyLesson(regenerate = false) {
+    if (!verySimplificationGuard.current.start()) return;
+
+    setVerySimplificationAction(regenerate ? "regenerate" : "create");
+    setVerySimplificationError(null);
+
+    try {
+      const response = await fetch(
+        `/api/languages/projects/${encodeURIComponent(projectId)}/lessons/${encodeURIComponent(lessonId)}/simplify/very`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ regenerate }),
+        },
+      );
+
+      if (response.status === 401) {
+        router.replace("/");
+        return;
+      }
+
+      const result = (await response.json()) as {
+        lesson?: LanguageLesson;
+        error?: string;
+        message?: string;
+      };
+
+      if (!response.ok || !result.lesson) {
+        setVerySimplificationError(
+          languageLessonVerySimplificationErrorMessage(response.status, result),
+        );
+        return;
+      }
+
+      stopLanguageAudio();
+      updateAudioPlayback(null);
+      setLesson(result.lesson);
+      setContentVersion("simplified");
+      setCopiedSection(null);
+      setStoryDownload((current) => ({ ...current, error: null }));
+      setVerySimplificationError(null);
+    } catch {
+      setVerySimplificationError(
+        "No se pudo crear la versión muy simplificada. Intenta nuevamente.",
+      );
+    } finally {
+      verySimplificationGuard.current.finish();
+      setVerySimplificationAction(null);
     }
   }
 
@@ -1948,7 +2024,12 @@ export function LanguageLessonScreen({
 
       downloadLanguageAudioBlob(
         await response.blob(),
-        languageStoryAudioDownloadFilename(project.language, version, voice),
+        languageStoryAudioDownloadFilename(
+          project.language,
+          version,
+          voice,
+          lesson?.splitPart ?? null,
+        ),
       );
       setStoryDownload({ loading: false, error: null });
     } catch (error) {
@@ -2068,6 +2149,11 @@ export function LanguageLessonScreen({
   const canSplit = languageLessonCanSplit(project.level, lesson, splitState);
   const showProgress = languageLessonShowsProgress(lesson, splitState);
   const allowSimplification = languageLessonAllowsSimplification(lesson);
+  const allowVerySimplification = languageLessonCanVerySimplify(
+    project.level,
+    lesson,
+  );
+  const contentVersionOptions = languageLessonContentVersionOptions(lesson);
   const readyContent =
     lesson.status === "ready" && !preparedFreeLesson
       ? languageLessonContentForVersion(lesson, contentVersion)
@@ -2283,6 +2369,82 @@ export function LanguageLessonScreen({
           </form>
         ) : null}
 
+        {allowVerySimplification && readyContent ? (
+          <section
+            className="lesson-simplification-controls lesson-very-simplification-controls"
+            aria-labelledby="lesson-very-simplification-title"
+          >
+            {canRegenerateLanguageLesson(lesson) ? (
+              <>
+                <h2 className="sr-only" id="lesson-very-simplification-title">
+                  Versión muy simplificada
+                </h2>
+                <div
+                  aria-label="Versión de esta parte de la lección"
+                  className="lesson-version-selector"
+                  role="group"
+                >
+                  {contentVersionOptions.map((option) => (
+                    <button
+                      aria-pressed={contentVersion === option.value}
+                      key={option.value}
+                      type="button"
+                      onClick={() =>
+                        selectLanguageLessonContentVersion(option.value)
+                      }
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="lesson-regeneration-action">
+                  <button
+                    aria-busy={verySimplificationAction === "regenerate"}
+                    className="lesson-regenerate-button"
+                    disabled={verySimplificationAction !== null}
+                    type="button"
+                    onClick={() => void verySimplifyLesson(true)}
+                  >
+                    {verySimplificationAction === "regenerate"
+                      ? "Regenerando…"
+                      : "Regenerar versión muy simplificada"}
+                  </button>
+                  <small>Vuelve a generar esta versión con IA.</small>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="lesson-very-simplification-copy">
+                  <h2 id="lesson-very-simplification-title">
+                    Versión muy simplificada
+                  </h2>
+                  <p>
+                    Reduce esta parte a una versión puente con menos contenido y
+                    estructuras más simples.
+                  </p>
+                </div>
+                <button
+                  aria-busy={verySimplificationAction === "create"}
+                  className="lesson-simplify-button"
+                  disabled={verySimplificationAction !== null}
+                  type="button"
+                  onClick={() => void verySimplifyLesson(false)}
+                >
+                  {verySimplificationAction === "create"
+                    ? "Creando…"
+                    : "Crear versión muy simplificada"}
+                </button>
+              </>
+            )}
+          </section>
+        ) : null}
+
+        {allowVerySimplification && verySimplificationError ? (
+          <p className="form-error lesson-action-error" role="alert">
+            {verySimplificationError}
+          </p>
+        ) : null}
+
         {allowSimplification && readyContent ? (
           <div className="lesson-simplification-controls">
             {canRegenerateLanguageLesson(lesson) ? (
@@ -2297,12 +2459,9 @@ export function LanguageLessonScreen({
                       aria-pressed={contentVersion === option.value}
                       key={option.value}
                       type="button"
-                      onClick={() => {
-                        stopLanguageAudio();
-                        updateAudioPlayback(null);
-                        setContentVersion(option.value);
-                        setCopiedSection(null);
-                      }}
+                      onClick={() =>
+                        selectLanguageLessonContentVersion(option.value)
+                      }
                     >
                       {option.label}
                     </button>

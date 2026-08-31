@@ -252,6 +252,22 @@ export const LANGUAGE_LESSON_CONTENT_VERSION_OPTIONS = [
 export type LanguageLessonContentVersion =
   (typeof LANGUAGE_LESSON_CONTENT_VERSION_OPTIONS)[number]["value"];
 
+export const LANGUAGE_SPLIT_LESSON_CONTENT_VERSION_OPTIONS = [
+  { value: "original", label: "Base" },
+  { value: "simplified", label: "Muy simplificada" },
+] as const satisfies ReadonlyArray<{
+  value: LanguageLessonContentVersion;
+  label: string;
+}>;
+
+export function languageLessonContentVersionOptions(
+  lesson: Pick<LanguageLesson, "splitPart">,
+) {
+  return lesson.splitPart === null
+    ? LANGUAGE_LESSON_CONTENT_VERSION_OPTIONS
+    : LANGUAGE_SPLIT_LESSON_CONTENT_VERSION_OPTIONS;
+}
+
 export type LanguageLessonAudioSection =
   | "vocabulary"
   | "phrases"
@@ -496,6 +512,7 @@ export function languageStoryAudioDownloadFilename(
   language: string,
   version: LanguageLessonContentVersion,
   voice: LanguageStoryVoice,
+  splitPart: LanguageLessonSplitPart | null = null,
 ) {
   const languageSlug = language
     .normalize("NFD")
@@ -503,7 +520,13 @@ export function languageStoryAudioDownloadFilename(
     .toLocaleLowerCase("und")
     .replace(/[^a-z0-9]+/gu, "-")
     .replace(/^-+|-+$/gu, "");
-  const versionLabel = version === "simplified" ? "simplificada" : "original";
+  const versionLabel = splitPart
+    ? version === "simplified"
+      ? "muy-simplificada"
+      : "base"
+    : version === "simplified"
+      ? "simplificada"
+      : "original";
   const voiceLabel = voice === "female" ? "mujer" : "hombre";
 
   return `memoos-${languageSlug || "idioma"}-mini-historia-${versionLabel}-${voiceLabel}.mp3`;
@@ -738,6 +761,74 @@ export function languageLessonAllowsSimplification(
   lesson: Pick<LanguageLesson, "status" | "splitPart">,
 ) {
   return lesson.status === "ready" && lesson.splitPart === null;
+}
+
+export function languageLessonCanVerySimplify(
+  projectLevel: string,
+  lesson: Pick<
+    LanguageLesson,
+    | "lessonSource"
+    | "splitParentLessonId"
+    | "splitPart"
+    | "status"
+    | "structuredContent"
+  >,
+) {
+  return (
+    isA1LanguageProjectLevel(projectLevel) &&
+    lesson.lessonSource === "language_framework" &&
+    lesson.splitParentLessonId !== null &&
+    (lesson.splitPart === "A" || lesson.splitPart === "B") &&
+    lesson.status === "ready" &&
+    Boolean(lesson.structuredContent)
+  );
+}
+
+export function languageLessonVerySimplificationErrorMessage(
+  status: number,
+  result: { error?: string; message?: string },
+) {
+  if (
+    status === 409 &&
+    result.error === "LANGUAGE_LESSON_VERY_SIMPLIFICATION_UNAVAILABLE"
+  ) {
+    return "Esta parte no admite una versión muy simplificada.";
+  }
+  if (
+    status === 409 &&
+    result.error === "LANGUAGE_LESSON_SIMPLIFICATION_PROCESSING"
+  ) {
+    return "Ya se está generando una versión simplificada.";
+  }
+  if (status === 409 && result.error === "LANGUAGE_LESSON_STATE_CHANGED") {
+    return "La lección cambió mientras se generaba. Recarga e intenta nuevamente.";
+  }
+  if (
+    status === 502 &&
+    result.error === "LANGUAGE_LESSON_VERY_SIMPLIFICATION_FAILED"
+  ) {
+    return "No se pudo crear la versión muy simplificada. Intenta nuevamente.";
+  }
+
+  return (
+    result.message ??
+    "No se pudo crear la versión muy simplificada. Intenta nuevamente."
+  );
+}
+
+export function createLanguageLessonVerySimplificationSubmissionGuard() {
+  let submitting = false;
+
+  return {
+    start() {
+      if (submitting) return false;
+      submitting = true;
+      return true;
+    },
+    finish() {
+      submitting = false;
+    },
+  };
 }
 
 export function languageLessonSplitResponseIsValid(

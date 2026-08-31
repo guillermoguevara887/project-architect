@@ -7,6 +7,7 @@ import {
   canRegenerateLanguageLesson,
   createLanguageLessonSplitSubmissionGuard,
   createLanguageLessonSubmissionGuard,
+  createLanguageLessonVerySimplificationSubmissionGuard,
   DEFAULT_LANGUAGE_AUDIO_PLAYBACK_RATE,
   DEFAULT_LANGUAGE_STORY_VOICE,
   downloadLanguageAudioBlob,
@@ -21,6 +22,8 @@ import {
   LANGUAGE_LESSON_DIFFICULTY_OPTIONS,
   LANGUAGE_LESSON_LEARNING_STATUS_OPTIONS,
   LANGUAGE_LESSON_SOURCE_OPTIONS,
+  LANGUAGE_LESSON_CONTENT_VERSION_OPTIONS,
+  LANGUAGE_SPLIT_LESSON_CONTENT_VERSION_OPTIONS,
   LANGUAGE_STORY_VOICE_OPTIONS,
   languageDialogueLineIsActive,
   languageFreeAudioDownloadFilename,
@@ -34,14 +37,17 @@ import {
   languageLessonAudioToggleAction,
   languageLessonCreationReducer,
   languageLessonContentForVersion,
+  languageLessonContentVersionOptions,
   languageLessonFilterEmptyMessage,
   languageLessonKanjiCopyText,
   languageLessonCanSplit,
+  languageLessonCanVerySimplify,
   languageLessonAllowsSimplification,
   languageLessonShowsProgress,
   languageLessonSplitErrorMessage,
   languageLessonSplitResponseIsValid,
   languageLessonSplitState,
+  languageLessonVerySimplificationErrorMessage,
   orderLanguageLessonsPedagogically,
   languageStoryAudioDownloadDisabled,
   languageStoryAudioDownloadFilename,
@@ -604,6 +610,19 @@ test("mini story download uses a safe filename and revokes its object URL", () =
     languageStoryAudioDownloadFilename("Deutsch", "original", "male"),
     "memoos-deutsch-mini-historia-original-hombre.mp3",
   );
+  assert.equal(
+    languageStoryAudioDownloadFilename("Deutsch", "original", "female", "A"),
+    "memoos-deutsch-mini-historia-base-mujer.mp3",
+  );
+  assert.equal(
+    languageStoryAudioDownloadFilename(
+      "Deutsch",
+      "simplified",
+      "male",
+      "B",
+    ),
+    "memoos-deutsch-mini-historia-muy-simplificada-hombre.mp3",
+  );
 });
 
 test("story download blocks duplicate loading and only matching story generation", () => {
@@ -1010,10 +1029,13 @@ test("switching lesson version stops playback without autoplay or generation", a
     "utf8",
   );
   const versionHandler = component.match(
-    /onClick=\{\(\) => \{\s*stopLanguageAudio\(\);\s*updateAudioPlayback\(null\);\s*setContentVersion\(option\.value\);[\s\S]*?\}\}/,
+    /function selectLanguageLessonContentVersion\([\s\S]*?(?=\n  useEffect)/m,
   )?.[0];
 
   assert.ok(versionHandler);
+  assert.match(versionHandler, /stopLanguageAudio\(\)/);
+  assert.match(versionHandler, /updateAudioPlayback\(null\)/);
+  assert.match(versionHandler, /setContentVersion\(version\)/);
   assert.doesNotMatch(versionHandler, /fetch|playLanguageAudio|\.play\(/);
 });
 
@@ -1635,6 +1657,182 @@ test("split errors use the required accessible Spanish messages", () => {
   assert.equal(
     languageLessonSplitErrorMessage(502, "LANGUAGE_LESSON_SPLIT_FAILED"),
     "No se pudo dividir la lección. Intenta nuevamente.",
+  );
+});
+
+test("root and split-child content versions keep technical values with contextual labels", () => {
+  assert.deepEqual(LANGUAGE_LESSON_CONTENT_VERSION_OPTIONS, [
+    { value: "original", label: "Original" },
+    { value: "simplified", label: "Simplificada" },
+  ]);
+  assert.deepEqual(LANGUAGE_SPLIT_LESSON_CONTENT_VERSION_OPTIONS, [
+    { value: "original", label: "Base" },
+    { value: "simplified", label: "Muy simplificada" },
+  ]);
+  assert.equal(LANGUAGE_LESSON_CONTENT_VERSION_OPTIONS[0].value, "original");
+  assert.equal(
+    LANGUAGE_SPLIT_LESSON_CONTENT_VERSION_OPTIONS[0].value,
+    "original",
+  );
+  assert.equal(
+    LANGUAGE_SPLIT_LESSON_CONTENT_VERSION_OPTIONS[1].value,
+    "simplified",
+  );
+  assert.equal(
+    languageLessonContentVersionOptions({ splitPart: null }),
+    LANGUAGE_LESSON_CONTENT_VERSION_OPTIONS,
+  );
+  assert.equal(
+    languageLessonContentVersionOptions({ splitPart: "A" }),
+    LANGUAGE_SPLIT_LESSON_CONTENT_VERSION_OPTIONS,
+  );
+  assert.equal(
+    languageLessonContentVersionOptions({ splitPart: "B" }),
+    LANGUAGE_SPLIT_LESSON_CONTENT_VERSION_OPTIONS,
+  );
+});
+
+test("only ready A1 framework children with base content can be very simplified", () => {
+  const root = {
+    ...lessons[1]!,
+    status: "ready" as const,
+    structuredContent: structuredContent("Marco"),
+  };
+  const childA = {
+    ...root,
+    id: "framework-1-a",
+    splitParentLessonId: root.id,
+    splitPart: "A" as const,
+  };
+  const childB = {
+    ...childA,
+    id: "framework-1-b",
+    splitPart: "B" as const,
+  };
+
+  assert.equal(languageLessonCanVerySimplify("A1", childA), true);
+  assert.equal(languageLessonCanVerySimplify("A1 inicial", childB), true);
+  assert.equal(languageLessonCanVerySimplify("A1", root), false);
+  assert.equal(
+    languageLessonCanVerySimplify("A1", {
+      ...childA,
+      lessonSource: "free",
+    }),
+    false,
+  );
+  assert.equal(
+    languageLessonCanVerySimplify("A1", {
+      ...childA,
+      lessonSource: "assimil",
+    }),
+    false,
+  );
+  assert.equal(languageLessonCanVerySimplify("A2", childA), false);
+  assert.equal(
+    languageLessonCanVerySimplify("A1", {
+      ...childA,
+      status: "processing",
+    }),
+    false,
+  );
+  assert.equal(
+    languageLessonCanVerySimplify("A1", {
+      ...childA,
+      structuredContent: null,
+    }),
+    false,
+  );
+  assert.equal(
+    canRegenerateLanguageLesson({
+      simplifiedStructuredContent: structuredContent("Muy simple"),
+    }),
+    true,
+  );
+});
+
+test("very simplification errors and submission guard are deterministic", () => {
+  assert.equal(
+    languageLessonVerySimplificationErrorMessage(409, {
+      error: "LANGUAGE_LESSON_VERY_SIMPLIFICATION_UNAVAILABLE",
+    }),
+    "Esta parte no admite una versión muy simplificada.",
+  );
+  assert.equal(
+    languageLessonVerySimplificationErrorMessage(409, {
+      error: "LANGUAGE_LESSON_SIMPLIFICATION_PROCESSING",
+    }),
+    "Ya se está generando una versión simplificada.",
+  );
+  assert.equal(
+    languageLessonVerySimplificationErrorMessage(409, {
+      error: "LANGUAGE_LESSON_STATE_CHANGED",
+    }),
+    "La lección cambió mientras se generaba. Recarga e intenta nuevamente.",
+  );
+  assert.equal(
+    languageLessonVerySimplificationErrorMessage(502, {
+      error: "LANGUAGE_LESSON_VERY_SIMPLIFICATION_FAILED",
+    }),
+    "No se pudo crear la versión muy simplificada. Intenta nuevamente.",
+  );
+
+  const guard = createLanguageLessonVerySimplificationSubmissionGuard();
+  assert.equal(guard.start(), true);
+  assert.equal(guard.start(), false);
+  guard.finish();
+  assert.equal(guard.start(), true);
+});
+
+test("M2B child UI uses the very-simplification endpoint and preserves root behavior", async () => {
+  const lessonComponent = await readFile(
+    new URL(
+      "../../web/src/components/language-lesson-screen.tsx",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  const styles = await readFile(
+    new URL("../../web/src/app/globals.css", import.meta.url),
+    "utf8",
+  );
+  const veryHandler = lessonComponent.match(
+    /async function verySimplifyLesson\(regenerate = false\)[\s\S]*?(?=\n  async function )/m,
+  )?.[0];
+  const rootHandler = lessonComponent.match(
+    /async function simplifyLesson\(regenerate = false\)[\s\S]*?(?=\n  async function verySimplifyLesson)/m,
+  )?.[0];
+
+  assert.ok(veryHandler);
+  assert.ok(rootHandler);
+  assert.match(veryHandler, /verySimplificationGuard\.current\.start\(\)/);
+  assert.match(veryHandler, /\/simplify\/very/);
+  assert.doesNotMatch(
+    veryHandler,
+    /structuredContent|sourceContent|language:|level:|splitPart:|parentId|model|prompt/,
+  );
+  assert.match(veryHandler, /body: JSON\.stringify\(\{ regenerate \}\)/);
+  assert.match(veryHandler, /setLesson\(result\.lesson\)/);
+  assert.match(veryHandler, /setContentVersion\("simplified"\)/);
+  assert.doesNotMatch(veryHandler, /setLesson\(null\)/);
+  assert.match(rootHandler, /\/simplify`/);
+  assert.doesNotMatch(rootHandler, /\/simplify\/very/);
+  assert.match(lessonComponent, /Crear versión muy simplificada/);
+  assert.match(lessonComponent, /verySimplifyLesson\(false\)/);
+  assert.match(lessonComponent, /Creando…/);
+  assert.match(lessonComponent, /Regenerar versión muy simplificada/);
+  assert.match(lessonComponent, /verySimplifyLesson\(true\)/);
+  assert.match(lessonComponent, /Regenerando…/);
+  assert.match(lessonComponent, /LANGUAGE_LESSON_CONTENT_VERSION_OPTIONS\.map/);
+  assert.match(lessonComponent, /contentVersionOptions\.map/);
+  assert.match(
+    lessonComponent,
+    /function selectLanguageLessonContentVersion[\s\S]*?stopLanguageAudio\(\)[\s\S]*?setContentVersion\(version\)/,
+  );
+  assert.match(lessonComponent, /<ReadyLesson/);
+  assert.match(styles, /\.lesson-very-simplification-controls/);
+  assert.match(
+    styles,
+    /\.lesson-reading-text\s*\{[\s\S]*?white-space:\s*pre-(?:line|wrap)/,
   );
 });
 
