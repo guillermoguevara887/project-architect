@@ -34,6 +34,10 @@ import {
   type FreeLanguageLessonAnalyzer,
 } from "./languages/free-analyzer.js";
 import {
+  assimilLanguageLessonProcessor,
+  type AssimilLanguageLessonProcessor,
+} from "./languages/assimil-processor.js";
+import {
   languageLessonProcessor,
   type LanguageLessonProcessor,
 } from "./languages/lesson-processor.js";
@@ -77,6 +81,7 @@ type ServerDependencies = {
   languageLessonSplitter?: LanguageLessonSplitter;
   languageLessonVerySimplifier?: LanguageLessonVerySimplifier;
   freeLanguageLessonAnalyzer?: FreeLanguageLessonAnalyzer;
+  assimilLanguageLessonProcessor?: AssimilLanguageLessonProcessor;
   languageAudioStore?: LanguageAudioStore;
   languageAudioProvider?: LanguageAudioProvider;
   elevenLabsLanguageAudioProvider?: LanguageAudioProvider;
@@ -195,6 +200,7 @@ export function configureServer(
     dependencies.languageLessonSplitter ?? languageLessonSplitter,
     dependencies.languageLessonVerySimplifier ?? languageLessonVerySimplifier,
     dependencies.freeLanguageLessonAnalyzer ?? freeLanguageLessonAnalyzer,
+    dependencies.assimilLanguageLessonProcessor ?? assimilLanguageLessonProcessor,
   );
   registerLanguageAudioRoutes(server, {
     authStore: configuredAuthStore,

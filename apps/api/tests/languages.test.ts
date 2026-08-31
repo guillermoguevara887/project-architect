@@ -6,6 +6,10 @@ import type { AuthStore, AuthUser } from "../src/auth/repository.js";
 import { createSessionCookie } from "../src/auth/session.js";
 import { createServer } from "../src/create-server.js";
 import type {
+  AssimilLanguageLessonProcessor,
+  ProcessAssimilLanguageLessonInput,
+} from "../src/languages/assimil-processor.js";
+import type {
   GenerateLanguageAudioInput,
   LanguageAudioProvider,
 } from "../src/languages/audio.js";
@@ -29,6 +33,7 @@ import {
   type LanguageLessonLearningStatus,
   type LanguageLessonSource,
   type StructuredLanguageLesson,
+  type AssimilLanguageLessonContent,
 } from "../src/languages/contracts.js";
 import type {
   AnalyzeFreeLanguageLessonInput,
@@ -55,6 +60,7 @@ import type {
   ClaimLanguageLessonInput,
   ClaimLanguageLessonSimplificationInput,
   CompleteLanguageLessonProcessingInput,
+  CompleteAssimilLanguageLessonProcessingInput,
   CompleteLanguageLessonSimplificationInput,
   CreateLanguageLessonSplitChildrenInput,
   CreateLanguageProjectInput,
@@ -71,6 +77,7 @@ import type {
   UpdateLanguageLessonInput,
   UpdateLanguageLessonProgressInput,
 } from "../src/languages/repository.js";
+import { AssimilLanguageLessonNumberExistsError } from "../src/languages/repository.js";
 
 process.env.NODE_ENV = "test";
 process.env.AUTH_COOKIE_SECRET =
@@ -133,6 +140,42 @@ const structuredLesson: StructuredLanguageLesson = {
     keyVocabulary: ["müde"],
     keyPatterns: ["Ich muss …"],
   },
+};
+
+const assimilLesson: AssimilLanguageLessonContent = {
+  kind: "assimil_v1",
+  comprehension: [
+    {
+      line: "Ich bin müde.",
+      translation: "Estoy cansado.",
+      note: null,
+    },
+  ],
+  notes: [
+    { title: "bin", explanation: "Primera persona de sein." },
+    { title: "müde", explanation: "Describe cansancio." },
+    { title: "Orden", explanation: "El adjetivo aparece tras el verbo." },
+  ],
+  patterns: [
+    {
+      pattern: "Ich bin …",
+      explanation: "Sirve para describir un estado.",
+      examples: ["Ich bin bereit."],
+    },
+  ],
+  keyPhrases: [
+    { text: "Ich bin müde.", meaning: "Estoy cansado." },
+    { text: "Ich bin bereit.", meaning: "Estoy listo." },
+    { text: "Bis morgen.", meaning: "Hasta mañana." },
+  ],
+  practice: {
+    instructions: "Completa las frases.",
+    items: [
+      { prompt: "Ich ___ müde.", answer: "bin" },
+      { prompt: "Bis ___.", answer: "morgen" },
+    ],
+  },
+  review: null,
 };
 
 const simplifiedLesson: StructuredLanguageLesson = {
@@ -274,17 +317,39 @@ class MemoryLanguageStore implements LanguageStore {
           )
           .map((lesson) => lesson.lessonNumber),
       ) + 1;
-    const sourceLessonNumber =
-      Math.max(
-        0,
-        ...this.lessons
-          .filter(
-            (lesson) =>
-              lesson.languageProjectId === input.languageProjectId &&
-              lesson.lessonSource === input.lessonSource,
-          )
-          .map((lesson) => lesson.sourceLessonNumber),
-      ) + 1;
+    let sourceLessonNumber: number;
+
+    if (input.lessonSource === "assimil") {
+      if (input.sourceLessonNumber === undefined) {
+        throw new Error("Assimil lessons require a source lesson number.");
+      }
+      if (
+        this.lessons.some(
+          (lesson) =>
+            lesson.languageProjectId === input.languageProjectId &&
+            lesson.lessonSource === "assimil" &&
+            lesson.sourceLessonNumber === input.sourceLessonNumber &&
+            lesson.splitParentLessonId === null,
+        )
+      ) {
+        throw new AssimilLanguageLessonNumberExistsError(
+          input.sourceLessonNumber,
+        );
+      }
+      sourceLessonNumber = input.sourceLessonNumber;
+    } else {
+      sourceLessonNumber =
+        Math.max(
+          0,
+          ...this.lessons
+            .filter(
+              (lesson) =>
+                lesson.languageProjectId === input.languageProjectId &&
+                lesson.lessonSource === input.lessonSource,
+            )
+            .map((lesson) => lesson.sourceLessonNumber),
+        ) + 1;
+    }
     const now = this.now();
     const lesson: LanguageLesson = {
       id: randomUUID(),
@@ -494,6 +559,14 @@ class MemoryLanguageStore implements LanguageStore {
       return { kind: "not_found" as const };
     }
 
+    if (
+      lesson.lessonSource !== "language_framework" ||
+      lesson.splitParentLessonId !== null ||
+      lesson.splitPart !== null
+    ) {
+      return { kind: "not_eligible" as const };
+    }
+
     if (lesson.status === "ready") {
       return { kind: "already_ready" as const };
     }
@@ -544,6 +617,93 @@ class MemoryLanguageStore implements LanguageStore {
     if (
       !this.ownsProject(input.languageProjectId, input.userId) ||
       !lesson ||
+      lesson.status !== "processing" ||
+      lesson.updatedAt.getTime() !== input.processingStartedAt.getTime()
+    ) {
+      return null;
+    }
+
+    lesson.status = "failed";
+    lesson.structuredContent = null;
+    lesson.processedAt = null;
+    lesson.updatedAt = this.now();
+    return lesson;
+  }
+
+  async claimAssimilLessonForProcessing(input: ClaimLanguageLessonInput) {
+    const project = this.projects.find(
+      (candidate) =>
+        candidate.id === input.languageProjectId &&
+        candidate.userId === input.userId,
+    );
+    if (!project) return { kind: "not_found" as const };
+
+    const lesson = this.lessons.find(
+      (candidate) =>
+        candidate.id === input.lessonId &&
+        candidate.languageProjectId === input.languageProjectId,
+    );
+    if (!lesson) return { kind: "not_found" as const };
+    if (
+      lesson.lessonSource !== "assimil" ||
+      lesson.splitParentLessonId !== null ||
+      lesson.splitPart !== null ||
+      lesson.sourceLessonNumber < 1 ||
+      lesson.sourceLessonNumber > 9_999
+    ) {
+      return { kind: "not_eligible" as const };
+    }
+    if (lesson.status === "ready") {
+      return { kind: "already_ready" as const };
+    }
+    if (lesson.status === "processing") {
+      return { kind: "processing" as const };
+    }
+
+    lesson.sourceContent = input.sourceContent;
+    lesson.status = "processing";
+    lesson.structuredContent = null;
+    lesson.processedAt = null;
+    lesson.updatedAt = this.now();
+    return { kind: "claimed" as const, lesson, project };
+  }
+
+  async completeAssimilLessonProcessing(
+    input: CompleteAssimilLanguageLessonProcessingInput,
+  ) {
+    const lesson = this.lessons.find(
+      (candidate) =>
+        candidate.id === input.lessonId &&
+        candidate.languageProjectId === input.languageProjectId,
+    );
+    if (
+      !this.ownsProject(input.languageProjectId, input.userId) ||
+      !lesson ||
+      lesson.lessonSource !== "assimil" ||
+      lesson.status !== "processing" ||
+      lesson.updatedAt.getTime() !== input.processingStartedAt.getTime()
+    ) {
+      return null;
+    }
+
+    const now = this.now();
+    lesson.status = "ready";
+    lesson.structuredContent = input.structuredContent;
+    lesson.processedAt = now;
+    lesson.updatedAt = now;
+    return lesson;
+  }
+
+  async failAssimilLessonProcessing(input: FailLanguageLessonProcessingInput) {
+    const lesson = this.lessons.find(
+      (candidate) =>
+        candidate.id === input.lessonId &&
+        candidate.languageProjectId === input.languageProjectId,
+    );
+    if (
+      !this.ownsProject(input.languageProjectId, input.userId) ||
+      !lesson ||
+      lesson.lessonSource !== "assimil" ||
       lesson.status !== "processing" ||
       lesson.updatedAt.getTime() !== input.processingStartedAt.getTime()
     ) {
@@ -669,6 +829,10 @@ class MemoryLanguageStore implements LanguageStore {
 
     if (lesson.status !== "ready" || !lesson.structuredContent) {
       return { kind: "not_ready" as const };
+    }
+
+    if (!structuredLanguageLessonSchema.safeParse(lesson.structuredContent).success) {
+      return { kind: "not_eligible" as const };
     }
 
     if (!input.regenerate && lesson.simplifiedStructuredContent) {
@@ -837,6 +1001,20 @@ class FakeLanguageLessonProcessor implements LanguageLessonProcessor {
     }
 
     return this.simplificationResult;
+  }
+}
+
+class FakeAssimilLanguageLessonProcessor
+  implements AssimilLanguageLessonProcessor
+{
+  readonly calls: ProcessAssimilLanguageLessonInput[] = [];
+  result = assimilLesson;
+  error: Error | null = null;
+
+  async process(input: ProcessAssimilLanguageLessonInput) {
+    this.calls.push(input);
+    if (this.error) throw this.error;
+    return this.result;
   }
 }
 
@@ -1030,6 +1208,7 @@ function testServer(
   freeAnalyzer = new FakeFreeLanguageLessonAnalyzer(),
   splitter = new FakeLanguageLessonSplitter(),
   verySimplifier = new FakeLanguageLessonVerySimplifier(),
+  assimilProcessor = new FakeAssimilLanguageLessonProcessor(),
 ) {
   return {
     store,
@@ -1041,6 +1220,7 @@ function testServer(
     audioStorage,
     elevenLabsProvider,
     freeAnalyzer,
+    assimilProcessor,
     server: createServer(
       {},
       {
@@ -1050,6 +1230,7 @@ function testServer(
         languageLessonSplitter: splitter,
         languageLessonVerySimplifier: verySimplifier,
         freeLanguageLessonAnalyzer: freeAnalyzer,
+        assimilLanguageLessonProcessor: assimilProcessor,
         languageAudioStore: audioStore,
         languageAudioProvider: audioProvider,
         elevenLabsLanguageAudioProvider: elevenLabsProvider,
@@ -1084,13 +1265,17 @@ async function createLesson(
   server: ReturnType<typeof createServer>,
   projectId: string,
   cookie: string,
-  lessonSource?: LanguageLessonSource,
+  lessonSource: LanguageLessonSource = "language_framework",
+  sourceLessonNumber = 1,
 ) {
   const response = await server.inject({
     method: "POST",
     url: `/languages/projects/${projectId}/lessons`,
     headers: { cookie },
-    ...(lessonSource ? { payload: { lessonSource } } : {}),
+    payload: {
+      lessonSource,
+      ...(lessonSource === "assimil" ? { sourceLessonNumber } : {}),
+    },
   });
 
   assert.equal(response.statusCode, 201);
@@ -1114,6 +1299,21 @@ async function processLesson(
   return server.inject({
     method: "POST",
     url: `/languages/projects/${projectId}/lessons/${lessonId}/process`,
+    headers: { cookie },
+    payload: { sourceContent },
+  });
+}
+
+async function processAssimilLesson(
+  server: ReturnType<typeof createServer>,
+  projectId: string,
+  lessonId: string,
+  cookie: string,
+  sourceContent = "Ich bin müde. Ich bin bereit. Bis morgen.",
+) {
+  return server.inject({
+    method: "POST",
+    url: `/languages/projects/${projectId}/lessons/${lessonId}/assimil/process`,
     headers: { cookie },
     payload: { sourceContent },
   });
@@ -1378,7 +1578,13 @@ test("lesson progress updates either field or both without changing lesson conte
   try {
     const project = await createProject(server, cookie);
     const lesson = await createLesson(server, project.id, cookie, "assimil");
-    await processLesson(server, project.id, lesson.id, cookie, "Private source");
+    await processAssimilLesson(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      "Ich bin müde. Ich bin bereit. Bis morgen.",
+    );
     const before = structuredClone(
       store.lessons.find(({ id }) => id === lesson.id),
     );
@@ -1585,7 +1791,7 @@ test("preparing a free lesson stores exact text and becomes ready without OpenAI
 });
 
 test("new and legacy free lessons keep distinct public representations", async () => {
-  const { server } = testServer();
+  const { store, server } = testServer();
   const cookie = sessionCookie(firstUser.id);
 
   try {
@@ -1605,9 +1811,15 @@ test("new and legacy free lessons keep distinct public representations", async (
       "assimil",
     );
     await prepareFreeLesson(server, project.id, prepared.id, cookie);
-    await processLesson(server, project.id, legacy.id, cookie, "Legacy source");
     await processLesson(server, project.id, framework.id, cookie, "Framework source");
-    await processLesson(server, project.id, assimil.id, cookie, "Assimil source");
+    for (const legacyLessonId of [legacy.id, assimil.id]) {
+      const storedLegacy = store.lessons.find(({ id }) => id === legacyLessonId);
+      assert.ok(storedLegacy);
+      storedLegacy.sourceContent = "Historical structured source";
+      storedLegacy.status = "ready";
+      storedLegacy.structuredContent = structuredLesson;
+      storedLegacy.processedAt = new Date();
+    }
 
     const preparedDetail = await server.inject({
       method: "GET",
@@ -1978,7 +2190,13 @@ test("lesson provenance accepts every supported value, persists and defaults to 
       assert.equal(detail.json().lesson.sourceLessonNumber, 1);
     }
 
-    const compatibleCreation = await createLesson(server, project.id, cookie);
+    const compatibleCreationResponse = await server.inject({
+      method: "POST",
+      url: `/languages/projects/${project.id}/lessons`,
+      headers: { cookie },
+    });
+    assert.equal(compatibleCreationResponse.statusCode, 201);
+    const compatibleCreation = compatibleCreationResponse.json().lesson;
     assert.equal(compatibleCreation.lessonSource, "free");
     assert.equal(compatibleCreation.sourceLessonNumber, 2);
 
@@ -2020,10 +2238,18 @@ test("lesson source numbering is independent while general order stays sequentia
   try {
     const project = await createProject(server, cookie);
     const created = [];
+    let assimilNumber = 0;
 
     for (const lessonSource of lessonSources) {
+      if (lessonSource === "assimil") assimilNumber += 1;
       created.push(
-        await createLesson(server, project.id, cookie, lessonSource),
+        await createLesson(
+          server,
+          project.id,
+          cookie,
+          lessonSource,
+          lessonSource === "assimil" ? assimilNumber : 1,
+        ),
       );
     }
 
@@ -2091,6 +2317,487 @@ test("lesson provenance rejects unsupported values", async () => {
     assert.equal(response.statusCode, 400);
     assert.equal(response.json().error, "INVALID_LANGUAGE_LESSON_SOURCE");
     assert.equal(store.lessons.length, 0);
+  } finally {
+    await server.close();
+  }
+});
+
+test("Assimil creation requires a unique manual real number and preserves technical order", async () => {
+  const { server } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+
+  try {
+    const project = await createProject(server, cookie);
+    const invalidPayloads = [
+      { lessonSource: "assimil" },
+      { lessonSource: "assimil", sourceLessonNumber: 0 },
+      { lessonSource: "assimil", sourceLessonNumber: 10_000 },
+      { lessonSource: "assimil", sourceLessonNumber: 1.5 },
+      { lessonSource: "assimil", sourceLessonNumber: "15" },
+      { lessonSource: "language_framework", sourceLessonNumber: 15 },
+      { lessonSource: "free", sourceLessonNumber: 15 },
+    ];
+
+    for (const payload of invalidPayloads) {
+      const response = await server.inject({
+        method: "POST",
+        url: `/languages/projects/${project.id}/lessons`,
+        headers: { cookie },
+        payload,
+      });
+      assert.equal(response.statusCode, 400);
+    }
+
+    const assimil15 = await createLesson(
+      server,
+      project.id,
+      cookie,
+      "assimil",
+      15,
+    );
+    const framework = await createLesson(
+      server,
+      project.id,
+      cookie,
+      "language_framework",
+    );
+    const assimil16 = await createLesson(
+      server,
+      project.id,
+      cookie,
+      "assimil",
+      16,
+    );
+    const free = await createLesson(server, project.id, cookie, "free");
+
+    assert.deepEqual(
+      [assimil15, framework, assimil16, free].map(
+        ({ lessonNumber, sourceLessonNumber }) => ({
+          lessonNumber,
+          sourceLessonNumber,
+        }),
+      ),
+      [
+        { lessonNumber: 1, sourceLessonNumber: 15 },
+        { lessonNumber: 2, sourceLessonNumber: 1 },
+        { lessonNumber: 3, sourceLessonNumber: 16 },
+        { lessonNumber: 4, sourceLessonNumber: 1 },
+      ],
+    );
+
+    const duplicate = await server.inject({
+      method: "POST",
+      url: `/languages/projects/${project.id}/lessons`,
+      headers: { cookie },
+      payload: { lessonSource: "assimil", sourceLessonNumber: 15 },
+    });
+    assert.equal(duplicate.statusCode, 409);
+    assert.deepEqual(duplicate.json(), {
+      error: "LANGUAGE_ASSIMIL_LESSON_NUMBER_EXISTS",
+      message: "Ya existe la lección Assimil 15 en este idioma.",
+    });
+
+    const otherProject = await createProject(server, cookie, "Francés", "A1");
+    const sameNumberElsewhere = await createLesson(
+      server,
+      otherProject.id,
+      cookie,
+      "assimil",
+      15,
+    );
+    assert.equal(sameNumberElsewhere.sourceLessonNumber, 15);
+  } finally {
+    await server.close();
+  }
+});
+
+test("Assimil endpoint uses server context, stores exact source and returns the independent public contract", async () => {
+  const { assimilProcessor, processor, server, store } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+  const exactSource = "  Ich bin müde. Ich bin bereit. Bis morgen.  \n";
+
+  try {
+    const project = await createProject(server, cookie, "Alemán", "A1");
+    const lesson = await createLesson(
+      server,
+      project.id,
+      cookie,
+      "assimil",
+      15,
+    );
+    const storedBefore = store.lessons.find(({ id }) => id === lesson.id);
+    assert.ok(storedBefore);
+    storedBefore.learningStatus = "in_progress";
+    storedBefore.difficulty = "hard";
+
+    const response = await processAssimilLesson(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      exactSource,
+    );
+    assert.equal(response.statusCode, 200);
+    assert.equal(processor.calls.length, 0);
+    assert.deepEqual(assimilProcessor.calls, [
+      {
+        language: "Alemán",
+        level: "A1",
+        sourceLessonNumber: 15,
+        sourceContent: exactSource,
+      },
+    ]);
+
+    const publicLesson = response.json().lesson;
+    assert.equal(publicLesson.sourceContent, exactSource);
+    assert.equal(publicLesson.structuredContent, null);
+    assert.deepEqual(publicLesson.assimilContent, assimilLesson);
+    assert.equal(publicLesson.assimilPhase, "impregnation");
+    assert.equal(publicLesson.assimilReviewLesson, false);
+    assert.equal(publicLesson.learningStatus, "in_progress");
+    assert.equal(publicLesson.difficulty, "hard");
+
+    const stored = store.lessons.find(({ id }) => id === lesson.id);
+    assert.ok(stored);
+    assert.equal(stored.status, "ready");
+    assert.equal(stored.sourceContent, exactSource);
+    assert.deepEqual(stored.structuredContent, assimilLesson);
+    assert.ok(stored.processedAt);
+
+    const reloaded = await server.inject({
+      method: "GET",
+      url: `/languages/projects/${project.id}/lessons/${lesson.id}`,
+      headers: { cookie },
+    });
+    assert.deepEqual(reloaded.json().lesson.assimilContent, assimilLesson);
+    assert.equal(reloaded.json().lesson.sourceContent, exactSource);
+
+    const readyRetry = await processAssimilLesson(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      exactSource,
+    );
+    assert.equal(readyRetry.statusCode, 409);
+    assert.equal(readyRetry.json().error, "LANGUAGE_LESSON_ALREADY_PROCESSED");
+    assert.equal(assimilProcessor.calls.length, 1);
+
+    assimilProcessor.result = {
+      ...assimilLesson,
+      review: { points: ["Repasar sein", "Repasar saludos"] },
+    };
+    const reviewLesson = await createLesson(
+      server,
+      project.id,
+      cookie,
+      "assimil",
+      14,
+    );
+    const reviewResponse = await processAssimilLesson(
+      server,
+      project.id,
+      reviewLesson.id,
+      cookie,
+    );
+    assert.equal(reviewResponse.statusCode, 200);
+    assert.equal(reviewResponse.json().lesson.assimilReviewLesson, true);
+    assert.equal(reviewResponse.json().lesson.assimilPhase, "impregnation");
+  } finally {
+    await server.close();
+  }
+});
+
+test("Assimil processing validates auth, ownership, strict input and eligibility before OpenAI", async () => {
+  const { assimilProcessor, server, store } = testServer();
+  const ownerCookie = sessionCookie(firstUser.id);
+  const otherCookie = sessionCookie(secondUser.id);
+
+  try {
+    const project = await createProject(server, ownerCookie);
+    const assimil = await createLesson(
+      server,
+      project.id,
+      ownerCookie,
+      "assimil",
+      7,
+    );
+    const framework = await createLesson(
+      server,
+      project.id,
+      ownerCookie,
+      "language_framework",
+    );
+    const free = await createLesson(server, project.id, ownerCookie, "free");
+
+    const requests = [
+      await server.inject({
+        method: "POST",
+        url: `/languages/projects/${project.id}/lessons/${assimil.id}/assimil/process`,
+        payload: { sourceContent: "Guten Morgen. Ich bin müde. Bis morgen." },
+      }),
+      await server.inject({
+        method: "POST",
+        url: `/languages/projects/${project.id}/lessons/${assimil.id}/assimil/process`,
+        headers: { cookie: otherCookie },
+        payload: { sourceContent: "Guten Morgen. Ich bin müde. Bis morgen." },
+      }),
+      await processAssimilLesson(
+        server,
+        project.id,
+        randomUUID(),
+        ownerCookie,
+        "Guten Morgen. Ich bin müde. Bis morgen.",
+      ),
+      await server.inject({
+        method: "POST",
+        url: `/languages/projects/${project.id}/lessons/${assimil.id}/assimil/process`,
+        headers: { cookie: ownerCookie },
+        payload: {
+          sourceContent: "Guten Morgen. Ich bin müde. Bis morgen.",
+          extra: true,
+        },
+      }),
+      await processAssimilLesson(
+        server,
+        project.id,
+        framework.id,
+        ownerCookie,
+        "Guten Morgen. Ich bin müde. Bis morgen.",
+      ),
+      await processAssimilLesson(
+        server,
+        project.id,
+        free.id,
+        ownerCookie,
+        "Guten Morgen. Ich bin müde. Bis morgen.",
+      ),
+    ];
+
+    assert.deepEqual(
+      requests.map(({ statusCode }) => statusCode),
+      [401, 404, 404, 400, 409, 409],
+    );
+    assert.equal(assimilProcessor.calls.length, 0);
+
+    const storedAssimil = store.lessons.find(({ id }) => id === assimil.id);
+    assert.ok(storedAssimil);
+    storedAssimil.splitParentLessonId = randomUUID();
+    storedAssimil.splitPart = "A";
+    assert.equal(
+      (
+        await processAssimilLesson(
+          server,
+          project.id,
+          assimil.id,
+          ownerCookie,
+          "Guten Morgen. Ich bin müde. Bis morgen.",
+        )
+      ).statusCode,
+      409,
+    );
+    storedAssimil.splitParentLessonId = null;
+    storedAssimil.splitPart = null;
+    storedAssimil.status = "processing";
+    assert.equal(
+      (
+        await processAssimilLesson(
+          server,
+          project.id,
+          assimil.id,
+          ownerCookie,
+          "Guten Morgen. Ich bin müde. Bis morgen.",
+        )
+      ).json().error,
+      "LANGUAGE_LESSON_PROCESSING",
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("Assimil processing failure keeps exact source and progress and remains retryable", async () => {
+  const { assimilProcessor, server, store } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+  const exactSource = "\nGuten Morgen. Ich bin müde. Ich bin bereit. Bis morgen.\n";
+
+  try {
+    const project = await createProject(server, cookie);
+    const lesson = await createLesson(
+      server,
+      project.id,
+      cookie,
+      "assimil",
+      51,
+    );
+    const stored = store.lessons.find(({ id }) => id === lesson.id);
+    assert.ok(stored);
+    stored.learningStatus = "completed";
+    stored.difficulty = "normal";
+    assimilProcessor.error = new LanguageLessonProcessingError("provider_error");
+
+    const failed = await processAssimilLesson(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      exactSource,
+    );
+    assert.equal(failed.statusCode, 502);
+    assert.equal(stored.status, "failed");
+    assert.equal(stored.sourceContent, exactSource);
+    assert.equal(stored.structuredContent, null);
+    assert.equal(stored.processedAt, null);
+    assert.equal(stored.learningStatus, "completed");
+    assert.equal(stored.difficulty, "normal");
+
+    assimilProcessor.error = null;
+    const retried = await processAssimilLesson(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      exactSource,
+    );
+    assert.equal(retried.statusCode, 200);
+    assert.equal(stored.status, "ready");
+    assert.equal(assimilProcessor.calls.length, 2);
+  } finally {
+    await server.close();
+  }
+});
+
+test("generic processing is Framework-only and never calls its processor for Assimil or Free", async () => {
+  const { processor, server, store } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+
+  try {
+    const project = await createProject(server, cookie);
+    const assimil = await createLesson(
+      server,
+      project.id,
+      cookie,
+      "assimil",
+      15,
+    );
+    const free = await createLesson(server, project.id, cookie, "free");
+    const framework = await createLesson(
+      server,
+      project.id,
+      cookie,
+      "language_framework",
+    );
+
+    for (const lesson of [assimil, free]) {
+      const response = await processLesson(
+        server,
+        project.id,
+        lesson.id,
+        cookie,
+        "Do not persist this source",
+      );
+      assert.equal(response.statusCode, 409);
+      assert.equal(
+        response.json().error,
+        "LANGUAGE_LESSON_PROCESSING_UNAVAILABLE",
+      );
+      assert.equal(
+        store.lessons.find(({ id }) => id === lesson.id)?.sourceContent,
+        "",
+      );
+    }
+    assert.equal(processor.calls.length, 0);
+
+    assert.equal(
+      (
+        await processLesson(
+          server,
+          project.id,
+          framework.id,
+          cookie,
+          "Guten Morgen. Ich bin müde. Bis morgen.",
+        )
+      ).statusCode,
+      200,
+    );
+    assert.equal(processor.calls.length, 1);
+  } finally {
+    await server.close();
+  }
+});
+
+test("new Assimil v1 rejects general simplification and audio while legacy Assimil audio stays compatible", async () => {
+  const { processor, audioProvider, server, store } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+
+  try {
+    const project = await createProject(server, cookie);
+    const current = await createLesson(
+      server,
+      project.id,
+      cookie,
+      "assimil",
+      15,
+    );
+    assert.equal(
+      (
+        await processAssimilLesson(
+          server,
+          project.id,
+          current.id,
+          cookie,
+        )
+      ).statusCode,
+      200,
+    );
+
+    const simplification = await server.inject({
+      method: "POST",
+      url: `/languages/projects/${project.id}/lessons/${current.id}/simplify`,
+      headers: { cookie },
+      payload: {},
+    });
+    assert.equal(simplification.statusCode, 409);
+    assert.equal(
+      simplification.json().error,
+      "LANGUAGE_LESSON_SIMPLIFICATION_UNAVAILABLE",
+    );
+    assert.equal(processor.simplificationCalls.length, 0);
+
+    const currentAudio = await server.inject({
+      method: "POST",
+      url: `/languages/projects/${project.id}/lessons/${current.id}/audio`,
+      headers: { cookie },
+      payload: { version: "original", section: "vocabulary", index: 0 },
+    });
+    assert.equal(currentAudio.statusCode, 409);
+    assert.deepEqual(currentAudio.json(), {
+      error: "LANGUAGE_ASSIMIL_AUDIO_UNAVAILABLE",
+      message: "El audio de esta lección Assimil todavía no está disponible.",
+    });
+    assert.equal(audioProvider.calls.length, 0);
+
+    const legacy = await createLesson(
+      server,
+      project.id,
+      cookie,
+      "assimil",
+      16,
+    );
+    const storedLegacy = store.lessons.find(({ id }) => id === legacy.id);
+    assert.ok(storedLegacy);
+    storedLegacy.status = "ready";
+    storedLegacy.structuredContent = structuredLesson;
+    storedLegacy.processedAt = new Date();
+
+    const legacyAudio = await server.inject({
+      method: "POST",
+      url: `/languages/projects/${project.id}/lessons/${legacy.id}/audio`,
+      headers: { cookie },
+      payload: { version: "original", section: "vocabulary", index: 0 },
+    });
+    assert.equal(legacyAudio.statusCode, 200);
+    assert.equal(audioProvider.calls.length, 1);
   } finally {
     await server.close();
   }

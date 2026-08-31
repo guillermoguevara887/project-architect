@@ -14,6 +14,7 @@ import {
 import type { LanguageAudioStore } from "./audio-repository.js";
 import type { LanguageAudioStorage } from "./audio-storage.js";
 import {
+  assimilLanguageLessonContentSchema,
   languageLessonIdSchema,
   languageProjectIdSchema,
   structuredLanguageLessonSchema,
@@ -88,6 +89,18 @@ export function registerLanguageAudioRoutes(
 
         if (!project || !lesson) {
           return reply.code(404).send({ error: "LANGUAGE_LESSON_NOT_FOUND" });
+        }
+
+        if (
+          lesson.lessonSource === "assimil" &&
+          assimilLanguageLessonContentSchema.safeParse(lesson.structuredContent)
+            .success
+        ) {
+          return reply.code(409).send({
+            error: "LANGUAGE_ASSIMIL_AUDIO_UNAVAILABLE",
+            message:
+              "El audio de esta lección Assimil todavía no está disponible.",
+          });
         }
 
         const freeTextAudio = parsedInput.data.section === "freeText";

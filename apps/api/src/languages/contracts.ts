@@ -190,6 +190,73 @@ export type StructuredLanguageLesson = z.infer<
   typeof structuredLanguageLessonSchema
 >;
 
+const assimilComprehensionItemSchema = z
+  .object({
+    line: requiredText,
+    translation: requiredText,
+    note: requiredText.nullable(),
+  })
+  .strict();
+
+const assimilNoteSchema = z
+  .object({
+    title: requiredText,
+    explanation: requiredText,
+  })
+  .strict();
+
+const assimilPatternSchema = z
+  .object({
+    pattern: requiredText,
+    explanation: requiredText,
+    examples: z.array(requiredText).min(1).max(3),
+  })
+  .strict();
+
+const assimilKeyPhraseSchema = z
+  .object({
+    text: requiredText,
+    meaning: requiredText,
+  })
+  .strict();
+
+const assimilPracticeItemSchema = z
+  .object({
+    prompt: requiredText,
+    answer: requiredText,
+  })
+  .strict();
+
+export const assimilLanguageLessonContentSchema = z
+  .object({
+    kind: z.literal("assimil_v1"),
+    comprehension: z.array(assimilComprehensionItemSchema).min(1).max(30),
+    notes: z.array(assimilNoteSchema).min(3).max(5),
+    patterns: z.array(assimilPatternSchema).min(1).max(3),
+    keyPhrases: z.array(assimilKeyPhraseSchema).min(3).max(5),
+    practice: z
+      .object({
+        instructions: requiredText,
+        items: z.array(assimilPracticeItemSchema).min(2).max(5),
+      })
+      .strict(),
+    review: z
+      .object({
+        points: z.array(requiredText).min(2).max(5),
+      })
+      .strict()
+      .nullable(),
+  })
+  .strict();
+
+export type AssimilLanguageLessonContent = z.infer<
+  typeof assimilLanguageLessonContentSchema
+>;
+
+export type PersistedLanguageLessonContent =
+  | StructuredLanguageLesson
+  | AssimilLanguageLessonContent;
+
 export type GeneratedStructuredLanguageLesson = z.infer<
   typeof generatedStructuredLanguageLessonSchema
 >;
@@ -204,8 +271,32 @@ export const createLanguageProjectSchema = z
 export const createLanguageLessonSchema = z
   .object({
     lessonSource: languageLessonSourceSchema.default("free"),
+    sourceLessonNumber: z.number().int().min(1).max(9_999).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (
+      value.lessonSource === "assimil" &&
+      value.sourceLessonNumber === undefined
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["sourceLessonNumber"],
+        message: "Assimil lessons require a source lesson number.",
+      });
+    }
+
+    if (
+      value.lessonSource !== "assimil" &&
+      value.sourceLessonNumber !== undefined
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["sourceLessonNumber"],
+        message: "Only Assimil lessons accept a source lesson number.",
+      });
+    }
+  });
 
 export const updateLanguageLessonSchema = z
   .object({

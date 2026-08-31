@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { AuthStore } from "../auth/repository.js";
 import { readSessionUserId } from "../auth/session.js";
 import {
+  assimilLanguageLessonContentSchema,
   freeLanguageLessonAnalysisSchema,
   createLanguageLessonSchema,
   createLanguageProjectSchema,
@@ -15,6 +16,11 @@ import {
   updateLanguageLessonSchema,
   updateLanguageLessonProgressSchema,
 } from "./contracts.js";
+import {
+  assimilationPhaseForLessonNumber,
+  isAssimilReviewLessonNumber,
+  type AssimilLanguageLessonProcessor,
+} from "./assimil-processor.js";
 import {
   FreeLanguageLessonAnalysisError,
   type FreeLanguageLessonAnalyzer,
@@ -31,7 +37,10 @@ import type {
   LanguageProject,
   LanguageStore,
 } from "./repository.js";
-import { effectiveLanguageLessonStatus } from "./repository.js";
+import {
+  AssimilLanguageLessonNumberExistsError,
+  effectiveLanguageLessonStatus,
+} from "./repository.js";
 
 function publicProject(project: LanguageProject) {
   return {
@@ -76,6 +85,27 @@ function publicLesson(lesson: LanguageLesson) {
         ...summary,
         sourceContent: lesson.sourceContent,
         structuredContent: null,
+        simplifiedStructuredContent: null,
+        simplifiedAt: null,
+      };
+    }
+
+    const assimilContent = assimilLanguageLessonContentSchema.safeParse(
+      lesson.structuredContent,
+    );
+
+    if (lesson.lessonSource === "assimil" && assimilContent.success) {
+      return {
+        ...summary,
+        sourceContent: lesson.sourceContent,
+        structuredContent: null,
+        assimilContent: assimilContent.data,
+        assimilPhase: assimilationPhaseForLessonNumber(
+          lesson.sourceLessonNumber,
+        ),
+        assimilReviewLesson: isAssimilReviewLessonNumber(
+          lesson.sourceLessonNumber,
+        ),
         simplifiedStructuredContent: null,
         simplifiedAt: null,
       };
@@ -141,6 +171,7 @@ export function registerLanguageRoutes(
   splitter: LanguageLessonSplitter,
   verySimplifier: LanguageLessonVerySimplifier,
   freeAnalyzer: FreeLanguageLessonAnalyzer,
+  assimilProcessor: AssimilLanguageLessonProcessor,
 ) {
   server.get("/languages/projects", async (request, reply) => {
     try {
@@ -283,6 +314,7 @@ export function registerLanguageRoutes(
           languageProjectId: request.params.projectId,
           userId,
           lessonSource: parsedInput.data.lessonSource,
+          sourceLessonNumber: parsedInput.data.sourceLessonNumber,
         });
 
         if (!lesson) {
@@ -291,6 +323,13 @@ export function registerLanguageRoutes(
 
         return reply.code(201).send({ lesson: publicLesson(lesson) });
       } catch (error) {
+        if (error instanceof AssimilLanguageLessonNumberExistsError) {
+          return reply.code(409).send({
+            error: "LANGUAGE_ASSIMIL_LESSON_NUMBER_EXISTS",
+            message: `Ya existe la lección Assimil ${error.sourceLessonNumber} en este idioma.`,
+          });
+        }
+
         server.log.error({ error }, "Language lesson creation failed.");
         return reply.code(503).send({
           error: "LANGUAGES_UNAVAILABLE",
@@ -618,6 +657,14 @@ export function registerLanguageRoutes(
           return reply.code(404).send({ error: "LANGUAGE_LESSON_NOT_FOUND" });
         }
 
+        if (claim.kind === "not_eligible") {
+          return reply.code(409).send({
+            error: "LANGUAGE_LESSON_PROCESSING_UNAVAILABLE",
+            message:
+              "Esta lección no admite el procesamiento de Marco de idiomas.",
+          });
+        }
+
         if (claim.kind === "already_ready") {
           return reply.code(409).send({
             error: "LANGUAGE_LESSON_ALREADY_PROCESSED",
@@ -690,6 +737,144 @@ export function registerLanguageRoutes(
         return reply.code(502).send({
           error: "LANGUAGE_LESSON_PROCESSING_FAILED",
           message: "No se pudo procesar la lección. Intenta nuevamente.",
+        });
+      }
+    },
+  );
+
+  server.post<{ Params: { projectId: string; lessonId: string } }>(
+    "/languages/projects/:projectId/lessons/:lessonId/assimil/process",
+    async (request, reply) => {
+      const { projectId, lessonId } = request.params;
+      let userId: string | null = null;
+      let processingStartedAt: Date | null = null;
+
+      try {
+        userId = await authenticatedUserId(request, authStore);
+
+        if (!userId) {
+          return reply.code(401).send({ error: "UNAUTHORIZED" });
+        }
+
+        if (
+          !languageProjectIdSchema.safeParse(projectId).success ||
+          !languageLessonIdSchema.safeParse(lessonId).success
+        ) {
+          return reply.code(404).send({ error: "LANGUAGE_LESSON_NOT_FOUND" });
+        }
+
+        const sourceContent =
+          request.body &&
+          typeof request.body === "object" &&
+          "sourceContent" in request.body
+            ? request.body.sourceContent
+            : undefined;
+
+        if (
+          typeof sourceContent === "string" &&
+          sourceContent.length > LANGUAGE_LESSON_SOURCE_MAX_LENGTH
+        ) {
+          return reply.code(413).send({
+            error: "LANGUAGE_LESSON_SOURCE_TOO_LARGE",
+            message:
+              `El material supera el límite de ${LANGUAGE_LESSON_SOURCE_MAX_LENGTH.toLocaleString("es")} caracteres.`,
+          });
+        }
+
+        const parsedInput = processLanguageLessonSchema.safeParse(request.body);
+        if (!parsedInput.success) {
+          return reply.code(400).send({
+            error: "INVALID_LANGUAGE_LESSON",
+            message: "Pega material antes de procesar la lección.",
+          });
+        }
+
+        const claim = await store.claimAssimilLessonForProcessing({
+          languageProjectId: projectId,
+          lessonId,
+          userId,
+          sourceContent: parsedInput.data.sourceContent,
+        });
+
+        if (claim.kind === "not_found") {
+          return reply.code(404).send({ error: "LANGUAGE_LESSON_NOT_FOUND" });
+        }
+
+        if (claim.kind === "not_eligible") {
+          return reply.code(409).send({
+            error: "LANGUAGE_ASSIMIL_PROCESSING_UNAVAILABLE",
+            message: "Esta lección no admite el procesamiento Assimil.",
+          });
+        }
+
+        if (claim.kind === "already_ready") {
+          return reply.code(409).send({
+            error: "LANGUAGE_LESSON_ALREADY_PROCESSED",
+            message: "La lección ya fue procesada.",
+          });
+        }
+
+        if (claim.kind === "processing") {
+          return reply.code(409).send({
+            error: "LANGUAGE_LESSON_PROCESSING",
+            message: "La lección ya se está procesando.",
+          });
+        }
+
+        processingStartedAt = claim.lesson.updatedAt;
+        const structuredContent = await assimilProcessor.process({
+          language: claim.project.language,
+          level: claim.project.level,
+          sourceLessonNumber: claim.lesson.sourceLessonNumber,
+          sourceContent: parsedInput.data.sourceContent,
+        });
+        const lesson = await store.completeAssimilLessonProcessing({
+          languageProjectId: projectId,
+          lessonId,
+          userId,
+          processingStartedAt: processingStartedAt,
+          structuredContent,
+        });
+
+        if (!lesson) {
+          return reply.code(409).send({
+            error: "LANGUAGE_LESSON_STATE_CHANGED",
+            message: "La lección cambió mientras se procesaba.",
+          });
+        }
+
+        return { lesson: publicLesson(lesson) };
+      } catch (error) {
+        if (userId && processingStartedAt) {
+          try {
+            await store.failAssimilLessonProcessing({
+              languageProjectId: projectId,
+              lessonId,
+              userId,
+              processingStartedAt,
+            });
+          } catch {
+            server.log.error(
+              { projectId, lessonId, errorType: "failure_state_persist_error" },
+              "Assimil lesson failure state could not be persisted.",
+            );
+          }
+        }
+
+        server.log.error(
+          {
+            projectId,
+            lessonId,
+            errorType:
+              error instanceof LanguageLessonProcessingError
+                ? error.code
+                : "unexpected",
+          },
+          "Assimil lesson processing failed.",
+        );
+        return reply.code(502).send({
+          error: "LANGUAGE_ASSIMIL_PROCESSING_FAILED",
+          message: "No se pudo procesar la lección Assimil. Intenta nuevamente.",
         });
       }
     },

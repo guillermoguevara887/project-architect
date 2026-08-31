@@ -1,8 +1,9 @@
-import { and, asc, desc, eq, inArray, max } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, max } from "drizzle-orm";
 import { getDb } from "../db/client.js";
 import { languageLessons, languageProjects } from "../db/schema.js";
 import {
   structuredLanguageLessonSchema,
+  type AssimilLanguageLessonContent,
   type FreeLanguageLessonAnalysis,
   type LanguageLessonDifficulty,
   type LanguageLessonLearningStatus,
@@ -32,7 +33,15 @@ export type CreateNextLanguageLessonInput = {
   languageProjectId: string;
   userId: string;
   lessonSource: LanguageLessonSource;
+  sourceLessonNumber?: number;
 };
+
+export class AssimilLanguageLessonNumberExistsError extends Error {
+  constructor(readonly sourceLessonNumber: number) {
+    super(`Assimil lesson ${sourceLessonNumber} already exists.`);
+    this.name = "AssimilLanguageLessonNumberExistsError";
+  }
+}
 
 type OwnedLanguageProjectInput = Pick<
   CreateNextLanguageLessonInput,
@@ -57,6 +66,13 @@ export type FailLanguageLessonProcessingInput = OwnedLanguageProjectInput & {
   lessonId: string;
   processingStartedAt: Date;
 };
+
+export type CompleteAssimilLanguageLessonProcessingInput =
+  OwnedLanguageProjectInput & {
+    lessonId: string;
+    processingStartedAt: Date;
+    structuredContent: AssimilLanguageLessonContent;
+  };
 
 type OwnedLanguageLessonInput = OwnedLanguageProjectInput & {
   lessonId: string;
@@ -160,6 +176,7 @@ export type ClaimLanguageLessonResult =
       project: LanguageProject;
     }
   | { kind: "not_found" }
+  | { kind: "not_eligible" }
   | { kind: "already_ready" }
   | { kind: "processing" };
 
@@ -219,6 +236,15 @@ export interface LanguageStore {
     input: CompleteLanguageLessonProcessingInput,
   ): Promise<LanguageLesson | null>;
   failLessonProcessing(
+    input: FailLanguageLessonProcessingInput,
+  ): Promise<LanguageLesson | null>;
+  claimAssimilLessonForProcessing(
+    input: ClaimLanguageLessonInput,
+  ): Promise<ClaimLanguageLessonResult>;
+  completeAssimilLessonProcessing(
+    input: CompleteAssimilLanguageLessonProcessingInput,
+  ): Promise<LanguageLesson | null>;
+  failAssimilLessonProcessing(
     input: FailLanguageLessonProcessingInput,
   ): Promise<LanguageLesson | null>;
   claimLessonForSimplification(
@@ -336,19 +362,48 @@ export const languageStore: LanguageStore = {
         .from(languageLessons)
         .where(eq(languageLessons.languageProjectId, project.id));
       const lessonNumber = (latestLesson?.lessonNumber ?? 0) + 1;
-      const [latestSourceLesson] = await transaction
-        .select({
-          sourceLessonNumber: max(languageLessons.sourceLessonNumber),
-        })
-        .from(languageLessons)
-        .where(
-          and(
-            eq(languageLessons.languageProjectId, project.id),
-            eq(languageLessons.lessonSource, input.lessonSource),
-          ),
-        );
-      const sourceLessonNumber =
-        (latestSourceLesson?.sourceLessonNumber ?? 0) + 1;
+      let sourceLessonNumber: number;
+
+      if (input.lessonSource === "assimil") {
+        if (input.sourceLessonNumber === undefined) {
+          throw new Error("Assimil lessons require a source lesson number.");
+        }
+
+        const [duplicate] = await transaction
+          .select({ id: languageLessons.id })
+          .from(languageLessons)
+          .where(
+            and(
+              eq(languageLessons.languageProjectId, project.id),
+              eq(languageLessons.lessonSource, "assimil"),
+              eq(languageLessons.sourceLessonNumber, input.sourceLessonNumber),
+              isNull(languageLessons.splitParentLessonId),
+            ),
+          )
+          .limit(1);
+
+        if (duplicate) {
+          throw new AssimilLanguageLessonNumberExistsError(
+            input.sourceLessonNumber,
+          );
+        }
+
+        sourceLessonNumber = input.sourceLessonNumber;
+      } else {
+        const [latestSourceLesson] = await transaction
+          .select({
+            sourceLessonNumber: max(languageLessons.sourceLessonNumber),
+          })
+          .from(languageLessons)
+          .where(
+            and(
+              eq(languageLessons.languageProjectId, project.id),
+              eq(languageLessons.lessonSource, input.lessonSource),
+            ),
+          );
+        sourceLessonNumber =
+          (latestSourceLesson?.sourceLessonNumber ?? 0) + 1;
+      }
       const [lesson] = await transaction
         .insert(languageLessons)
         .values({
@@ -639,6 +694,14 @@ export const languageStore: LanguageStore = {
         return { kind: "not_found" as const };
       }
 
+      if (
+        existing.lessonSource !== "language_framework" ||
+        existing.splitParentLessonId !== null ||
+        existing.splitPart !== null
+      ) {
+        return { kind: "not_eligible" as const };
+      }
+
       const effectiveStatus = effectiveLanguageLessonStatus(existing);
 
       if (effectiveStatus === "ready") {
@@ -719,6 +782,136 @@ export const languageStore: LanguageStore = {
         and(
           eq(languageLessons.id, input.lessonId),
           eq(languageLessons.languageProjectId, input.languageProjectId),
+          eq(languageLessons.status, "processing"),
+          eq(languageLessons.updatedAt, input.processingStartedAt),
+        ),
+      )
+      .returning();
+
+    return lesson ?? null;
+  },
+
+  async claimAssimilLessonForProcessing(input) {
+    return getDb().transaction(async (transaction) => {
+      const [project] = await transaction
+        .select()
+        .from(languageProjects)
+        .where(
+          and(
+            eq(languageProjects.id, input.languageProjectId),
+            eq(languageProjects.userId, input.userId),
+          ),
+        )
+        .limit(1);
+
+      if (!project) return { kind: "not_found" as const };
+
+      const [existing] = await transaction
+        .select()
+        .from(languageLessons)
+        .where(
+          and(
+            eq(languageLessons.id, input.lessonId),
+            eq(languageLessons.languageProjectId, input.languageProjectId),
+          ),
+        )
+        .limit(1)
+        .for("update");
+
+      if (!existing) return { kind: "not_found" as const };
+
+      if (
+        existing.lessonSource !== "assimil" ||
+        existing.splitParentLessonId !== null ||
+        existing.splitPart !== null ||
+        existing.sourceLessonNumber < 1 ||
+        existing.sourceLessonNumber > 9_999
+      ) {
+        return { kind: "not_eligible" as const };
+      }
+
+      const effectiveStatus = effectiveLanguageLessonStatus(existing);
+      if (effectiveStatus === "ready") {
+        return { kind: "already_ready" as const };
+      }
+      if (effectiveStatus === "processing") {
+        return { kind: "processing" as const };
+      }
+
+      const processingStartedAt = new Date();
+      const [lesson] = await transaction
+        .update(languageLessons)
+        .set({
+          sourceContent: input.sourceContent,
+          status: "processing",
+          structuredContent: null,
+          processedAt: null,
+          updatedAt: processingStartedAt,
+        })
+        .where(
+          and(
+            eq(languageLessons.id, input.lessonId),
+            eq(languageLessons.languageProjectId, input.languageProjectId),
+          ),
+        )
+        .returning();
+
+      if (!lesson) {
+        throw new Error("The Assimil lesson could not enter processing.");
+      }
+
+      return { kind: "claimed" as const, lesson, project };
+    });
+  },
+
+  async completeAssimilLessonProcessing(input) {
+    if (!(await ownsProject(input.languageProjectId, input.userId))) {
+      return null;
+    }
+
+    const completedAt = new Date();
+    const [lesson] = await getDb()
+      .update(languageLessons)
+      .set({
+        status: "ready",
+        structuredContent: input.structuredContent,
+        processedAt: completedAt,
+        updatedAt: completedAt,
+      })
+      .where(
+        and(
+          eq(languageLessons.id, input.lessonId),
+          eq(languageLessons.languageProjectId, input.languageProjectId),
+          eq(languageLessons.lessonSource, "assimil"),
+          isNull(languageLessons.splitParentLessonId),
+          eq(languageLessons.status, "processing"),
+          eq(languageLessons.updatedAt, input.processingStartedAt),
+        ),
+      )
+      .returning();
+
+    return lesson ?? null;
+  },
+
+  async failAssimilLessonProcessing(input) {
+    if (!(await ownsProject(input.languageProjectId, input.userId))) {
+      return null;
+    }
+
+    const [lesson] = await getDb()
+      .update(languageLessons)
+      .set({
+        status: "failed",
+        structuredContent: null,
+        processedAt: null,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(languageLessons.id, input.lessonId),
+          eq(languageLessons.languageProjectId, input.languageProjectId),
+          eq(languageLessons.lessonSource, "assimil"),
+          isNull(languageLessons.splitParentLessonId),
           eq(languageLessons.status, "processing"),
           eq(languageLessons.updatedAt, input.processingStartedAt),
         ),
@@ -935,6 +1128,13 @@ export const languageStore: LanguageStore = {
 
       if (existing.status !== "ready" || !existing.structuredContent) {
         return { kind: "not_ready" as const };
+      }
+
+      if (
+        !structuredLanguageLessonSchema.safeParse(existing.structuredContent)
+          .success
+      ) {
+        return { kind: "not_eligible" as const };
       }
 
       if (!input.regenerate && existing.simplifiedStructuredContent) {

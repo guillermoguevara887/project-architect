@@ -13,7 +13,11 @@ import {
   type MigrationFile,
 } from "../../src/db/migrations.js";
 import { createPostgresMigrationDatabase } from "../../src/db/postgres-migration-database.js";
-import { languageStore } from "../../src/languages/repository.js";
+import type { AssimilLanguageLessonContent } from "../../src/languages/contracts.js";
+import {
+  AssimilLanguageLessonNumberExistsError,
+  languageStore,
+} from "../../src/languages/repository.js";
 
 const databaseUrl = process.env.MIGRATION_TEST_DATABASE_URL;
 
@@ -406,6 +410,148 @@ test("the real MemoOS migration chain safely upgrades existing language lessons"
     assert.ok(report.migrations.every(({ state: status }) => status === "applied"));
   } finally {
     await database.close();
+  }
+});
+
+test("Assimil repository persists manual numbering, exact source and independent JSON content", async () => {
+  const isolatedUrl = await createIsolatedDatabase("assimil_repository");
+  const migrationDatabase = createPostgresMigrationDatabase(isolatedUrl);
+  const migrations = await loadMigrationFiles(migrationDirectory);
+  const previousDatabaseUrl = process.env.DATABASE_URL;
+  const userId = "d4a76f2a-4ad6-4f46-9861-68abdfbd7412";
+  const projectId = "63eff9cf-9565-4e7f-a53e-2eced0c1ea93";
+  const exactSource = "  Guten Morgen.\nIch bin müde. Bis morgen.  ";
+  const content: AssimilLanguageLessonContent = {
+    kind: "assimil_v1",
+    comprehension: [
+      { line: "Guten Morgen.", translation: "Buenos días.", note: null },
+    ],
+    notes: [
+      { title: "Gruß", explanation: "Saludo de mañana." },
+      { title: "sein", explanation: "Bin es la primera persona." },
+      { title: "müde", explanation: "Expresa cansancio." },
+    ],
+    patterns: [
+      {
+        pattern: "Ich bin …",
+        explanation: "Describe un estado.",
+        examples: ["Ich bin müde."],
+      },
+    ],
+    keyPhrases: [
+      { text: "Guten Morgen.", meaning: "Buenos días." },
+      { text: "Ich bin müde.", meaning: "Estoy cansado." },
+      { text: "Bis morgen.", meaning: "Hasta mañana." },
+    ],
+    practice: {
+      instructions: "Completa.",
+      items: [
+        { prompt: "Ich ___ müde.", answer: "bin" },
+        { prompt: "Bis ___.", answer: "morgen" },
+      ],
+    },
+    review: null,
+  };
+
+  try {
+    await migratePending(migrationDatabase, migrations);
+    await withSql(isolatedUrl, async (sql) => {
+      await sql`
+        INSERT INTO users (id, username, password_hash)
+        VALUES (${userId}, 'assimil-repository-user', 'not-a-real-hash')
+      `;
+      await sql`
+        INSERT INTO language_projects (id, user_id, language, level)
+        VALUES (${projectId}, ${userId}, 'Deutsch', 'A1')
+      `;
+    });
+
+    process.env.DATABASE_URL = isolatedUrl;
+    const assimil15 = await languageStore.createNextLesson({
+      languageProjectId: projectId,
+      userId,
+      lessonSource: "assimil",
+      sourceLessonNumber: 15,
+    });
+    const framework = await languageStore.createNextLesson({
+      languageProjectId: projectId,
+      userId,
+      lessonSource: "language_framework",
+    });
+    const assimil2 = await languageStore.createNextLesson({
+      languageProjectId: projectId,
+      userId,
+      lessonSource: "assimil",
+      sourceLessonNumber: 2,
+    });
+    const free = await languageStore.createNextLesson({
+      languageProjectId: projectId,
+      userId,
+      lessonSource: "free",
+    });
+    assert.ok(assimil15 && framework && assimil2 && free);
+    assert.deepEqual(
+      [assimil15, framework, assimil2, free].map(
+        ({ lessonNumber, sourceLessonNumber }) => ({
+          lessonNumber,
+          sourceLessonNumber,
+        }),
+      ),
+      [
+        { lessonNumber: 1, sourceLessonNumber: 15 },
+        { lessonNumber: 2, sourceLessonNumber: 1 },
+        { lessonNumber: 3, sourceLessonNumber: 2 },
+        { lessonNumber: 4, sourceLessonNumber: 1 },
+      ],
+    );
+
+    await assert.rejects(
+      languageStore.createNextLesson({
+        languageProjectId: projectId,
+        userId,
+        lessonSource: "assimil",
+        sourceLessonNumber: 15,
+      }),
+      AssimilLanguageLessonNumberExistsError,
+    );
+
+    const claim = await languageStore.claimAssimilLessonForProcessing({
+      languageProjectId: projectId,
+      lessonId: assimil15.id,
+      userId,
+      sourceContent: exactSource,
+    });
+    assert.equal(claim.kind, "claimed");
+    if (claim.kind !== "claimed") assert.fail("Expected Assimil claim.");
+    assert.equal(claim.lesson.sourceContent, exactSource);
+
+    const completed = await languageStore.completeAssimilLessonProcessing({
+      languageProjectId: projectId,
+      lessonId: assimil15.id,
+      userId,
+      processingStartedAt: claim.lesson.updatedAt,
+      structuredContent: content,
+    });
+    assert.ok(completed);
+    assert.equal(completed.sourceContent, exactSource);
+    assert.deepEqual(completed.structuredContent, content);
+    assert.equal(completed.lessonNumber, 1);
+    assert.equal(completed.sourceLessonNumber, 15);
+    assert.equal(completed.status, "ready");
+
+    const reloaded = await languageStore.findLessonByIdForUser(
+      assimil15.id,
+      projectId,
+      userId,
+    );
+    assert.ok(reloaded);
+    assert.equal(reloaded.sourceContent, exactSource);
+    assert.deepEqual(reloaded.structuredContent, content);
+  } finally {
+    await closeDbConnection();
+    if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = previousDatabaseUrl;
+    await migrationDatabase.close();
   }
 });
 

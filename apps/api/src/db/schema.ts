@@ -20,6 +20,7 @@ import type {
   LanguageLessonSource,
   LanguageLessonSplitPart,
   LanguageLessonStatus,
+  PersistedLanguageLessonContent,
   StructuredLanguageLesson,
 } from "../languages/contracts.js";
 import type {
@@ -469,7 +470,7 @@ export const languageLessons = pgTable(
       .default("pending")
       .notNull(),
     difficulty: text("difficulty").$type<LanguageLessonDifficulty>(),
-    structuredContent: jsonb("structured_content").$type<StructuredLanguageLesson>(),
+    structuredContent: jsonb("structured_content").$type<PersistedLanguageLessonContent>(),
     simplifiedStructuredContent: jsonb("simplified_structured_content")
       .$type<StructuredLanguageLesson>(),
     simplificationStartedAt: timestamp("simplification_started_at", {
