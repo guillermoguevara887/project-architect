@@ -24,6 +24,7 @@ import {
   type LanguageLessonProcessor,
 } from "./lesson-processor.js";
 import type { LanguageLessonSplitter } from "./lesson-splitter.js";
+import type { LanguageLessonVerySimplifier } from "./lesson-very-simplifier.js";
 import type {
   LanguageLesson,
   LanguageLessonSplitParts,
@@ -138,6 +139,7 @@ export function registerLanguageRoutes(
   authStore: AuthStore,
   processor: LanguageLessonProcessor,
   splitter: LanguageLessonSplitter,
+  verySimplifier: LanguageLessonVerySimplifier,
   freeAnalyzer: FreeLanguageLessonAnalyzer,
 ) {
   server.get("/languages/projects", async (request, reply) => {
@@ -910,6 +912,14 @@ export function registerLanguageRoutes(
           });
         }
 
+        if (claim.kind === "not_eligible") {
+          return reply.code(409).send({
+            error: "LANGUAGE_LESSON_SIMPLIFICATION_UNAVAILABLE",
+            message:
+              "Esta lección no admite el flujo de simplificación general.",
+          });
+        }
+
         if (claim.kind === "already_simplified") {
           return { lesson: publicLesson(claim.lesson) };
         }
@@ -991,6 +1001,150 @@ export function registerLanguageRoutes(
         return reply.code(502).send({
           error: "LANGUAGE_LESSON_SIMPLIFICATION_FAILED",
           message: "No se pudo simplificar la lección. Intenta nuevamente.",
+        });
+      }
+    },
+  );
+
+  server.post<{ Params: { projectId: string; lessonId: string } }>(
+    "/languages/projects/:projectId/lessons/:lessonId/simplify/very",
+    async (request, reply) => {
+      const { projectId, lessonId } = request.params;
+      let userId: string | null = null;
+      let simplificationStartedAt: Date | null = null;
+
+      try {
+        userId = await authenticatedUserId(request, authStore);
+
+        if (!userId) {
+          return reply.code(401).send({ error: "UNAUTHORIZED" });
+        }
+
+        if (
+          !languageProjectIdSchema.safeParse(projectId).success ||
+          !languageLessonIdSchema.safeParse(lessonId).success
+        ) {
+          return reply.code(404).send({ error: "LANGUAGE_LESSON_NOT_FOUND" });
+        }
+
+        const parsedInput = simplifyLanguageLessonSchema.safeParse(
+          request.body ?? {},
+        );
+        if (!parsedInput.success) {
+          return reply.code(400).send({
+            error: "INVALID_LANGUAGE_LESSON_SIMPLIFICATION",
+            message: "La solicitud de simplificación no es válida.",
+          });
+        }
+
+        const claim = await store.claimLessonForVerySimplification({
+          languageProjectId: projectId,
+          lessonId,
+          userId,
+          regenerate: parsedInput.data.regenerate,
+        });
+
+        if (claim.kind === "not_found") {
+          return reply.code(404).send({ error: "LANGUAGE_LESSON_NOT_FOUND" });
+        }
+
+        if (claim.kind === "not_ready" || claim.kind === "not_eligible") {
+          return reply.code(409).send({
+            error: "LANGUAGE_LESSON_VERY_SIMPLIFICATION_UNAVAILABLE",
+            message:
+              "Solo una parte 1A o 1B procesada del Marco A1 admite esta versión.",
+          });
+        }
+
+        if (claim.kind === "already_simplified") {
+          return { lesson: publicLesson(claim.lesson) };
+        }
+
+        if (claim.kind === "processing") {
+          return reply.code(409).send({
+            error: "LANGUAGE_LESSON_SIMPLIFICATION_PROCESSING",
+            message: "La lección ya se está simplificando.",
+          });
+        }
+
+        const claimedAt = claim.lesson.simplificationStartedAt;
+        if (!claimedAt) {
+          throw new Error(
+            "Language lesson very simplification claim is missing.",
+          );
+        }
+
+        const splitPart = claim.lesson.splitPart;
+        if (splitPart !== "A" && splitPart !== "B") {
+          throw new Error("Language lesson split part is invalid after claim.");
+        }
+
+        simplificationStartedAt = claimedAt;
+        const structuredContent = structuredLanguageLessonSchema.parse(
+          claim.lesson.structuredContent,
+        );
+        const simplifiedStructuredContent = await verySimplifier.simplifyVery({
+          language: claim.project.language,
+          level: claim.project.level,
+          splitPart,
+          structuredContent,
+        });
+        const lesson = await store.completeLessonSimplification({
+          languageProjectId: projectId,
+          lessonId,
+          userId,
+          simplificationStartedAt: claimedAt,
+          simplifiedStructuredContent,
+        });
+
+        if (!lesson) {
+          server.log.warn(
+            { projectId, lessonId, simplificationState: "changed" },
+            "Language lesson very simplification was not persisted.",
+          );
+          return reply.code(409).send({
+            error: "LANGUAGE_LESSON_STATE_CHANGED",
+            message: "La lección cambió mientras se simplificaba.",
+          });
+        }
+
+        return { lesson: publicLesson(lesson) };
+      } catch (error) {
+        if (userId && simplificationStartedAt) {
+          try {
+            await store.failLessonSimplification({
+              languageProjectId: projectId,
+              lessonId,
+              userId,
+              simplificationStartedAt,
+            });
+          } catch {
+            server.log.error(
+              {
+                projectId,
+                lessonId,
+                errorType: "very_simplification_failure_state_persist_error",
+              },
+              "Language lesson very simplification failure state could not be cleared.",
+            );
+          }
+        }
+
+        server.log.error(
+          {
+            projectId,
+            lessonId,
+            errorType:
+              error instanceof LanguageLessonProcessingError
+                ? error.code
+                : "unexpected",
+          },
+          "Language lesson very simplification failed.",
+        );
+        return reply.code(502).send({
+          error: "LANGUAGE_LESSON_VERY_SIMPLIFICATION_FAILED",
+          message:
+            "No se pudo crear la versión muy simplificada. Intenta nuevamente.",
         });
       }
     },

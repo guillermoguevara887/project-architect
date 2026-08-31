@@ -1,16 +1,20 @@
 import { and, asc, desc, eq, inArray, max } from "drizzle-orm";
 import { getDb } from "../db/client.js";
 import { languageLessons, languageProjects } from "../db/schema.js";
-import type {
-  FreeLanguageLessonAnalysis,
-  LanguageLessonDifficulty,
-  LanguageLessonLearningStatus,
-  LanguageLessonSplitPart,
-  LanguageLessonSource,
-  LanguageLessonStatus,
-  StructuredLanguageLesson,
+import {
+  structuredLanguageLessonSchema,
+  type FreeLanguageLessonAnalysis,
+  type LanguageLessonDifficulty,
+  type LanguageLessonLearningStatus,
+  type LanguageLessonSplitPart,
+  type LanguageLessonSource,
+  type LanguageLessonStatus,
+  type StructuredLanguageLesson,
 } from "./contracts.js";
-import { languageLessonIsSplitEligible } from "./lesson-splitter.js";
+import {
+  isA1LanguageLevel,
+  languageLessonIsSplitEligible,
+} from "./lesson-splitter.js";
 
 export const LANGUAGE_LESSON_PROCESSING_TIMEOUT_MS = 15 * 60 * 1_000;
 export const LANGUAGE_LESSON_SIMPLIFICATION_TIMEOUT_MS = 15 * 60 * 1_000;
@@ -167,6 +171,7 @@ export type ClaimLanguageLessonSimplificationResult =
     }
   | { kind: "not_found" }
   | { kind: "not_ready" }
+  | { kind: "not_eligible" }
   | { kind: "already_simplified"; lesson: LanguageLesson }
   | { kind: "processing" };
 
@@ -217,6 +222,9 @@ export interface LanguageStore {
     input: FailLanguageLessonProcessingInput,
   ): Promise<LanguageLesson | null>;
   claimLessonForSimplification(
+    input: ClaimLanguageLessonSimplificationInput,
+  ): Promise<ClaimLanguageLessonSimplificationResult>;
+  claimLessonForVerySimplification(
     input: ClaimLanguageLessonSimplificationInput,
   ): Promise<ClaimLanguageLessonSimplificationResult>;
   completeLessonSimplification(
@@ -918,6 +926,13 @@ export const languageStore: LanguageStore = {
         return { kind: "not_found" as const };
       }
 
+      if (
+        existing.splitParentLessonId !== null ||
+        existing.splitPart !== null
+      ) {
+        return { kind: "not_eligible" as const };
+      }
+
       if (existing.status !== "ready" || !existing.structuredContent) {
         return { kind: "not_ready" as const };
       }
@@ -949,6 +964,86 @@ export const languageStore: LanguageStore = {
 
       if (!lesson) {
         throw new Error("The language lesson could not enter simplification.");
+      }
+
+      return { kind: "claimed" as const, lesson, project };
+    });
+  },
+
+  async claimLessonForVerySimplification(input) {
+    return getDb().transaction(async (transaction) => {
+      const [project] = await transaction
+        .select()
+        .from(languageProjects)
+        .where(
+          and(
+            eq(languageProjects.id, input.languageProjectId),
+            eq(languageProjects.userId, input.userId),
+          ),
+        )
+        .limit(1);
+
+      if (!project) {
+        return { kind: "not_found" as const };
+      }
+
+      const [existing] = await transaction
+        .select()
+        .from(languageLessons)
+        .where(
+          and(
+            eq(languageLessons.id, input.lessonId),
+            eq(languageLessons.languageProjectId, input.languageProjectId),
+          ),
+        )
+        .limit(1)
+        .for("update");
+
+      if (!existing) {
+        return { kind: "not_found" as const };
+      }
+
+      if (
+        !isA1LanguageLevel(project.level) ||
+        existing.lessonSource !== "language_framework" ||
+        existing.splitParentLessonId === null ||
+        (existing.splitPart !== "A" && existing.splitPart !== "B") ||
+        existing.status !== "ready" ||
+        !structuredLanguageLessonSchema.safeParse(existing.structuredContent)
+          .success
+      ) {
+        return { kind: "not_eligible" as const };
+      }
+
+      if (!input.regenerate && existing.simplifiedStructuredContent) {
+        return { kind: "already_simplified" as const, lesson: existing };
+      }
+
+      if (
+        existing.simplificationStartedAt &&
+        Date.now() - existing.simplificationStartedAt.getTime() <
+          LANGUAGE_LESSON_SIMPLIFICATION_TIMEOUT_MS
+      ) {
+        return { kind: "processing" as const };
+      }
+
+      const simplificationStartedAt = new Date();
+      const [lesson] = await transaction
+        .update(languageLessons)
+        .set({ simplificationStartedAt })
+        .where(
+          and(
+            eq(languageLessons.id, input.lessonId),
+            eq(languageLessons.languageProjectId, input.languageProjectId),
+            eq(languageLessons.status, "ready"),
+          ),
+        )
+        .returning();
+
+      if (!lesson) {
+        throw new Error(
+          "The language lesson could not enter very simplification.",
+        );
       }
 
       return { kind: "claimed" as const, lesson, project };

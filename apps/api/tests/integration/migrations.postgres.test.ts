@@ -2060,3 +2060,196 @@ test("split repository creates A/B atomically, idempotently and preserves the pa
     await migrationDatabase.close();
   }
 });
+
+test("very simplification repository claims children and preserves Base, previous versions and parent", async () => {
+  const isolatedUrl = await createIsolatedDatabase("very_simplification_repository");
+  const migrationDatabase = createPostgresMigrationDatabase(isolatedUrl);
+  const migrations = await loadMigrationFiles(migrationDirectory);
+  const previousDatabaseUrl = process.env.DATABASE_URL;
+  const userId = "79000000-0000-4000-8000-000000000001";
+  const projectId = "79000000-0000-4000-8000-000000000002";
+  const parentId = "79000000-0000-4000-8000-000000000003";
+  const partAId = "79000000-0000-4000-8000-000000000004";
+  const partBId = "79000000-0000-4000-8000-000000000005";
+  const base = {
+    vocabulary: [
+      { term: "ich", meaning: "yo", example: "Ich bin hier." },
+      { term: "hier", meaning: "aquí", example: "Ich bin hier." },
+      { term: "müde", meaning: "cansado", example: "Ich bin müde." },
+    ],
+    phrases: [
+      { text: "Ich bin hier.", translation: "Estoy aquí.", note: null },
+      { text: "Ich bin müde.", translation: "Estoy cansado.", note: null },
+      { text: "Ich schlafe.", translation: "Duermo.", note: null },
+    ],
+    patterns: [
+      {
+        name: "Ich bin …",
+        explanation: "Describe un estado.",
+        examples: ["Ich bin hier."],
+      },
+    ],
+    miniStory: { text: "Mia ist hier.\nMia ist müde." },
+    automaticThoughts: [
+      { text: "Ich bin hier." },
+      { text: "Ich bin müde." },
+      { text: "Ich schlafe." },
+    ],
+    dialogue: [
+      { speaker: "Mia", text: "Ich bin müde." },
+      { speaker: "Tom", text: "Schlaf gut." },
+    ],
+    nextLevelBridge: [
+      {
+        base: "Ich bin müde.",
+        advanced: "Ich bin sehr müde.",
+        note: "Añade intensidad.",
+      },
+    ],
+    review: { keyVocabulary: ["müde"], keyPatterns: ["Ich bin …"] },
+    kanji: [],
+  };
+  const very = {
+    ...base,
+    miniStory: { text: "Mia ist müde." },
+  };
+  const previousVery = {
+    ...base,
+    miniStory: { text: "Tom ist hier." },
+  };
+
+  try {
+    assert.deepEqual(
+      await migratePending(migrationDatabase, migrations),
+      migrations.map(({ id }) => id),
+    );
+    await withSql(isolatedUrl, async (sql) => {
+      await sql`
+        INSERT INTO users (id, username, password_hash)
+        VALUES (${userId}, 'very-simplification-user', 'not-a-real-hash')
+      `;
+      await sql`
+        INSERT INTO language_projects (id, user_id, language, level)
+        VALUES (${projectId}, ${userId}, 'Deutsch', 'A1 Beginner')
+      `;
+      await sql`
+        INSERT INTO language_lessons (
+          id, language_project_id, lesson_number, lesson_source,
+          source_lesson_number, source_content, status, structured_content,
+          processed_at, learning_status, difficulty
+        ) VALUES (
+          ${parentId}, ${projectId}, 1, 'language_framework', 1,
+          'Parent remains private', 'ready', ${sql.json(base)}, now(),
+          'in_progress', 'hard'
+        )
+      `;
+      await sql`
+        INSERT INTO language_lessons (
+          id, language_project_id, lesson_number, lesson_source,
+          source_lesson_number, split_parent_lesson_id, split_part,
+          source_content, status, structured_content, processed_at
+        ) VALUES
+          (${partAId}, ${projectId}, 2, 'language_framework', 1,
+           ${parentId}, 'A', '', 'ready', ${sql.json(base)}, now()),
+          (${partBId}, ${projectId}, 3, 'language_framework', 1,
+           ${parentId}, 'B', '', 'ready', ${sql.json(base)}, now())
+      `;
+      await sql`
+        UPDATE language_lessons
+        SET simplified_structured_content = ${sql.json(previousVery)},
+            simplified_at = now()
+        WHERE id = ${partBId}
+      `;
+    });
+
+    process.env.DATABASE_URL = isolatedUrl;
+
+    const rootVeryClaim = await languageStore.claimLessonForVerySimplification({
+      languageProjectId: projectId,
+      lessonId: parentId,
+      userId,
+      regenerate: false,
+    });
+    assert.equal(rootVeryClaim.kind, "not_eligible");
+
+    const childRootClaim = await languageStore.claimLessonForSimplification({
+      languageProjectId: projectId,
+      lessonId: partAId,
+      userId,
+      regenerate: false,
+    });
+    assert.equal(childRootClaim.kind, "not_eligible");
+
+    const partAClaim = await languageStore.claimLessonForVerySimplification({
+      languageProjectId: projectId,
+      lessonId: partAId,
+      userId,
+      regenerate: false,
+    });
+    assert.equal(partAClaim.kind, "claimed");
+    if (partAClaim.kind !== "claimed") assert.fail("Expected child claim.");
+    const partAStartedAt = partAClaim.lesson.simplificationStartedAt;
+    assert.ok(partAStartedAt);
+
+    const duplicate = await languageStore.claimLessonForVerySimplification({
+      languageProjectId: projectId,
+      lessonId: partAId,
+      userId,
+      regenerate: false,
+    });
+    assert.equal(duplicate.kind, "processing");
+
+    const completed = await languageStore.completeLessonSimplification({
+      languageProjectId: projectId,
+      lessonId: partAId,
+      userId,
+      simplificationStartedAt: partAStartedAt,
+      simplifiedStructuredContent: very,
+    });
+    assert.ok(completed);
+    assert.deepEqual(completed.structuredContent, base);
+    assert.deepEqual(completed.simplifiedStructuredContent, very);
+    assert.equal(completed.simplificationStartedAt, null);
+    assert.equal(completed.status, "ready");
+
+    const partBClaim = await languageStore.claimLessonForVerySimplification({
+      languageProjectId: projectId,
+      lessonId: partBId,
+      userId,
+      regenerate: true,
+    });
+    assert.equal(partBClaim.kind, "claimed");
+    if (partBClaim.kind !== "claimed") assert.fail("Expected regenerate claim.");
+    assert.deepEqual(partBClaim.lesson.simplifiedStructuredContent, previousVery);
+    assert.ok(partBClaim.lesson.simplificationStartedAt);
+
+    const failed = await languageStore.failLessonSimplification({
+      languageProjectId: projectId,
+      lessonId: partBId,
+      userId,
+      simplificationStartedAt: partBClaim.lesson.simplificationStartedAt,
+    });
+    assert.ok(failed);
+    assert.deepEqual(failed.structuredContent, base);
+    assert.deepEqual(failed.simplifiedStructuredContent, previousVery);
+    assert.equal(failed.simplificationStartedAt, null);
+    assert.equal(failed.status, "ready");
+
+    const parentAfter = await languageStore.findLessonByIdForUser(
+      parentId,
+      projectId,
+      userId,
+    );
+    assert.ok(parentAfter);
+    assert.deepEqual(parentAfter.structuredContent, base);
+    assert.equal(parentAfter.simplifiedStructuredContent, null);
+    assert.equal(parentAfter.learningStatus, "in_progress");
+    assert.equal(parentAfter.difficulty, "hard");
+    assert.equal(parentAfter.simplificationStartedAt, null);
+  } finally {
+    await closeDbConnection();
+    if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = previousDatabaseUrl;
+    await migrationDatabase.close();
+  }
+});
