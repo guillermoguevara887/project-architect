@@ -200,6 +200,19 @@ export type LanguageLesson = {
   updatedAt: string;
 };
 
+export type LanguageLessonSplitState =
+  | { kind: "none" }
+  | {
+      kind: "complete";
+      parts: Record<LanguageLessonSplitPart, LanguageLesson>;
+    }
+  | { kind: "inconsistent" };
+
+export type LanguageLessonSplitResponse = {
+  parent: LanguageLesson;
+  parts: Record<LanguageLessonSplitPart, LanguageLesson>;
+};
+
 export function isJapaneseLanguage(language: string) {
   const trimmed = language.trim();
   const normalized = trimmed
@@ -654,17 +667,165 @@ export function languageLessonSubtitle(
 }
 
 export function formatLanguageLessonTitle(
-  lesson: Pick<LanguageLesson, "lessonSource" | "sourceLessonNumber">,
+  lesson: Pick<
+    LanguageLesson,
+    "lessonSource" | "sourceLessonNumber" | "splitPart"
+  >,
   language: string,
 ) {
   switch (lesson.lessonSource) {
     case "assimil":
       return `Assimil ${lesson.sourceLessonNumber}`;
     case "language_framework":
-      return `Marco ${language} ${lesson.sourceLessonNumber}`;
+      return `Marco ${language} ${lesson.sourceLessonNumber}${lesson.splitPart ?? ""}`;
     case "free":
       return `Lección libre ${lesson.sourceLessonNumber}`;
   }
+}
+
+export function isA1LanguageProjectLevel(level: string) {
+  return /^a1\b/iu.test(level.trim());
+}
+
+export function languageLessonSplitState(
+  lessons: readonly LanguageLesson[],
+  parentId: string,
+): LanguageLessonSplitState {
+  const children = lessons.filter(
+    ({ splitParentLessonId }) => splitParentLessonId === parentId,
+  );
+
+  if (children.length === 0) return { kind: "none" };
+  if (children.length !== 2) return { kind: "inconsistent" };
+
+  const partA = children.find(({ splitPart }) => splitPart === "A");
+  const partB = children.find(({ splitPart }) => splitPart === "B");
+
+  return partA && partB
+    ? { kind: "complete", parts: { A: partA, B: partB } }
+    : { kind: "inconsistent" };
+}
+
+export function languageLessonCanSplit(
+  projectLevel: string,
+  lesson: Pick<
+    LanguageLesson,
+    | "lessonSource"
+    | "splitParentLessonId"
+    | "splitPart"
+    | "status"
+  >,
+  splitState: LanguageLessonSplitState,
+) {
+  return (
+    isA1LanguageProjectLevel(projectLevel) &&
+    lesson.lessonSource === "language_framework" &&
+    lesson.splitParentLessonId === null &&
+    lesson.splitPart === null &&
+    lesson.status === "ready" &&
+    splitState.kind === "none"
+  );
+}
+
+export function languageLessonShowsProgress(
+  lesson: Pick<LanguageLesson, "status">,
+  splitState: LanguageLessonSplitState,
+) {
+  return lesson.status === "ready" && splitState.kind !== "complete";
+}
+
+export function languageLessonAllowsSimplification(
+  lesson: Pick<LanguageLesson, "status" | "splitPart">,
+) {
+  return lesson.status === "ready" && lesson.splitPart === null;
+}
+
+export function languageLessonSplitResponseIsValid(
+  response: unknown,
+  expectedParentId: string,
+): response is LanguageLessonSplitResponse {
+  if (!response || typeof response !== "object") return false;
+  const candidate = response as Partial<LanguageLessonSplitResponse>;
+
+  return (
+    candidate.parent?.id === expectedParentId &&
+    candidate.parts?.A?.splitParentLessonId === expectedParentId &&
+    candidate.parts.A.splitPart === "A" &&
+    candidate.parts?.B?.splitParentLessonId === expectedParentId &&
+    candidate.parts.B.splitPart === "B"
+  );
+}
+
+export function languageLessonSplitErrorMessage(
+  status: number,
+  error?: string,
+) {
+  if (status === 409 && error === "LANGUAGE_LESSON_SPLIT_INCONSISTENT") {
+    return "Las partes de esta lección están incompletas. No se generarán nuevamente.";
+  }
+  if (status === 409 && error === "LANGUAGE_LESSON_SPLIT_UNAVAILABLE") {
+    return "Esta lección no se puede dividir.";
+  }
+  if (status === 409 && error === "LANGUAGE_LESSON_STATE_CHANGED") {
+    return "La lección cambió mientras se dividía. Recarga e intenta nuevamente.";
+  }
+
+  return "No se pudo dividir la lección. Intenta nuevamente.";
+}
+
+export function createLanguageLessonSplitSubmissionGuard() {
+  let submitting = false;
+
+  return {
+    start() {
+      if (submitting) return false;
+      submitting = true;
+      return true;
+    },
+    finish() {
+      submitting = false;
+    },
+  };
+}
+
+export function orderLanguageLessonsPedagogically(
+  lessons: readonly LanguageLesson[],
+) {
+  const ordered: LanguageLesson[] = [];
+  const included = new Set<string>();
+  const childrenByParent = new Map<string, LanguageLesson[]>();
+
+  for (const lesson of lessons) {
+    if (!lesson.splitParentLessonId) continue;
+    const children = childrenByParent.get(lesson.splitParentLessonId) ?? [];
+    children.push(lesson);
+    childrenByParent.set(lesson.splitParentLessonId, children);
+  }
+
+  for (const lesson of lessons) {
+    if (lesson.splitParentLessonId) continue;
+
+    ordered.push(lesson);
+    included.add(lesson.id);
+    const children = [...(childrenByParent.get(lesson.id) ?? [])].sort(
+      (left, right) =>
+        left.splitPart === right.splitPart
+          ? 0
+          : left.splitPart === "A"
+            ? -1
+            : 1,
+    );
+    for (const child of children) {
+      ordered.push(child);
+      included.add(child.id);
+    }
+  }
+
+  for (const lesson of lessons) {
+    if (!included.has(lesson.id)) ordered.push(lesson);
+  }
+
+  return ordered;
 }
 
 export function filterLanguageLessons(

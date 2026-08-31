@@ -14,6 +14,7 @@ import {
   languageLessonCreationReducer,
   languageLessonFilterEmptyMessage,
   languageLessonSubtitle,
+  orderLanguageLessonsPedagogically,
   type LanguageLesson,
   type LanguageLessonFilter,
   type LanguageProject,
@@ -144,7 +145,9 @@ export function LanguageProjectScreen({ projectId }: { projectId: string }) {
     );
   }
 
-  const filteredLessons = filterLanguageLessons(lessons, lessonFilter);
+  const filteredLessons = orderLanguageLessonsPedagogically(
+    filterLanguageLessons(lessons, lessonFilter),
+  );
 
   return (
     <main className="flow-shell language-shell">
@@ -251,7 +254,9 @@ export function LanguageProjectScreen({ projectId }: { projectId: string }) {
             <div className="lesson-list">
               {filteredLessons.map((lesson) => (
                 <Link
-                  className="language-list-card"
+                  className={`language-list-card${
+                    lesson.splitPart ? " language-list-card-child" : ""
+                  }`}
                   href={`/languages/${project.id}/lessons/${lesson.id}`}
                   key={lesson.id}
                 >
@@ -259,7 +264,9 @@ export function LanguageProjectScreen({ projectId }: { projectId: string }) {
                     <strong>
                       {formatLanguageLessonTitle(lesson, project.language)}
                     </strong>
-                    {languageLessonSubtitle(lesson) ? (
+                    {lesson.splitPart ? (
+                      <small>Parte {lesson.splitPart}</small>
+                    ) : languageLessonSubtitle(lesson) ? (
                       <small>{languageLessonSubtitle(lesson)}</small>
                     ) : null}
                   </span>

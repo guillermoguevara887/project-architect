@@ -1013,14 +1013,22 @@ export function registerLanguageRoutes(
           return reply.code(404).send({ error: "LANGUAGE_LESSON_NOT_FOUND" });
         }
 
-        const deleted = await store.deleteLesson(
+        const deletion = await store.deleteLesson(
           request.params.lessonId,
           request.params.projectId,
           userId,
         );
 
-        if (!deleted) {
+        if (deletion.kind === "not_found") {
           return reply.code(404).send({ error: "LANGUAGE_LESSON_NOT_FOUND" });
+        }
+
+        if (deletion.kind === "split_child") {
+          return reply.code(409).send({
+            error: "LANGUAGE_LESSON_SPLIT_CHILD_DELETE_UNAVAILABLE",
+            message:
+              "Las partes 1A y 1B se administran desde la lección fuente.",
+          });
         }
 
         return reply.code(204).send();

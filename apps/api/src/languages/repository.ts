@@ -127,6 +127,11 @@ export type CreateLanguageLessonSplitChildrenResult =
   | { kind: "not_eligible" }
   | { kind: "inconsistent" };
 
+export type DeleteLanguageLessonResult =
+  | { kind: "deleted" }
+  | { kind: "not_found" }
+  | { kind: "split_child" };
+
 export type UpdateLanguageLessonResult =
   | { kind: "updated"; lesson: LanguageLesson }
   | { kind: "not_found" }
@@ -224,7 +229,7 @@ export interface LanguageStore {
     lessonId: string,
     projectId: string,
     userId: string,
-  ): Promise<boolean>;
+  ): Promise<DeleteLanguageLessonResult>;
 }
 
 export function effectiveLanguageLessonStatus(
@@ -1006,7 +1011,23 @@ export const languageStore: LanguageStore = {
 
   async deleteLesson(lessonId, projectId, userId) {
     if (!(await ownsProject(projectId, userId))) {
-      return false;
+      return { kind: "not_found" as const };
+    }
+
+    const [lesson] = await getDb()
+      .select({ splitParentLessonId: languageLessons.splitParentLessonId })
+      .from(languageLessons)
+      .where(
+        and(
+          eq(languageLessons.id, lessonId),
+          eq(languageLessons.languageProjectId, projectId),
+        ),
+      )
+      .limit(1);
+
+    if (!lesson) return { kind: "not_found" as const };
+    if (lesson.splitParentLessonId !== null) {
+      return { kind: "split_child" as const };
     }
 
     const deleted = await getDb()
@@ -1019,6 +1040,8 @@ export const languageStore: LanguageStore = {
       )
       .returning({ id: languageLessons.id });
 
-    return deleted.length === 1;
+    return deleted.length === 1
+      ? { kind: "deleted" as const }
+      : { kind: "not_found" as const };
   },
 };

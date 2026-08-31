@@ -725,7 +725,7 @@ class MemoryLanguageStore implements LanguageStore {
 
   async deleteLesson(lessonId: string, projectId: string, userId: string) {
     if (!this.ownsProject(projectId, userId)) {
-      return false;
+      return { kind: "not_found" as const };
     }
 
     const index = this.lessons.findIndex(
@@ -734,11 +734,26 @@ class MemoryLanguageStore implements LanguageStore {
     );
 
     if (index === -1) {
-      return false;
+      return { kind: "not_found" as const };
     }
 
-    this.lessons.splice(index, 1);
-    return true;
+    if (this.lessons[index]?.splitParentLessonId !== null) {
+      return { kind: "split_child" as const };
+    }
+
+    const childIds = new Set(
+      this.lessons
+        .filter(({ splitParentLessonId }) => splitParentLessonId === lessonId)
+        .map(({ id }) => id),
+    );
+    this.lessons.splice(
+      0,
+      this.lessons.length,
+      ...this.lessons.filter(
+        ({ id }) => id !== lessonId && !childIds.has(id),
+      ),
+    );
+    return { kind: "deleted" as const };
   }
 }
 
@@ -2554,6 +2569,86 @@ test("deletion removes only the selected lesson and never renumbers others", asy
     assert.equal(store.lessons.length, 1);
     assert.equal(store.lessons[0]?.id, second.id);
     assert.equal(store.lessons[0]?.lessonNumber, 2);
+  } finally {
+    await server.close();
+  }
+});
+
+test("split children cannot be deleted directly and parent deletion cascades in one request", async () => {
+  const { store, server } = testServer();
+  const ownerCookie = sessionCookie(firstUser.id);
+  const otherCookie = sessionCookie(secondUser.id);
+
+  try {
+    const project = await createProject(
+      server,
+      ownerCookie,
+      "Alemán",
+      "A1 Beginner",
+    );
+    const parent = await createLesson(
+      server,
+      project.id,
+      ownerCookie,
+      "language_framework",
+    );
+    await processLesson(server, project.id, parent.id, ownerCookie);
+    const split = await splitLesson(
+      server,
+      project.id,
+      parent.id,
+      ownerCookie,
+    );
+    assert.equal(split.statusCode, 200);
+    const parts = split.json().parts as Record<"A" | "B", LanguageLesson>;
+
+    const unauthenticated = await server.inject({
+      method: "DELETE",
+      url: `/languages/projects/${project.id}/lessons/${parts.A.id}`,
+    });
+    const wrongOwner = await server.inject({
+      method: "DELETE",
+      url: `/languages/projects/${project.id}/lessons/${parts.A.id}`,
+      headers: { cookie: otherCookie },
+    });
+    assert.equal(unauthenticated.statusCode, 401);
+    assert.equal(wrongOwner.statusCode, 404);
+
+    for (const child of [parts.A, parts.B]) {
+      const deletion = await server.inject({
+        method: "DELETE",
+        url: `/languages/projects/${project.id}/lessons/${child.id}`,
+        headers: { cookie: ownerCookie },
+      });
+      assert.equal(deletion.statusCode, 409);
+      assert.deepEqual(deletion.json(), {
+        error: "LANGUAGE_LESSON_SPLIT_CHILD_DELETE_UNAVAILABLE",
+        message: "Las partes 1A y 1B se administran desde la lección fuente.",
+      });
+      assert.ok(store.lessons.some(({ id }) => id === child.id));
+    }
+
+    const deleteParent = await server.inject({
+      method: "DELETE",
+      url: `/languages/projects/${project.id}/lessons/${parent.id}`,
+      headers: { cookie: ownerCookie },
+    });
+    assert.equal(deleteParent.statusCode, 204);
+    assert.equal(
+      store.lessons.some(
+        ({ id, splitParentLessonId }) =>
+          id === parent.id || splitParentLessonId === parent.id,
+      ),
+      false,
+    );
+
+    const missing = await server.inject({
+      method: "DELETE",
+      url: `/languages/projects/${project.id}/lessons/${parent.id}`,
+      headers: { cookie: ownerCookie },
+    });
+    assert.equal(missing.statusCode, 404);
+    assert.equal(missing.json().error, "LANGUAGE_LESSON_NOT_FOUND");
   } finally {
     await server.close();
   }

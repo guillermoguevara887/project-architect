@@ -5,6 +5,7 @@ import {
   applyLanguageAudioPlaybackRate,
   assignLanguageDialogueVoices,
   canRegenerateLanguageLesson,
+  createLanguageLessonSplitSubmissionGuard,
   createLanguageLessonSubmissionGuard,
   DEFAULT_LANGUAGE_AUDIO_PLAYBACK_RATE,
   DEFAULT_LANGUAGE_STORY_VOICE,
@@ -13,6 +14,7 @@ import {
   formatLanguageLessonTitle,
   getOrCreateLanguageAudioElement,
   INITIAL_LANGUAGE_LESSON_CREATION_STATE,
+  isA1LanguageProjectLevel,
   isPreparedFreeLanguageLesson,
   isJapaneseLanguage,
   LANGUAGE_AUDIO_PLAYBACK_RATE_OPTIONS,
@@ -34,6 +36,13 @@ import {
   languageLessonContentForVersion,
   languageLessonFilterEmptyMessage,
   languageLessonKanjiCopyText,
+  languageLessonCanSplit,
+  languageLessonAllowsSimplification,
+  languageLessonShowsProgress,
+  languageLessonSplitErrorMessage,
+  languageLessonSplitResponseIsValid,
+  languageLessonSplitState,
+  orderLanguageLessonsPedagogically,
   languageStoryAudioDownloadDisabled,
   languageStoryAudioDownloadFilename,
   languageStoryVoiceChangeStopsPlayback,
@@ -1278,7 +1287,10 @@ test("lesson progress UI is ready-only, server-confirmed and accessible", async 
     "utf8",
   );
 
-  assert.match(component, /lesson\.status === "ready" \? \(\s*<LanguageLessonProgressControls/s);
+  assert.match(
+    component,
+    /showProgress \? \(\s*<LanguageLessonProgressControls/s,
+  );
   assert.match(component, /aria-label="Estado de aprendizaje"/);
   assert.match(component, /aria-label="Dificultad percibida"/);
   assert.match(component, /aria-pressed=\{learningStatus === option\.value\}/);
@@ -1412,6 +1424,271 @@ test("lesson titles continue to use source-specific numbering", () => {
     formatLanguageLessonTitle(lessons[3]!, "Alemán"),
     "Lección libre 1",
   );
+});
+
+test("framework split titles use source numbering and A/B suffixes", () => {
+  const root = lessons[1]!;
+  const partA = {
+    ...root,
+    id: "framework-1-a",
+    lessonNumber: 20,
+    splitParentLessonId: root.id,
+    splitPart: "A" as const,
+  };
+  const partB = {
+    ...root,
+    id: "framework-1-b",
+    lessonNumber: 21,
+    splitParentLessonId: root.id,
+    splitPart: "B" as const,
+  };
+
+  assert.equal(formatLanguageLessonTitle(root, "Alemán"), "Marco Alemán 1");
+  assert.equal(formatLanguageLessonTitle(partA, "Alemán"), "Marco Alemán 1A");
+  assert.equal(formatLanguageLessonTitle(partB, "Alemán"), "Marco Alemán 1B");
+  assert.equal(formatLanguageLessonTitle(lessons[2]!, "Alemán"), "Assimil 2");
+  assert.equal(
+    formatLanguageLessonTitle(lessons[3]!, "Alemán"),
+    "Lección libre 1",
+  );
+});
+
+test("A1 project detection is conservative", () => {
+  for (const level of ["A1", "a1", "A1 Beginner", "A1 - Principiante"]) {
+    assert.equal(isA1LanguageProjectLevel(level), true);
+  }
+  for (const level of ["A10", "A2", "Nivel 1", "Nivel básico"]) {
+    assert.equal(isA1LanguageProjectLevel(level), false);
+  }
+});
+
+test("lesson split state detects complete, absent and inconsistent pairs", () => {
+  const parent = lessons[1]!;
+  const partA = {
+    ...parent,
+    id: "framework-1-a",
+    lessonNumber: 40,
+    splitParentLessonId: parent.id,
+    splitPart: "A" as const,
+  };
+  const partB = {
+    ...parent,
+    id: "framework-1-b",
+    lessonNumber: 41,
+    splitParentLessonId: parent.id,
+    splitPart: "B" as const,
+  };
+
+  assert.deepEqual(languageLessonSplitState(lessons, parent.id), {
+    kind: "none",
+  });
+  assert.deepEqual(
+    languageLessonSplitState([...lessons, partB, partA], parent.id),
+    { kind: "complete", parts: { A: partA, B: partB } },
+  );
+  assert.deepEqual(languageLessonSplitState([...lessons, partA], parent.id), {
+    kind: "inconsistent",
+  });
+  assert.deepEqual(languageLessonSplitState([...lessons, partB], parent.id), {
+    kind: "inconsistent",
+  });
+});
+
+test("pedagogical order attaches A then B after each parent without duplicates", () => {
+  const firstParent = lessons[1]!;
+  const secondParent = lessons[4]!;
+  const partA = {
+    ...firstParent,
+    id: "framework-1-a",
+    lessonNumber: 20,
+    splitParentLessonId: firstParent.id,
+    splitPart: "A" as const,
+  };
+  const partB = {
+    ...firstParent,
+    id: "framework-1-b",
+    lessonNumber: 21,
+    splitParentLessonId: firstParent.id,
+    splitPart: "B" as const,
+  };
+  const secondPartA = {
+    ...secondParent,
+    id: "framework-2-a",
+    lessonNumber: 22,
+    splitParentLessonId: secondParent.id,
+    splitPart: "A" as const,
+  };
+  const unordered = [...lessons, partB, secondPartA, partA];
+  const ordered = orderLanguageLessonsPedagogically(unordered);
+
+  assert.deepEqual(
+    ordered.map(({ id }) => id),
+    [
+      "assimil-1",
+      "framework-1",
+      "framework-1-a",
+      "framework-1-b",
+      "assimil-2",
+      "free-1",
+      "framework-2",
+      "framework-2-a",
+    ],
+  );
+  assert.equal(new Set(ordered.map(({ id }) => id)).size, ordered.length);
+  assert.deepEqual(
+    orderLanguageLessonsPedagogically(
+      filterLanguageLessons(unordered, "language_framework"),
+    ).map(({ id }) => id),
+    [
+      "framework-1",
+      "framework-1-a",
+      "framework-1-b",
+      "framework-2",
+      "framework-2-a",
+    ],
+  );
+});
+
+test("split eligibility, response validation and submission guard are deterministic", () => {
+  const root = {
+    ...lessons[1]!,
+    status: "ready" as const,
+    structuredContent: structuredContent("Marco"),
+  };
+  const none = { kind: "none" as const };
+  const child = {
+    ...root,
+    id: "framework-1-a",
+    splitParentLessonId: root.id,
+    splitPart: "A" as const,
+  };
+  const otherPart = {
+    ...root,
+    id: "framework-1-b",
+    splitParentLessonId: root.id,
+    splitPart: "B" as const,
+  };
+
+  assert.equal(languageLessonCanSplit("A1", root, none), true);
+  assert.equal(languageLessonCanSplit("A2", root, none), false);
+  assert.equal(
+    languageLessonCanSplit("A1", { ...root, lessonSource: "free" }, none),
+    false,
+  );
+  assert.equal(languageLessonCanSplit("A1", child, none), false);
+  assert.equal(
+    languageLessonCanSplit("A1", root, {
+      kind: "complete",
+      parts: { A: child, B: otherPart },
+    }),
+    false,
+  );
+  assert.equal(languageLessonShowsProgress(root, none), true);
+  assert.equal(
+    languageLessonShowsProgress(root, {
+      kind: "complete",
+      parts: { A: child, B: otherPart },
+    }),
+    false,
+  );
+  assert.equal(languageLessonShowsProgress(child, none), true);
+  assert.equal(languageLessonAllowsSimplification(root), true);
+  assert.equal(languageLessonAllowsSimplification(child), false);
+  assert.equal(
+    languageLessonSplitResponseIsValid(
+      { parent: root, parts: { A: child, B: otherPart } },
+      root.id,
+    ),
+    true,
+  );
+  assert.equal(
+    languageLessonSplitResponseIsValid(
+      { parent: root, parts: { A: otherPart, B: child } },
+      root.id,
+    ),
+    false,
+  );
+
+  const guard = createLanguageLessonSplitSubmissionGuard();
+  assert.equal(guard.start(), true);
+  assert.equal(guard.start(), false);
+  guard.finish();
+  assert.equal(guard.start(), true);
+});
+
+test("split errors use the required accessible Spanish messages", () => {
+  assert.equal(
+    languageLessonSplitErrorMessage(
+      409,
+      "LANGUAGE_LESSON_SPLIT_INCONSISTENT",
+    ),
+    "Las partes de esta lección están incompletas. No se generarán nuevamente.",
+  );
+  assert.equal(
+    languageLessonSplitErrorMessage(409, "LANGUAGE_LESSON_SPLIT_UNAVAILABLE"),
+    "Esta lección no se puede dividir.",
+  );
+  assert.equal(
+    languageLessonSplitErrorMessage(409, "LANGUAGE_LESSON_STATE_CHANGED"),
+    "La lección cambió mientras se dividía. Recarga e intenta nuevamente.",
+  );
+  assert.equal(
+    languageLessonSplitErrorMessage(502, "LANGUAGE_LESSON_SPLIT_FAILED"),
+    "No se pudo dividir la lección. Intenta nuevamente.",
+  );
+});
+
+test("M1C UI reuses split, ready content and progress without exposing child mutations", async () => {
+  const lessonComponent = await readFile(
+    new URL(
+      "../../web/src/components/language-lesson-screen.tsx",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  const projectComponent = await readFile(
+    new URL(
+      "../../web/src/components/language-project-screen.tsx",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  const styles = await readFile(
+    new URL("../../web/src/app/globals.css", import.meta.url),
+    "utf8",
+  );
+  const splitHandler = lessonComponent.match(
+    /async function splitLanguageLesson\(\)[\s\S]*?\n  }\n/m,
+  )?.[0];
+
+  assert.ok(splitHandler);
+  assert.match(splitHandler, /splittingGuard\.current\.start\(\)/);
+  assert.match(splitHandler, /lessons\/\$\{encodeURIComponent\(lessonId\)\}\/split/);
+  assert.match(splitHandler, /method: "POST"/);
+  assert.doesNotMatch(splitHandler, /body:|structuredContent|sourceContent|language:|level:|prompt|model/);
+  assert.match(splitHandler, /setLesson\(result\.parent\)/);
+  assert.match(
+    splitHandler,
+    /setSplitState\(\{ kind: "complete", parts: result\.parts \}\)/,
+  );
+  assert.equal(splitHandler.match(/setLesson\(/g)?.length, 1);
+  assert.match(lessonComponent, /Dividir en 1A \+ 1B/);
+  assert.match(lessonComponent, /Dividiendo…/);
+  assert.match(lessonComponent, /Partes de estudio/);
+  assert.match(lessonComponent, /Estudia primero 1A y después 1B/);
+  assert.match(lessonComponent, /Ver lección fuente/);
+  assert.match(lessonComponent, /El progreso se registra en 1A y 1B/);
+  assert.match(lessonComponent, /allowSimplification && readyContent/);
+  assert.match(lessonComponent, /!splitChild \? \(\s*<footer/s);
+  assert.match(lessonComponent, /splitError[\s\S]*?role="alert"/);
+  assert.match(lessonComponent, /<ReadyLesson/);
+  assert.match(lessonComponent, /<LanguageLessonProgressControls/);
+  assert.match(projectComponent, /orderLanguageLessonsPedagogically/);
+  assert.match(projectComponent, /language-list-card-child/);
+  assert.match(projectComponent, /Parte \{lesson\.splitPart\}/);
+  assert.match(styles, /\.lesson-split-action/);
+  assert.match(styles, /\.lesson-split-parts-grid/);
+  assert.match(styles, /\.language-list-card-child/);
 });
 
 test("the displayed lesson version switches locally between persisted content", () => {

@@ -13,6 +13,7 @@ import {
   applyLanguageAudioPlaybackRate,
   assignLanguageDialogueVoices,
   canRegenerateLanguageLesson,
+  createLanguageLessonSplitSubmissionGuard,
   DEFAULT_LANGUAGE_AUDIO_PLAYBACK_RATE,
   DEFAULT_LANGUAGE_STORY_VOICE,
   downloadLanguageAudioBlob,
@@ -35,6 +36,12 @@ import {
   languageAudioPlaybackErrorMessage,
   languageLessonContentForVersion,
   languageLessonKanjiCopyText,
+  languageLessonCanSplit,
+  languageLessonAllowsSimplification,
+  languageLessonShowsProgress,
+  languageLessonSplitErrorMessage,
+  languageLessonSplitResponseIsValid,
+  languageLessonSplitState,
   languageStoryAudioDownloadDisabled,
   languageStoryAudioDownloadFilename,
   languageStoryVoiceChangeStopsPlayback,
@@ -51,6 +58,7 @@ import {
   type LanguageLessonContentVersion,
   type LanguageLessonDifficulty,
   type LanguageLessonLearningStatus,
+  type LanguageLessonSplitState,
   type LanguageProject,
   type LanguageStoryVoice,
   type StructuredLanguageLesson,
@@ -1036,6 +1044,12 @@ export function LanguageLessonScreen({
   const authorized = useSessionGuard();
   const [project, setProject] = useState<LanguageProject | null>(null);
   const [lesson, setLesson] = useState<LanguageLesson | null>(null);
+  const [splitState, setSplitState] = useState<LanguageLessonSplitState>({
+    kind: "none",
+  });
+  const [splitting, setSplitting] = useState(false);
+  const splittingGuard = useRef(createLanguageLessonSplitSubmissionGuard());
+  const [splitError, setSplitError] = useState<string | null>(null);
   const [freeTitle, setFreeTitle] = useState("");
   const [sourceContent, setSourceContent] = useState("");
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -1206,18 +1220,27 @@ export function LanguageLessonScreen({
       try {
         const encodedProjectId = encodeURIComponent(projectId);
         const encodedLessonId = encodeURIComponent(lessonId);
-        const [projectResponse, lessonResponse] = await Promise.all([
-          fetch(`/api/languages/projects/${encodedProjectId}`, {
-            cache: "no-store",
-            credentials: "include",
-          }),
-          fetch(
-            `/api/languages/projects/${encodedProjectId}/lessons/${encodedLessonId}`,
-            { cache: "no-store", credentials: "include" },
-          ),
-        ]);
+        const [projectResponse, lessonResponse, lessonsResponse] =
+          await Promise.all([
+            fetch(`/api/languages/projects/${encodedProjectId}`, {
+              cache: "no-store",
+              credentials: "include",
+            }),
+            fetch(
+              `/api/languages/projects/${encodedProjectId}/lessons/${encodedLessonId}`,
+              { cache: "no-store", credentials: "include" },
+            ),
+            fetch(`/api/languages/projects/${encodedProjectId}/lessons`, {
+              cache: "no-store",
+              credentials: "include",
+            }),
+          ]);
 
-        if (projectResponse.status === 401 || lessonResponse.status === 401) {
+        if (
+          projectResponse.status === 401 ||
+          lessonResponse.status === 401 ||
+          lessonsResponse.status === 401
+        ) {
           router.replace("/");
           return;
         }
@@ -1228,12 +1251,17 @@ export function LanguageLessonScreen({
         const lessonResult = (await lessonResponse.json()) as {
           lesson?: LanguageLesson;
         };
+        const lessonsResult = (await lessonsResponse.json()) as {
+          lessons?: LanguageLesson[];
+        };
 
         if (
           !projectResponse.ok ||
           !lessonResponse.ok ||
+          !lessonsResponse.ok ||
           !projectResult.project ||
-          !lessonResult.lesson
+          !lessonResult.lesson ||
+          !lessonsResult.lessons
         ) {
           throw new Error("Language lesson unavailable");
         }
@@ -1241,6 +1269,12 @@ export function LanguageLessonScreen({
         if (active) {
           setProject(projectResult.project);
           setLesson(lessonResult.lesson);
+          setSplitState(
+            languageLessonSplitState(
+              lessonsResult.lessons,
+              lessonResult.lesson.id,
+            ),
+          );
           setFreeTitle(lessonResult.lesson.freeTitle ?? "");
           setSourceContent(lessonResult.lesson.sourceContent ?? "");
           setContentVersion("original");
@@ -1431,6 +1465,52 @@ export function LanguageLessonScreen({
     }
   }
 
+  async function splitLanguageLesson() {
+    if (!lesson || !splittingGuard.current.start()) return;
+
+    setSplitting(true);
+    setSplitError(null);
+
+    try {
+      const response = await fetch(
+        `/api/languages/projects/${encodeURIComponent(projectId)}/lessons/${encodeURIComponent(lessonId)}/split`,
+        { method: "POST", credentials: "include" },
+      );
+
+      if (response.status === 401) {
+        router.replace("/");
+        return;
+      }
+
+      const result: unknown = await response.json();
+
+      if (!response.ok) {
+        const error =
+          result && typeof result === "object" && "error" in result
+            ? String(result.error)
+            : undefined;
+        if (error === "LANGUAGE_LESSON_SPLIT_INCONSISTENT") {
+          setSplitState({ kind: "inconsistent" });
+        }
+        setSplitError(languageLessonSplitErrorMessage(response.status, error));
+        return;
+      }
+
+      if (!languageLessonSplitResponseIsValid(result, lesson.id)) {
+        setSplitError("No se pudo dividir la lección. Intenta nuevamente.");
+        return;
+      }
+
+      setLesson(result.parent);
+      setSplitState({ kind: "complete", parts: result.parts });
+    } catch {
+      setSplitError("No se pudo dividir la lección. Intenta nuevamente.");
+    } finally {
+      splittingGuard.current.finish();
+      setSplitting(false);
+    }
+  }
+
   async function simplifyLesson(regenerate = false) {
     if (simplifying) return;
 
@@ -1531,7 +1611,9 @@ export function LanguageLessonScreen({
   async function deleteLesson() {
     if (
       !window.confirm(
-        "¿Eliminar esta lección? Esta acción no se puede deshacer.",
+        splitState.kind === "complete"
+          ? "¿Eliminar esta lección y sus partes 1A y 1B? Esta acción no se puede deshacer."
+          : "¿Eliminar esta lección? Esta acción no se puede deshacer.",
       )
     ) {
       return;
@@ -1981,6 +2063,11 @@ export function LanguageLessonScreen({
   }
 
   const preparedFreeLesson = isPreparedFreeLanguageLesson(lesson);
+  const splitComplete = splitState.kind === "complete";
+  const splitChild = lesson.splitPart !== null;
+  const canSplit = languageLessonCanSplit(project.level, lesson, splitState);
+  const showProgress = languageLessonShowsProgress(lesson, splitState);
+  const allowSimplification = languageLessonAllowsSimplification(lesson);
   const readyContent =
     lesson.status === "ready" && !preparedFreeLesson
       ? languageLessonContentForVersion(lesson, contentVersion)
@@ -2001,9 +2088,17 @@ export function LanguageLessonScreen({
           <h1 id="lesson-title">
             {formatLanguageLessonTitle(lesson, project.language)}
           </h1>
+          {lesson.splitParentLessonId ? (
+            <Link
+              className="lesson-source-link"
+              href={`/languages/${project.id}/lessons/${lesson.splitParentLessonId}`}
+            >
+              Ver lección fuente
+            </Link>
+          ) : null}
         </header>
 
-        {lesson.status === "ready" ? (
+        {showProgress ? (
           <LanguageLessonProgressControls
             difficulty={lesson.difficulty}
             error={progressError}
@@ -2016,6 +2111,87 @@ export function LanguageLessonScreen({
               void updateLearningProgress({ learningStatus })
             }
           />
+        ) : null}
+
+        {lesson.status === "ready" && splitComplete ? (
+          <p className="lesson-split-progress-note">
+            El progreso se registra en 1A y 1B.
+          </p>
+        ) : null}
+
+        {canSplit ? (
+          <section
+            className="lesson-split-action"
+            aria-labelledby="lesson-split-title"
+          >
+            <div>
+              <h2 id="lesson-split-title">Dividir en 1A + 1B</h2>
+              <p>
+                Crea dos unidades A1 más manejables a partir de esta lección.
+              </p>
+            </div>
+            <button
+              aria-busy={splitting}
+              disabled={splitting}
+              type="button"
+              onClick={() => void splitLanguageLesson()}
+            >
+              {splitting ? "Dividiendo…" : "Dividir en 1A + 1B"}
+            </button>
+          </section>
+        ) : null}
+
+        {splitError ? (
+          <p className="form-error lesson-split-error" role="alert">
+            {splitError}
+          </p>
+        ) : null}
+
+        {splitState.kind === "inconsistent" && !splitError ? (
+          <p className="form-error lesson-split-error" role="alert">
+            Las partes de esta lección están incompletas.
+          </p>
+        ) : null}
+
+        {splitState.kind === "complete" ? (
+          <section
+            className="lesson-split-parts"
+            aria-labelledby="lesson-split-parts-title"
+          >
+            <div>
+              <h2 id="lesson-split-parts-title">Partes de estudio</h2>
+              <p>Estudia primero 1A y después 1B.</p>
+            </div>
+            <div className="lesson-split-parts-grid">
+              {(["A", "B"] as const).map((part) => {
+                const child = splitState.parts[part];
+                const learningStatus =
+                  LANGUAGE_LESSON_LEARNING_STATUS_OPTIONS.find(
+                    ({ value }) => value === child.learningStatus,
+                  )?.label ?? child.learningStatus;
+                const difficulty = child.difficulty
+                  ? LANGUAGE_LESSON_DIFFICULTY_OPTIONS.find(
+                      ({ value }) => value === child.difficulty,
+                    )?.label
+                  : null;
+
+                return (
+                  <Link
+                    className="lesson-split-part-card"
+                    href={`/languages/${project.id}/lessons/${child.id}`}
+                    key={part}
+                  >
+                    <strong>
+                      {child.sourceLessonNumber}
+                      {part}
+                    </strong>
+                    <span>Estado: {learningStatus}</span>
+                    {difficulty ? <small>Dificultad: {difficulty}</small> : null}
+                  </Link>
+                );
+              })}
+            </div>
+          </section>
         ) : null}
 
         {lesson.status === "processing" ? (
@@ -2107,7 +2283,7 @@ export function LanguageLessonScreen({
           </form>
         ) : null}
 
-        {lesson.status === "ready" && readyContent ? (
+        {allowSimplification && readyContent ? (
           <div className="lesson-simplification-controls">
             {canRegenerateLanguageLesson(lesson) ? (
               <>
@@ -2218,25 +2394,28 @@ export function LanguageLessonScreen({
           </p>
         ) : null}
 
-        <footer className="lesson-footer-actions">
-          <button
-            className="lesson-delete-button"
-            type="button"
-            disabled={
-              deleting ||
-              processing ||
-              preparingFree ||
-              analyzingFree ||
-              simplifying
-            }
-            onClick={() => {
-              stopLanguageAudio();
-              void deleteLesson();
-            }}
-          >
-            {deleting ? "Eliminando…" : "Eliminar lección"}
-          </button>
-        </footer>
+        {!splitChild ? (
+          <footer className="lesson-footer-actions">
+            <button
+              className="lesson-delete-button"
+              type="button"
+              disabled={
+                deleting ||
+                processing ||
+                preparingFree ||
+                analyzingFree ||
+                simplifying ||
+                splitting
+              }
+              onClick={() => {
+                stopLanguageAudio();
+                void deleteLesson();
+              }}
+            >
+              {deleting ? "Eliminando…" : "Eliminar lección"}
+            </button>
+          </footer>
+        ) : null}
       </article>
     </main>
   );

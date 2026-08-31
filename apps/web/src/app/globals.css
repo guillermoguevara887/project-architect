@@ -1031,6 +1031,14 @@ button:disabled {
   word-break: break-word;
 }
 
+.language-list-card-child {
+  width: calc(100% - 1rem);
+  margin-left: 1rem;
+  border-color: #bfe8e4;
+  border-left: 3px solid #0ea5a4;
+  background: #f4fbfa;
+}
+
 .language-list-card-title {
   display: grid;
   min-width: 0;
@@ -1379,6 +1387,110 @@ button:disabled {
   margin: 0;
   color: #b42318;
   font-size: 0.82rem;
+}
+
+.lesson-source-link {
+  display: inline-flex;
+  width: fit-content;
+  margin-top: 0.55rem;
+  color: #0e8584;
+  font-size: 0.88rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.lesson-source-link:hover {
+  text-decoration: underline;
+}
+
+.lesson-source-link:focus-visible,
+.lesson-split-action button:focus-visible,
+.lesson-split-part-card:focus-visible {
+  outline: 3px solid rgb(14 165 164 / 22%);
+  outline-offset: 0.2rem;
+}
+
+.lesson-split-action,
+.lesson-split-parts {
+  display: grid;
+  min-width: 0;
+  gap: 1rem;
+  margin-top: 1.25rem;
+  padding: 1.1rem;
+  border: 1px solid #bfe8e4;
+  border-radius: 0.9rem;
+  background: #f4fbfa;
+}
+
+.lesson-split-action {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.lesson-split-action h2,
+.lesson-split-parts h2 {
+  margin: 0;
+  color: #0f2147;
+  font-size: 1rem;
+}
+
+.lesson-split-action p,
+.lesson-split-parts p {
+  margin: 0.35rem 0 0;
+  color: #64748b;
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.lesson-split-action button {
+  min-height: 2.75rem;
+  padding: 0.65rem 1rem;
+  background: #2563eb;
+  color: #fff;
+}
+
+.lesson-split-progress-note {
+  margin: 1.25rem 0 0;
+  padding: 0.85rem 1rem;
+  border-left: 3px solid #0ea5a4;
+  background: #f4fbfa;
+  color: #475569;
+}
+
+.lesson-split-error {
+  margin-top: 1rem;
+}
+
+.lesson-split-parts-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.lesson-split-part-card {
+  display: grid;
+  min-width: 0;
+  gap: 0.3rem;
+  padding: 0.9rem;
+  border: 1px solid #bfe8e4;
+  border-radius: 0.75rem;
+  background: #fff;
+  color: #0f2147;
+  text-decoration: none;
+}
+
+.lesson-split-part-card:hover {
+  border-color: #0ea5a4;
+}
+
+.lesson-split-part-card strong {
+  color: #2563eb;
+  font-size: 1.15rem;
+}
+
+.lesson-split-part-card span,
+.lesson-split-part-card small {
+  color: #64748b;
 }
 
 .lesson-simplification-controls {
@@ -2924,6 +3036,23 @@ button:disabled {
   .lesson-regeneration-action,
   .lesson-regenerate-button {
     width: 100%;
+  }
+
+  .language-list-card-child {
+    width: calc(100% - 0.5rem);
+    margin-left: 0.5rem;
+  }
+
+  .lesson-split-action {
+    grid-template-columns: 1fr;
+  }
+
+  .lesson-split-action button {
+    width: 100%;
+  }
+
+  .lesson-split-parts-grid {
+    grid-template-columns: 1fr;
   }
 
   .lesson-learning-progress,
