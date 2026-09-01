@@ -56,11 +56,13 @@ export type LanguageLessonSplitPart = "A" | "B";
 export type LanguageLessonCreationState = {
   status: "closed" | "choosing" | "creating";
   lessonSource: LanguageLessonSource;
+  assimilSourceLessonNumber: string;
 };
 
 export type LanguageLessonCreationAction =
   | { type: "open" }
   | { type: "select-source"; lessonSource: LanguageLessonSource }
+  | { type: "set-assimil-source-lesson-number"; value: string }
   | { type: "start" }
   | { type: "cancel" }
   | { type: "failed" };
@@ -68,6 +70,7 @@ export type LanguageLessonCreationAction =
 export const INITIAL_LANGUAGE_LESSON_CREATION_STATE = {
   status: "closed",
   lessonSource: "free",
+  assimilSourceLessonNumber: "",
 } satisfies LanguageLessonCreationState;
 
 export function languageLessonCreationReducer(
@@ -76,10 +79,25 @@ export function languageLessonCreationReducer(
 ): LanguageLessonCreationState {
   switch (action.type) {
     case "open":
-      return { status: "choosing", lessonSource: "free" };
+      return {
+        status: "choosing",
+        lessonSource: "free",
+        assimilSourceLessonNumber: "",
+      };
     case "select-source":
       return state.status === "choosing"
-        ? { ...state, lessonSource: action.lessonSource }
+        ? {
+            ...state,
+            lessonSource: action.lessonSource,
+            assimilSourceLessonNumber:
+              action.lessonSource === "assimil"
+                ? state.assimilSourceLessonNumber
+                : "",
+          }
+        : state;
+    case "set-assimil-source-lesson-number":
+      return state.status === "choosing" && state.lessonSource === "assimil"
+        ? { ...state, assimilSourceLessonNumber: action.value }
         : state;
     case "start":
       return state.status === "choosing"
@@ -96,6 +114,46 @@ export function languageLessonCreationReducer(
   }
 
   return state;
+}
+
+export function languageAssimilSourceLessonNumberIsValid(value: string) {
+  if (!/^[1-9]\d{0,3}$/u.test(value)) return false;
+
+  const lessonNumber = Number(value);
+  return lessonNumber >= 1 && lessonNumber <= 9_999;
+}
+
+export type LanguageLessonCreationRequest =
+  | {
+      lessonSource: "assimil";
+      sourceLessonNumber: number;
+    }
+  | {
+      lessonSource: Exclude<LanguageLessonSource, "assimil">;
+    };
+
+export function languageLessonCreationRequest(
+  state: Pick<
+    LanguageLessonCreationState,
+    "lessonSource" | "assimilSourceLessonNumber"
+  >,
+): LanguageLessonCreationRequest | null {
+  if (state.lessonSource === "assimil") {
+    if (
+      !languageAssimilSourceLessonNumberIsValid(
+        state.assimilSourceLessonNumber,
+      )
+    ) {
+      return null;
+    }
+
+    return {
+      lessonSource: "assimil",
+      sourceLessonNumber: Number(state.assimilSourceLessonNumber),
+    };
+  }
+
+  return { lessonSource: state.lessonSource };
 }
 
 export function createLanguageLessonSubmissionGuard() {
@@ -172,6 +230,40 @@ export type StructuredLanguageLesson = {
   };
 };
 
+export type AssimilLanguageLessonContent = {
+  kind: "assimil_v1";
+  comprehension: Array<{
+    line: string;
+    translation: string;
+    note: string | null;
+  }>;
+  notes: Array<{
+    title: string;
+    explanation: string;
+  }>;
+  patterns: Array<{
+    pattern: string;
+    explanation: string;
+    examples: string[];
+  }>;
+  keyPhrases: Array<{
+    text: string;
+    meaning: string;
+  }>;
+  practice: {
+    instructions: string;
+    items: Array<{
+      prompt: string;
+      answer: string;
+    }>;
+  };
+  review: null | {
+    points: string[];
+  };
+};
+
+export type AssimilPhase = "impregnation" | "activation";
+
 export type LanguageLesson = {
   id: string;
   languageProjectId: string;
@@ -193,6 +285,9 @@ export type LanguageLesson = {
   } | null;
   sourceContent?: string;
   structuredContent?: StructuredLanguageLesson | null;
+  assimilContent?: AssimilLanguageLessonContent | null;
+  assimilPhase?: AssimilPhase | null;
+  assimilReviewLesson?: boolean | null;
   simplifiedStructuredContent?: StructuredLanguageLesson | null;
   simplifiedAt?: string | null;
   processedAt: string | null;
@@ -681,6 +776,32 @@ export function isPreparedFreeLanguageLesson<
   T extends Pick<LanguageLesson, "lessonSource" | "freeTitle">,
 >(lesson: T): lesson is T & { lessonSource: "free"; freeTitle: string } {
   return lesson.lessonSource === "free" && lesson.freeTitle !== null;
+}
+
+export function isAssimilV1LanguageLesson<
+  T extends {
+    lessonSource: LanguageLessonSource;
+    assimilContent?: AssimilLanguageLessonContent | null;
+  },
+>(
+  lesson: T,
+): lesson is T & {
+  lessonSource: "assimil";
+  assimilContent: AssimilLanguageLessonContent;
+} {
+  return (
+    lesson.lessonSource === "assimil" &&
+    lesson.assimilContent?.kind === "assimil_v1"
+  );
+}
+
+export function languageAssimilPhaseLabel(phase: AssimilPhase) {
+  switch (phase) {
+    case "impregnation":
+      return "Fase de impregnación";
+    case "activation":
+      return "Fase de activación";
+  }
 }
 
 export function languageLessonSubtitle(

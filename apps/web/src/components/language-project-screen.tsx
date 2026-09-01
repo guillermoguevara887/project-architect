@@ -11,6 +11,7 @@ import {
   INITIAL_LANGUAGE_LESSON_CREATION_STATE,
   LANGUAGE_LESSON_FILTER_OPTIONS,
   LANGUAGE_LESSON_SOURCE_OPTIONS,
+  languageLessonCreationRequest,
   languageLessonCreationReducer,
   languageLessonFilterEmptyMessage,
   languageLessonSubtitle,
@@ -38,6 +39,7 @@ export function LanguageProjectScreen({ projectId }: { projectId: string }) {
   const [lessonFilter, setLessonFilter] =
     useState<LanguageLessonFilter>("all");
   const creating = creation.status === "creating";
+  const creationRequest = languageLessonCreationRequest(creation);
 
   useEffect(() => {
     if (!authorized) return;
@@ -90,7 +92,8 @@ export function LanguageProjectScreen({ projectId }: { projectId: string }) {
   }, [authorized, projectId, router]);
 
   async function createLesson() {
-    if (!creationSubmissionGuard.current.start()) return;
+    const request = languageLessonCreationRequest(creation);
+    if (!request || !creationSubmissionGuard.current.start()) return;
 
     dispatchCreation({ type: "start" });
     setActionError(null);
@@ -101,7 +104,7 @@ export function LanguageProjectScreen({ projectId }: { projectId: string }) {
           method: "POST",
           credentials: "include",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ lessonSource: creation.lessonSource }),
+          body: JSON.stringify(request),
         },
       );
       if (response.status === 401) {
@@ -199,8 +202,35 @@ export function LanguageProjectScreen({ projectId }: { projectId: string }) {
                 ))}
               </div>
             </fieldset>
+            {creation.lessonSource === "assimil" ? (
+              <div>
+                <label htmlFor="assimil-source-lesson-number">
+                  Número de lección Assimil
+                </label>
+                <input
+                  aria-describedby="assimil-source-lesson-number-help"
+                  disabled={creating}
+                  id="assimil-source-lesson-number"
+                  max={9999}
+                  min={1}
+                  placeholder="15"
+                  step={1}
+                  type="number"
+                  value={creation.assimilSourceLessonNumber}
+                  onChange={(event) =>
+                    dispatchCreation({
+                      type: "set-assimil-source-lesson-number",
+                      value: event.target.value,
+                    })
+                  }
+                />
+                <small id="assimil-source-lesson-number-help">
+                  Usa el número real del curso o libro Assimil.
+                </small>
+              </div>
+            ) : null}
             <div className="lesson-create-actions">
-              <button type="submit" disabled={creating}>
+              <button type="submit" disabled={creating || !creationRequest}>
                 {creating ? "Creando…" : "Continuar"}
               </button>
               <button

@@ -20,12 +20,14 @@ import {
   downloadLanguageAudioBlob,
   formatLanguageLessonTitle,
   getOrCreateLanguageAudioElement,
+  isAssimilV1LanguageLesson,
   isJapaneseLanguage,
   isPreparedFreeLanguageLesson,
   LANGUAGE_AUDIO_PLAYBACK_RATE_OPTIONS,
   LANGUAGE_LESSON_DIFFICULTY_OPTIONS,
   LANGUAGE_LESSON_LEARNING_STATUS_OPTIONS,
   languageDialogueLineIsActive,
+  languageAssimilPhaseLabel,
   languageFreeAudioDownloadFilename,
   languageFreeVoiceChangeStopsPlayback,
   languageLessonAudioButtonLabel,
@@ -54,6 +56,8 @@ import {
   playExclusiveLanguageAudio,
   playLanguageDialogueSequentially,
   stopPlayableLanguageAudio,
+  type AssimilLanguageLessonContent,
+  type AssimilPhase,
   type LanguageAudioPlaybackRate,
   type LanguageAudioPlaybackCompletion,
   type LanguageLesson,
@@ -561,6 +565,272 @@ function FreeReadyLesson({
           {copyError}
         </p>
       ) : null}
+    </div>
+  );
+}
+
+function AssimilReadyLesson({
+  lessonId,
+  content,
+  phase,
+  reviewLesson,
+  sourceContent,
+  progressControls,
+}: {
+  lessonId: string;
+  content: AssimilLanguageLessonContent;
+  phase: AssimilPhase | null | undefined;
+  reviewLesson: boolean;
+  sourceContent: string;
+  progressControls: ReactNode;
+}) {
+  const [copiedOriginal, setCopiedOriginal] = useState(false);
+  const [copyError, setCopyError] = useState<string | null>(null);
+  const [revealedTranslations, setRevealedTranslations] = useState<Set<number>>(
+    () => new Set(),
+  );
+  const [revealedAnswers, setRevealedAnswers] = useState<Set<number>>(
+    () => new Set(),
+  );
+  const copyResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copyResetTimerRef.current) {
+        clearTimeout(copyResetTimerRef.current);
+      }
+    };
+  }, []);
+
+  async function copyOriginalText() {
+    try {
+      setCopyError(null);
+      await navigator.clipboard.writeText(sourceContent);
+      setCopiedOriginal(true);
+
+      if (copyResetTimerRef.current) {
+        clearTimeout(copyResetTimerRef.current);
+      }
+
+      copyResetTimerRef.current = setTimeout(() => {
+        setCopiedOriginal(false);
+        copyResetTimerRef.current = null;
+      }, 1_500);
+    } catch {
+      setCopiedOriginal(false);
+      setCopyError("No se pudo copiar el texto original.");
+    }
+  }
+
+  function toggleTranslation(index: number) {
+    setRevealedTranslations((current) => {
+      const next = new Set(current);
+
+      if (next.has(index)) {
+        next.delete(index);
+      } else {
+        next.add(index);
+      }
+
+      return next;
+    });
+  }
+
+  function toggleAnswer(index: number) {
+    setRevealedAnswers((current) => {
+      const next = new Set(current);
+
+      if (next.has(index)) {
+        next.delete(index);
+      } else {
+        next.add(index);
+      }
+
+      return next;
+    });
+  }
+
+  return (
+    <div className="assimil-ready">
+      <div className="assimil-phase-row" aria-label="Detalles pedagógicos">
+        {phase ? (
+          <span className="assimil-phase-badge">
+            {languageAssimilPhaseLabel(phase)}
+          </span>
+        ) : null}
+        {reviewLesson ? (
+          <span className="assimil-phase-badge assimil-review-badge">Repaso</span>
+        ) : null}
+      </div>
+
+      {progressControls}
+
+      <div className="assimil-sections">
+        <section
+          className="assimil-section assimil-original"
+          aria-labelledby={`assimil-original-heading-${lessonId}`}
+        >
+          <header className="assimil-section-header">
+            <h2 id={`assimil-original-heading-${lessonId}`}>Texto original</h2>
+            <button
+              aria-label={copiedOriginal ? "Texto original copiado" : "Copiar texto original"}
+              className="copy-button"
+              type="button"
+              onClick={() => void copyOriginalText()}
+            >
+              <CopyIcon />
+              <span>{copiedOriginal ? "Copiado" : "Copiar"}</span>
+            </button>
+          </header>
+          <p className="assimil-original-text">{sourceContent}</p>
+          {copyError ? (
+            <p className="form-error assimil-copy-error" role="alert">
+              {copyError}
+            </p>
+          ) : null}
+        </section>
+
+        <section
+          className="assimil-section"
+          aria-labelledby={`assimil-comprehension-heading-${lessonId}`}
+        >
+          <h2 id={`assimil-comprehension-heading-${lessonId}`}>
+            Comprensión línea por línea
+          </h2>
+          <ol className="assimil-comprehension-list">
+            {content.comprehension.map((item, index) => {
+              const revealed = revealedTranslations.has(index);
+              const revealId = `assimil-translation-${lessonId}-${index}`;
+
+              return (
+                <li className="assimil-comprehension-item" key={`${item.line}-${index}`}>
+                  <p className="assimil-source-line">{item.line}</p>
+                  <button
+                    aria-controls={revealId}
+                    aria-expanded={revealed}
+                    className="assimil-reveal-button"
+                    type="button"
+                    onClick={() => toggleTranslation(index)}
+                  >
+                    {revealed ? "Ocultar traducción" : "Ver traducción"}
+                  </button>
+                  {revealed ? (
+                    <div className="assimil-reveal" id={revealId}>
+                      <p>{item.translation}</p>
+                      {item.note !== null ? (
+                        <p className="assimil-comprehension-note">{item.note}</p>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ol>
+        </section>
+
+        <section
+          className="assimil-section assimil-notes"
+          aria-labelledby={`assimil-notes-heading-${lessonId}`}
+        >
+          <h2 id={`assimil-notes-heading-${lessonId}`}>Notas</h2>
+          <div className="assimil-card-list">
+            {content.notes.map((item, index) => (
+              <article className="assimil-note-card" key={`${item.title}-${index}`}>
+                <h3>{item.title}</h3>
+                <p>{item.explanation}</p>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section
+          className="assimil-section assimil-patterns"
+          aria-labelledby={`assimil-patterns-heading-${lessonId}`}
+        >
+          <h2 id={`assimil-patterns-heading-${lessonId}`}>Patrones</h2>
+          <div className="assimil-card-list">
+            {content.patterns.map((item, index) => (
+              <article
+                className="assimil-pattern-card"
+                key={`${item.pattern}-${index}`}
+              >
+                <h3>{item.pattern}</h3>
+                <p>{item.explanation}</p>
+                <ul>
+                  {item.examples.map((example, exampleIndex) => (
+                    <li key={`${example}-${exampleIndex}`}>{example}</li>
+                  ))}
+                </ul>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section
+          className="assimil-section assimil-key-phrases"
+          aria-labelledby={`assimil-key-phrases-heading-${lessonId}`}
+        >
+          <h2 id={`assimil-key-phrases-heading-${lessonId}`}>Frases clave</h2>
+          <div className="assimil-card-list">
+            {content.keyPhrases.map((item, index) => (
+              <article className="assimil-key-phrase" key={`${item.text}-${index}`}>
+                <strong>{item.text}</strong>
+                <p>{item.meaning}</p>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section
+          className="assimil-section assimil-practice"
+          aria-labelledby={`assimil-practice-heading-${lessonId}`}
+        >
+          <h2 id={`assimil-practice-heading-${lessonId}`}>Práctica</h2>
+          <p className="assimil-practice-instructions">
+            {content.practice.instructions}
+          </p>
+          <ol className="assimil-practice-list">
+            {content.practice.items.map((item, index) => {
+              const revealed = revealedAnswers.has(index);
+              const answerId = `assimil-answer-${lessonId}-${index}`;
+
+              return (
+                <li className="assimil-practice-item" key={`${item.prompt}-${index}`}>
+                  <p className="assimil-practice-prompt">{item.prompt}</p>
+                  <button
+                    aria-controls={answerId}
+                    aria-expanded={revealed}
+                    className="assimil-reveal-button"
+                    type="button"
+                    onClick={() => toggleAnswer(index)}
+                  >
+                    {revealed ? "Ocultar respuesta" : "Ver respuesta"}
+                  </button>
+                  {revealed ? (
+                    <p className="assimil-answer" id={answerId}>
+                      {item.answer}
+                    </p>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ol>
+        </section>
+
+        {content.review ? (
+          <section
+            className="assimil-section assimil-review"
+            aria-labelledby={`assimil-review-heading-${lessonId}`}
+          >
+            <h2 id={`assimil-review-heading-${lessonId}`}>Repaso</h2>
+            <ul>
+              {content.review.points.map((point, index) => (
+                <li key={`${point}-${index}`}>{point}</li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -1489,6 +1759,62 @@ export function LanguageLessonScreen({
     }
   }
 
+  async function processAssimilLesson(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (processing || lesson?.lessonSource !== "assimil") return;
+
+    setProcessing(true);
+    setActionError(null);
+    setLesson((current) =>
+      current ? { ...current, status: "processing" } : current,
+    );
+
+    try {
+      const response = await fetch(
+        `/api/languages/projects/${encodeURIComponent(projectId)}/lessons/${encodeURIComponent(lessonId)}/assimil/process`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ sourceContent }),
+        },
+      );
+
+      if (response.status === 401) {
+        router.replace("/");
+        return;
+      }
+
+      const result = (await response.json()) as {
+        lesson?: LanguageLesson;
+        message?: string;
+      };
+
+      if (!response.ok || !result.lesson) {
+        setLesson((current) =>
+          current ? { ...current, status: "failed" } : current,
+        );
+        setActionError(
+          result.message ??
+            "No se pudo procesar la lección Assimil. Intenta nuevamente.",
+        );
+        return;
+      }
+
+      setLesson(result.lesson);
+      setSourceContent(result.lesson.sourceContent ?? sourceContent);
+    } catch {
+      setLesson((current) =>
+        current ? { ...current, status: "failed" } : current,
+      );
+      setActionError(
+        "No se pudo procesar la lección Assimil. Intenta nuevamente.",
+      );
+    } finally {
+      setProcessing(false);
+    }
+  }
+
   async function splitLanguageLesson() {
     if (!lesson || !splittingGuard.current.start()) return;
 
@@ -2144,20 +2470,39 @@ export function LanguageLessonScreen({
   }
 
   const preparedFreeLesson = isPreparedFreeLanguageLesson(lesson);
-  const splitComplete = splitState.kind === "complete";
+  const assimilV1Lesson = isAssimilV1LanguageLesson(lesson);
+  const splitComplete = !assimilV1Lesson && splitState.kind === "complete";
   const splitChild = lesson.splitPart !== null;
-  const canSplit = languageLessonCanSplit(project.level, lesson, splitState);
+  const canSplit =
+    !assimilV1Lesson &&
+    languageLessonCanSplit(project.level, lesson, splitState);
   const showProgress = languageLessonShowsProgress(lesson, splitState);
-  const allowSimplification = languageLessonAllowsSimplification(lesson);
-  const allowVerySimplification = languageLessonCanVerySimplify(
-    project.level,
-    lesson,
-  );
-  const contentVersionOptions = languageLessonContentVersionOptions(lesson);
+  const allowSimplification =
+    !assimilV1Lesson && languageLessonAllowsSimplification(lesson);
+  const allowVerySimplification =
+    !assimilV1Lesson &&
+    languageLessonCanVerySimplify(project.level, lesson);
+  const contentVersionOptions = assimilV1Lesson
+    ? []
+    : languageLessonContentVersionOptions(lesson);
   const readyContent =
-    lesson.status === "ready" && !preparedFreeLesson
+    lesson.status === "ready" && !preparedFreeLesson && !assimilV1Lesson
       ? languageLessonContentForVersion(lesson, contentVersion)
       : null;
+  const progressControls = showProgress ? (
+    <LanguageLessonProgressControls
+      difficulty={lesson.difficulty}
+      error={progressError}
+      learningStatus={lesson.learningStatus}
+      updating={progressUpdating}
+      onDifficultyChange={(difficulty) =>
+        void updateLearningProgress({ difficulty })
+      }
+      onLearningStatusChange={(learningStatus) =>
+        void updateLearningProgress({ learningStatus })
+      }
+    />
+  ) : null;
 
   return (
     <main className="flow-shell language-shell language-lesson-shell">
@@ -2184,20 +2529,19 @@ export function LanguageLessonScreen({
           ) : null}
         </header>
 
-        {showProgress ? (
-          <LanguageLessonProgressControls
-            difficulty={lesson.difficulty}
-            error={progressError}
-            learningStatus={lesson.learningStatus}
-            updating={progressUpdating}
-            onDifficultyChange={(difficulty) =>
-              void updateLearningProgress({ difficulty })
-            }
-            onLearningStatusChange={(learningStatus) =>
-              void updateLearningProgress({ learningStatus })
-            }
+        {lesson.status === "ready" && assimilV1Lesson ? (
+          <AssimilReadyLesson
+            content={lesson.assimilContent}
+            key={lesson.id}
+            lessonId={lesson.id}
+            phase={lesson.assimilPhase}
+            progressControls={progressControls}
+            reviewLesson={lesson.assimilReviewLesson === true}
+            sourceContent={lesson.sourceContent ?? ""}
           />
-        ) : null}
+        ) : (
+          progressControls
+        )}
 
         {lesson.status === "ready" && splitComplete ? (
           <p className="lesson-split-progress-note">
@@ -2233,13 +2577,15 @@ export function LanguageLessonScreen({
           </p>
         ) : null}
 
-        {splitState.kind === "inconsistent" && !splitError ? (
+        {!assimilV1Lesson &&
+        splitState.kind === "inconsistent" &&
+        !splitError ? (
           <p className="form-error lesson-split-error" role="alert">
             Las partes de esta lección están incompletas.
           </p>
         ) : null}
 
-        {splitState.kind === "complete" ? (
+        {splitComplete ? (
           <section
             className="lesson-split-parts"
             aria-labelledby="lesson-split-parts-title"
@@ -2282,10 +2628,22 @@ export function LanguageLessonScreen({
 
         {lesson.status === "processing" ? (
           <section className="lesson-processing" aria-live="polite">
-            <strong>Procesando lección…</strong>
-            <p>
-              MemoOS está organizando el material en las secciones de la lección.
-            </p>
+            {lesson.lessonSource === "assimil" ? (
+              <>
+                <strong>Procesando lección Assimil…</strong>
+                <p>
+                  MemoOS está preparando la comprensión, notas y práctica de esta
+                  lección.
+                </p>
+              </>
+            ) : (
+              <>
+                <strong>Procesando lección…</strong>
+                <p>
+                  MemoOS está organizando el material en las secciones de la lección.
+                </p>
+              </>
+            )}
           </section>
         ) : null}
 
@@ -2341,7 +2699,41 @@ export function LanguageLessonScreen({
           </form>
         ) : null}
 
-        {lesson.lessonSource !== "free" &&
+        {lesson.lessonSource === "assimil" &&
+        lesson.status !== "ready" &&
+        lesson.status !== "processing" ? (
+          <form className="lesson-form" onSubmit={processAssimilLesson}>
+            <div>
+              <h2>Preparar lección Assimil</h2>
+              <p>Pega el diálogo o material de esta lección.</p>
+            </div>
+            <label htmlFor="assimil-source-content">Material de la lección</label>
+            <textarea
+              id="assimil-source-content"
+              maxLength={SOURCE_CONTENT_MAX_LENGTH}
+              placeholder="Pega aquí el diálogo o material de la lección."
+              required
+              rows={18}
+              value={sourceContent}
+              onChange={(event) => setSourceContent(event.target.value)}
+            />
+            <small className="lesson-input-limit">
+              Máximo {SOURCE_CONTENT_MAX_LENGTH.toLocaleString("es")} caracteres.
+            </small>
+            {actionError ? (
+              <p className="form-error" role="alert">
+                {actionError}
+              </p>
+            ) : null}
+            <button type="submit" disabled={processing || !sourceContent.trim()}>
+              {processing
+                ? "Procesando lección Assimil…"
+                : "Procesar lección Assimil"}
+            </button>
+          </form>
+        ) : null}
+
+        {lesson.lessonSource === "language_framework" &&
         lesson.status !== "ready" &&
         lesson.status !== "processing" ? (
           <form className="lesson-form" onSubmit={processLesson}>
@@ -2547,7 +2939,20 @@ export function LanguageLessonScreen({
           />
         ) : null}
 
-        {lesson.status === "ready" && !preparedFreeLesson && !readyContent ? (
+        {lesson.status === "ready" &&
+        lesson.lessonSource === "assimil" &&
+        !assimilV1Lesson &&
+        !lesson.structuredContent ? (
+          <p className="form-error lesson-ready-error" role="alert">
+            No se pudo mostrar el contenido de esta lección Assimil.
+          </p>
+        ) : null}
+
+        {lesson.status === "ready" &&
+        !preparedFreeLesson &&
+        !assimilV1Lesson &&
+        lesson.lessonSource !== "assimil" &&
+        !readyContent ? (
           <p className="form-error lesson-ready-error" role="alert">
             No se pudo mostrar el contenido estructurado de esta lección.
           </p>

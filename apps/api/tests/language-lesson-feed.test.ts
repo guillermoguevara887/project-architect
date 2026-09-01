@@ -15,6 +15,7 @@ import {
   formatLanguageLessonTitle,
   getOrCreateLanguageAudioElement,
   INITIAL_LANGUAGE_LESSON_CREATION_STATE,
+  isAssimilV1LanguageLesson,
   isA1LanguageProjectLevel,
   isPreparedFreeLanguageLesson,
   isJapaneseLanguage,
@@ -35,6 +36,9 @@ import {
   languageLessonAudioRequest,
   languageLessonAudioStateAfterEnd,
   languageLessonAudioToggleAction,
+  languageAssimilPhaseLabel,
+  languageAssimilSourceLessonNumberIsValid,
+  languageLessonCreationRequest,
   languageLessonCreationReducer,
   languageLessonContentForVersion,
   languageLessonContentVersionOptions,
@@ -55,6 +59,7 @@ import {
   playExclusiveLanguageAudio,
   playLanguageDialogueSequentially,
   stopPlayableLanguageAudio,
+  type AssimilLanguageLessonContent,
   type LanguageLesson,
   type LanguageLessonSource,
   type StructuredLanguageLesson,
@@ -1081,6 +1086,10 @@ test("lesson audio UI starts the selected audio and stops the previous one", asy
 
 test("lesson creation source stays hidden until the primary action opens it", () => {
   assert.equal(INITIAL_LANGUAGE_LESSON_CREATION_STATE.status, "closed");
+  assert.equal(
+    INITIAL_LANGUAGE_LESSON_CREATION_STATE.assimilSourceLessonNumber,
+    "",
+  );
 
   const opened = languageLessonCreationReducer(
     INITIAL_LANGUAGE_LESSON_CREATION_STATE,
@@ -1089,6 +1098,7 @@ test("lesson creation source stays hidden until the primary action opens it", ()
 
   assert.equal(opened.status, "choosing");
   assert.equal(opened.lessonSource, "free");
+  assert.equal(opened.assimilSourceLessonNumber, "");
   assert.deepEqual(
     LANGUAGE_LESSON_SOURCE_OPTIONS.map(({ label }) => label),
     ["Assimil", "Marco de idiomas", "Lección libre"],
@@ -1103,6 +1113,94 @@ test("cancelling lesson creation closes the source step without submitting", () 
   const cancelled = languageLessonCreationReducer(opened, { type: "cancel" });
 
   assert.deepEqual(cancelled, INITIAL_LANGUAGE_LESSON_CREATION_STATE);
+});
+
+test("lesson creation keeps and resets the Assimil source number", () => {
+  const opened = languageLessonCreationReducer(
+    INITIAL_LANGUAGE_LESSON_CREATION_STATE,
+    { type: "open" },
+  );
+  const assimil = languageLessonCreationReducer(opened, {
+    type: "select-source",
+    lessonSource: "assimil",
+  });
+  const numbered = languageLessonCreationReducer(assimil, {
+    type: "set-assimil-source-lesson-number",
+    value: "15",
+  });
+
+  assert.equal(assimil.assimilSourceLessonNumber, "");
+  assert.equal(numbered.assimilSourceLessonNumber, "15");
+  assert.deepEqual(
+    languageLessonCreationReducer(
+      languageLessonCreationReducer(numbered, { type: "start" }),
+      { type: "failed" },
+    ),
+    {
+      status: "choosing",
+      lessonSource: "assimil",
+      assimilSourceLessonNumber: "15",
+    },
+  );
+  assert.equal(
+    languageLessonCreationReducer(numbered, {
+      type: "select-source",
+      lessonSource: "free",
+    }).assimilSourceLessonNumber,
+    "",
+  );
+  assert.equal(
+    languageLessonCreationReducer(numbered, {
+      type: "select-source",
+      lessonSource: "language_framework",
+    }).assimilSourceLessonNumber,
+    "",
+  );
+  assert.deepEqual(
+    languageLessonCreationReducer(numbered, { type: "cancel" }),
+    INITIAL_LANGUAGE_LESSON_CREATION_STATE,
+  );
+});
+
+test("Assimil source lesson number validation is strict", () => {
+  for (const value of ["1", "15", "9999"]) {
+    assert.equal(languageAssimilSourceLessonNumberIsValid(value), true);
+  }
+
+  for (const value of ["", "0", "-1", "1.5", "10000", "abc", " 15 "]) {
+    assert.equal(languageAssimilSourceLessonNumberIsValid(value), false);
+  }
+});
+
+test("lesson creation requests include a source number only for Assimil", () => {
+  assert.deepEqual(
+    languageLessonCreationRequest({
+      lessonSource: "assimil",
+      assimilSourceLessonNumber: "15",
+    }),
+    { lessonSource: "assimil", sourceLessonNumber: 15 },
+  );
+  assert.equal(
+    languageLessonCreationRequest({
+      lessonSource: "assimil",
+      assimilSourceLessonNumber: "",
+    }),
+    null,
+  );
+  assert.deepEqual(
+    languageLessonCreationRequest({
+      lessonSource: "language_framework",
+      assimilSourceLessonNumber: "15",
+    }),
+    { lessonSource: "language_framework" },
+  );
+  assert.deepEqual(
+    languageLessonCreationRequest({
+      lessonSource: "free",
+      assimilSourceLessonNumber: "15",
+    }),
+    { lessonSource: "free" },
+  );
 });
 
 test("continuing lesson creation keeps the selected source and blocks duplicate submissions", () => {
@@ -1121,12 +1219,41 @@ test("continuing lesson creation keeps the selected source and blocks duplicate 
   assert.equal(creating.lessonSource, "language_framework");
   assert.deepEqual(
     languageLessonCreationReducer(creating, { type: "failed" }),
-    { status: "choosing", lessonSource: "language_framework" },
+    {
+      status: "choosing",
+      lessonSource: "language_framework",
+      assimilSourceLessonNumber: "",
+    },
   );
   assert.equal(guard.start(), true);
   assert.equal(guard.start(), false);
   guard.finish();
   assert.equal(guard.start(), true);
+});
+
+test("Assimil lesson creation UI requests the real lesson number", async () => {
+  const projectComponent = await readFile(
+    new URL(
+      "../../web/src/components/language-project-screen.tsx",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+
+  assert.match(
+    projectComponent,
+    /creation\.lessonSource === "assimil"[\s\S]*?Número de lección Assimil/,
+  );
+  assert.match(projectComponent, /type="number"/);
+  assert.match(projectComponent, /min=\{1\}/);
+  assert.match(projectComponent, /max=\{9999\}/);
+  assert.match(projectComponent, /step=\{1\}/);
+  assert.match(projectComponent, /placeholder="15"/);
+  assert.match(
+    projectComponent,
+    /disabled=\{creating \|\| !creationRequest\}/,
+  );
+  assert.match(projectComponent, /body: JSON\.stringify\(request\)/);
 });
 
 test("prepared free lessons are distinguished from historical structured free lessons", () => {
@@ -1147,6 +1274,280 @@ test("prepared free lessons are distinguished from historical structured free le
       freeTitle: "No debe activar el formato libre",
     }),
     false,
+  );
+});
+
+test("new Assimil lessons are distinguished from drafts and historical content", () => {
+  const assimilContent: AssimilLanguageLessonContent = {
+    kind: "assimil_v1",
+    comprehension: [],
+    notes: [],
+    patterns: [],
+    keyPhrases: [],
+    practice: { instructions: "", items: [] },
+    review: null,
+  };
+
+  assert.equal(
+    isAssimilV1LanguageLesson({
+      lessonSource: "assimil",
+      assimilContent,
+    }),
+    true,
+  );
+  assert.equal(
+    isAssimilV1LanguageLesson({
+      lessonSource: "assimil",
+      assimilContent: null,
+    }),
+    false,
+  );
+  assert.equal(
+    isAssimilV1LanguageLesson({
+      lessonSource: "assimil",
+      assimilContent: null,
+      structuredContent: structuredContent("Legacy Assimil"),
+    }),
+    false,
+  );
+  assert.equal(
+    isAssimilV1LanguageLesson({
+      lessonSource: "language_framework",
+      assimilContent,
+    }),
+    false,
+  );
+  assert.equal(
+    isAssimilV1LanguageLesson({ lessonSource: "free", assimilContent }),
+    false,
+  );
+});
+
+test("Assimil phase labels come directly from the backend phase", () => {
+  assert.equal(
+    languageAssimilPhaseLabel("impregnation"),
+    "Fase de impregnación",
+  );
+  assert.equal(
+    languageAssimilPhaseLabel("activation"),
+    "Fase de activación",
+  );
+});
+
+test("Assimil processing UI stays separate from Framework and Free", async () => {
+  const component = await readFile(
+    new URL(
+      "../../web/src/components/language-lesson-screen.tsx",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  const assimilHandler = component.match(
+    /async function processAssimilLesson[\s\S]*?\n  }\n/m,
+  )?.[0];
+  const frameworkHandler = component.match(
+    /async function processLesson[\s\S]*?\n  }\n/m,
+  )?.[0];
+
+  assert.ok(assimilHandler);
+  assert.ok(frameworkHandler);
+  assert.match(component, /Preparar lección Assimil/);
+  assert.match(component, /Procesar lección Assimil/);
+  assert.match(
+    component,
+    /lesson\.lessonSource === "assimil"[\s\S]*?onSubmit=\{processAssimilLesson\}/,
+  );
+  assert.match(
+    component,
+    /lesson\.lessonSource === "language_framework"[\s\S]*?onSubmit=\{processLesson\}/,
+  );
+  assert.match(
+    component,
+    /lesson\.lessonSource === "free"[\s\S]*?onSubmit=\{prepareFreeLesson\}/,
+  );
+  assert.match(assimilHandler, /\/assimil\/process/);
+  assert.match(assimilHandler, /body: JSON\.stringify\(\{ sourceContent \}\)/);
+  assert.doesNotMatch(
+    assimilHandler.replace("/assimil/process", ""),
+    /\/process/,
+  );
+  assert.match(frameworkHandler, /lessons\/\$\{encodeURIComponent\(lessonId\)\}\/process/);
+  assert.doesNotMatch(frameworkHandler, /\/assimil\/process/);
+  assert.match(assimilHandler, /setLesson\(result\.lesson\)/);
+  assert.match(
+    assimilHandler,
+    /setSourceContent\(result\.lesson\.sourceContent \?\? sourceContent\)/,
+  );
+  assert.doesNotMatch(assimilHandler, /setSourceContent\(""\)/);
+  assert.match(
+    assimilHandler,
+    /No se pudo procesar la lección Assimil\. Intenta nuevamente\./,
+  );
+});
+
+test("Assimil processing and ready states preserve legacy lesson behavior", async () => {
+  const component = await readFile(
+    new URL(
+      "../../web/src/components/language-lesson-screen.tsx",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+
+  assert.match(component, /Procesando lección Assimil…/);
+  assert.match(
+    component,
+    /MemoOS está preparando la comprensión, notas y práctica de esta[\s\S]*?lección\./,
+  );
+  assert.match(
+    component,
+    /MemoOS está organizando el material en las secciones de la[\s\S]*?lección\./,
+  );
+  assert.match(
+    component,
+    /lesson\.status === "ready" && !preparedFreeLesson && !assimilV1Lesson/,
+  );
+  assert.match(component, /lesson\.status === "ready" && assimilV1Lesson/);
+  assert.match(component, /<AssimilReadyLesson/);
+  assert.doesNotMatch(component, /Lección Assimil preparada\./);
+  assert.match(component, /<ReadyLesson/);
+  assert.match(
+    component,
+    /!assimilV1Lesson && languageLessonAllowsSimplification\(lesson\)/,
+  );
+  assert.match(component, /const showProgress = languageLessonShowsProgress/);
+  assert.match(component, /void deleteLesson\(\)/);
+  assert.match(
+    component,
+    /setLesson\(result\.lesson\);\s*setSourceContent\(result\.lesson\.sourceContent \?\? ""\);/,
+  );
+});
+
+test("Assimil v1 ready UI uses its own ordered study renderer", async () => {
+  const component = await readFile(
+    new URL(
+      "../../web/src/components/language-lesson-screen.tsx",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  const renderer = component.match(
+    /function AssimilReadyLesson\([\s\S]*?\n}\n\nfunction LessonSection/,
+  )?.[0];
+
+  assert.ok(renderer);
+  const orderedHeadings = [
+    "Texto original",
+    "Comprensión línea por línea",
+    "Notas",
+    "Patrones",
+    "Frases clave",
+    "Práctica",
+    "Repaso",
+  ];
+  let previousHeadingIndex = -1;
+
+  for (const heading of orderedHeadings) {
+    const headingIndex = renderer.indexOf(heading, previousHeadingIndex + 1);
+    assert.ok(headingIndex > previousHeadingIndex, `${heading} está fuera de orden`);
+    previousHeadingIndex = headingIndex;
+  }
+
+  assert.match(renderer, /languageAssimilPhaseLabel\(phase\)/);
+  assert.match(renderer, /reviewLesson \? \([\s\S]*?Repaso/);
+  assert.match(renderer, /navigator\.clipboard\.writeText\(sourceContent\)/);
+  assert.match(renderer, /<p className="assimil-original-text">\{sourceContent\}<\/p>/);
+  assert.match(renderer, /copiedOriginal \? "Copiado" : "Copiar"/);
+  assert.match(renderer, /1_500/);
+  assert.match(renderer, /No se pudo copiar el texto original\./);
+  assert.match(renderer, /role="alert"/);
+
+  assert.match(renderer, /useState<Set<number>>\(\s*\(\) => new Set\(\)/);
+  assert.match(renderer, /revealedTranslations\.has\(index\)/);
+  assert.match(renderer, /aria-expanded=\{revealed\}/);
+  assert.match(renderer, /revealed \? "Ocultar traducción" : "Ver traducción"/);
+  assert.match(renderer, /\{revealed \? \([\s\S]*?\{item\.translation\}/);
+  assert.match(renderer, /item\.note !== null \? \([\s\S]*?\{item\.note\}/);
+
+  assert.match(renderer, /\{item\.title\}/);
+  assert.match(renderer, /\{item\.explanation\}/);
+  assert.match(renderer, /item\.examples\.map/);
+  assert.match(renderer, /\{item\.meaning\}/);
+  assert.match(renderer, /\{content\.practice\.instructions\}/);
+  assert.match(renderer, /revealedAnswers\.has\(index\)/);
+  assert.match(renderer, /revealed \? "Ocultar respuesta" : "Ver respuesta"/);
+  assert.match(renderer, /\{revealed \? \([\s\S]*?\{item\.answer\}/);
+  assert.match(renderer, /\{content\.review \? \([\s\S]*?content\.review\.points\.map/);
+
+  assert.doesNotMatch(renderer, /LessonAudioButton|playLanguageAudio|\/audio/);
+  assert.doesNotMatch(renderer, /function ReadyLesson|<ReadyLesson/);
+  assert.doesNotMatch(renderer, /Simplificar|simplificada|Dividir en 1A/);
+});
+
+test("Assimil v1 routing resets reveals and excludes Framework-only controls", async () => {
+  const component = await readFile(
+    new URL(
+      "../../web/src/components/language-lesson-screen.tsx",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+
+  assert.match(
+    component,
+    /lesson\.status === "ready" && assimilV1Lesson \? \([\s\S]*?<AssimilReadyLesson[\s\S]*?key=\{lesson\.id\}/,
+  );
+  assert.match(component, /phase=\{lesson\.assimilPhase\}/);
+  assert.match(
+    component,
+    /reviewLesson=\{lesson\.assimilReviewLesson === true\}/,
+  );
+  assert.match(component, /sourceContent=\{lesson\.sourceContent \?\? ""\}/);
+  assert.match(component, /progressControls=\{progressControls\}/);
+  assert.match(
+    component,
+    /const canSplit =\s*!assimilV1Lesson &&[\s\S]*?languageLessonCanSplit/,
+  );
+  assert.match(
+    component,
+    /const allowVerySimplification =\s*!assimilV1Lesson &&/,
+  );
+  assert.match(
+    component,
+    /const contentVersionOptions = assimilV1Lesson\s*\? \[\]/,
+  );
+  assert.match(
+    component,
+    /lesson\.status === "ready" && !preparedFreeLesson && !assimilV1Lesson[\s\S]*?languageLessonContentForVersion/,
+  );
+  assert.match(
+    component,
+    /lesson\.lessonSource === "assimil" &&[\s\S]*?!assimilV1Lesson &&[\s\S]*?!lesson\.structuredContent[\s\S]*?No se pudo mostrar el contenido de esta lección Assimil\./,
+  );
+  assert.match(component, /<ReadyLesson[\s\S]*?content=\{readyContent\}/);
+});
+
+test("Assimil study styles preserve source formatting and fit mobile screens", async () => {
+  const styles = await readFile(
+    new URL("../../web/src/app/globals.css", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(
+    styles,
+    /\.assimil-original-text\s*\{[\s\S]*?white-space: pre-wrap;/,
+  );
+  assert.match(styles, /\.assimil-phase-badge\s*\{/);
+  assert.match(styles, /\.assimil-comprehension-item/);
+  assert.match(styles, /\.assimil-pattern-card/);
+  assert.match(styles, /\.assimil-answer/);
+  assert.match(
+    styles,
+    /@media \(max-width: 36rem\)[\s\S]*?\.assimil-section\s*\{[\s\S]*?width: 100%;/,
+  );
+  assert.match(
+    styles,
+    /\.assimil-section-header \.copy-button,[\s\S]*?\.assimil-reveal-button\s*\{[\s\S]*?width: 100%;/,
   );
 });
 
