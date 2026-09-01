@@ -227,30 +227,53 @@ const assimilPracticeItemSchema = z
   })
   .strict();
 
+const assimilDialogueItemSchema = z
+  .object({
+    speaker: requiredText,
+    text: z.string().refine((value) => value.trim().length > 0),
+  })
+  .strict();
+
+const assimilLanguageLessonContentShape = {
+  kind: z.literal("assimil_v1"),
+  comprehension: z.array(assimilComprehensionItemSchema).min(1).max(30),
+  notes: z.array(assimilNoteSchema).min(3).max(5),
+  patterns: z.array(assimilPatternSchema).min(1).max(3),
+  keyPhrases: z.array(assimilKeyPhraseSchema).min(3).max(5),
+  practice: z
+    .object({
+      instructions: requiredText,
+      items: z.array(assimilPracticeItemSchema).min(2).max(5),
+    })
+    .strict(),
+  review: z
+    .object({
+      points: z.array(requiredText).min(2).max(5),
+    })
+    .strict()
+    .nullable(),
+};
+
 export const assimilLanguageLessonContentSchema = z
   .object({
-    kind: z.literal("assimil_v1"),
-    comprehension: z.array(assimilComprehensionItemSchema).min(1).max(30),
-    notes: z.array(assimilNoteSchema).min(3).max(5),
-    patterns: z.array(assimilPatternSchema).min(1).max(3),
-    keyPhrases: z.array(assimilKeyPhraseSchema).min(3).max(5),
-    practice: z
-      .object({
-        instructions: requiredText,
-        items: z.array(assimilPracticeItemSchema).min(2).max(5),
-      })
-      .strict(),
-    review: z
-      .object({
-        points: z.array(requiredText).min(2).max(5),
-      })
-      .strict()
-      .nullable(),
+    ...assimilLanguageLessonContentShape,
+    dialogue: z.array(assimilDialogueItemSchema).max(16).optional(),
+  })
+  .strict();
+
+export const generatedAssimilLanguageLessonContentSchema = z
+  .object({
+    ...assimilLanguageLessonContentShape,
+    dialogue: z.array(assimilDialogueItemSchema).max(16),
   })
   .strict();
 
 export type AssimilLanguageLessonContent = z.infer<
   typeof assimilLanguageLessonContentSchema
+>;
+
+export type GeneratedAssimilLanguageLessonContent = z.infer<
+  typeof generatedAssimilLanguageLessonContentSchema
 >;
 
 export type PersistedLanguageLessonContent =

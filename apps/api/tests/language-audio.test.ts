@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  assignLanguageDialogueVoices,
   ElevenLabsLanguageAudioProvider,
   languageAudioStorageKey,
   languageLessonAudioRequestSchema,
@@ -8,11 +9,15 @@ import {
   normalizeLanguageAudioText,
   OPENAI_LANGUAGE_AUDIO_CONFIG,
   OpenAILanguageAudioProvider,
+  resolveAssimilDialogueAudioTarget,
   resolveLanguageLessonAudioText,
   resolveLanguageStoryAudioConfiguration,
   resolveLanguageStoryAudioLanguage,
 } from "../src/languages/audio.js";
-import type { StructuredLanguageLesson } from "../src/languages/contracts.js";
+import type {
+  AssimilLanguageLessonContent,
+  StructuredLanguageLesson,
+} from "../src/languages/contracts.js";
 import {
   isLanguageAudioGenerationActive,
   LANGUAGE_AUDIO_GENERATION_TIMEOUT_MS,
@@ -75,6 +80,95 @@ test("audio storage keys are stable, opaque and separated by language and user",
   );
   assert.match(first, /^language-audio\/[a-f0-9]{64}\.mp3$/);
   assert.doesNotMatch(first, /Dzień|dobry/);
+});
+
+test("dialogue voice assignment alternates distinct speakers without gender inference", () => {
+  const dialogue = [
+    { speaker: "Ben", text: "First" },
+    { speaker: "Anna", text: "Second" },
+    { speaker: " Ben ", text: "Third" },
+    { speaker: "Clara", text: "Fourth" },
+    { speaker: "David", text: "Fifth" },
+    { speaker: "ANNA", text: "Sixth" },
+  ];
+
+  assert.deepEqual(assignLanguageDialogueVoices(dialogue), [
+    "female",
+    "male",
+    "female",
+    "female",
+    "male",
+    "male",
+  ]);
+});
+
+test("Assimil dialogue targets resolve persisted text and assigned voice only", () => {
+  const content = {
+    kind: "assimil_v1",
+    dialogue: [
+      { speaker: "Anna", text: "Guten Morgen." },
+      { speaker: "Ben", text: "Wie geht es dir?" },
+      { speaker: "Anna", text: "Sehr gut." },
+    ],
+    comprehension: [],
+    notes: [],
+    patterns: [],
+    keyPhrases: [],
+    practice: { instructions: "Practice", items: [] },
+    review: null,
+  } satisfies AssimilLanguageLessonContent;
+
+  assert.deepEqual(resolveAssimilDialogueAudioTarget(content, 0), {
+    text: "Guten Morgen.",
+    voice: "female",
+  });
+  assert.deepEqual(resolveAssimilDialogueAudioTarget(content, 1), {
+    text: "Wie geht es dir?",
+    voice: "male",
+  });
+  assert.deepEqual(resolveAssimilDialogueAudioTarget(content, 2), {
+    text: "Sehr gut.",
+    voice: "female",
+  });
+  assert.equal(resolveAssimilDialogueAudioTarget(content, 3), null);
+  assert.equal(
+    resolveAssimilDialogueAudioTarget({ ...content, dialogue: undefined }, 0),
+    null,
+  );
+});
+
+test("audio cache identity reuses a line per voice and separates another voice", () => {
+  const readEnvironment = (name: string) => `test-${name}`;
+  const female = resolveLanguageStoryAudioConfiguration(
+    "Alemán",
+    "female",
+    readEnvironment,
+  );
+  const male = resolveLanguageStoryAudioConfiguration(
+    "Alemán",
+    "male",
+    readEnvironment,
+  );
+  assert.ok(female);
+  assert.ok(male);
+  const input = {
+    userId: "user-one",
+    language: "Alemán",
+    normalizedText: "Guten Morgen.",
+  };
+  const femaleKey = languageAudioStorageKey({
+    ...input,
+    configuration: female,
+  });
+
+  assert.equal(
+    languageAudioStorageKey({ ...input, configuration: female }),
+    femaleKey,
+  );
+  assert.notEqual(
+    languageAudioStorageKey({ ...input, configuration: male }),
+    femaleKey,
+  );
 });
 
 test("mini story is a safe index-zero target resolved from stored content", () => {

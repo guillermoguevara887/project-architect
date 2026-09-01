@@ -144,6 +144,11 @@ const structuredLesson: StructuredLanguageLesson = {
 
 const assimilLesson: AssimilLanguageLessonContent = {
   kind: "assimil_v1",
+  dialogue: [
+    { speaker: "Anna", text: "Ich bin müde." },
+    { speaker: "Ben", text: "Ich bin bereit." },
+    { speaker: "Anna", text: "Bis morgen." },
+  ],
   comprehension: [
     {
       line: "Ich bin müde.",
@@ -2726,7 +2731,7 @@ test("generic processing is Framework-only and never calls its processor for Ass
   }
 });
 
-test("new Assimil v1 rejects general simplification and audio while legacy Assimil audio stays compatible", async () => {
+test("new Assimil v1 rejects unsupported audio sections while legacy Assimil audio stays compatible", async () => {
   const { processor, audioProvider, server, store } = testServer();
   const cookie = sessionCookie(firstUser.id);
 
@@ -2800,6 +2805,97 @@ test("new Assimil v1 rejects general simplification and audio while legacy Assim
     assert.equal(audioProvider.calls.length, 1);
   } finally {
     await server.close();
+  }
+});
+
+test("historical Assimil v1 without dialogue stays public and returns controlled missing-dialogue audio errors", async () => {
+  const historical = testServer();
+  const empty = testServer();
+  const cookie = sessionCookie(firstUser.id);
+  const { dialogue: _dialogue, ...historicalContent } = assimilLesson;
+
+  try {
+    const historicalProject = await createProject(
+      historical.server,
+      cookie,
+      "Alemán",
+    );
+    const historicalLesson = await createLesson(
+      historical.server,
+      historicalProject.id,
+      cookie,
+      "assimil",
+      15,
+    );
+    const storedHistorical = historical.store.lessons.find(
+      ({ id }) => id === historicalLesson.id,
+    );
+    assert.ok(storedHistorical);
+    storedHistorical.status = "ready";
+    storedHistorical.structuredContent = historicalContent;
+    storedHistorical.processedAt = new Date();
+
+    const reloaded = await historical.server.inject({
+      method: "GET",
+      url: `/languages/projects/${historicalProject.id}/lessons/${historicalLesson.id}`,
+      headers: { cookie },
+    });
+    const historicalAudio = await requestLessonAudio(
+      historical.server,
+      historicalProject.id,
+      historicalLesson.id,
+      cookie,
+      { version: "original", section: "dialogue", index: 0, voice: "female" },
+    );
+
+    assert.equal(reloaded.statusCode, 200);
+    assert.deepEqual(reloaded.json().lesson.assimilContent, historicalContent);
+    assert.equal("dialogue" in reloaded.json().lesson.assimilContent, false);
+    assert.equal(historicalAudio.statusCode, 409);
+    assert.deepEqual(historicalAudio.json(), {
+      error: "LANGUAGE_ASSIMIL_DIALOGUE_AUDIO_UNAVAILABLE",
+      message:
+        "Esta lección Assimil no tiene un diálogo disponible para reproducir.",
+    });
+
+    const emptyProject = await createProject(empty.server, cookie, "Alemán");
+    const emptyLesson = await createLesson(
+      empty.server,
+      emptyProject.id,
+      cookie,
+      "assimil",
+      15,
+    );
+    const storedEmpty = empty.store.lessons.find(
+      ({ id }) => id === emptyLesson.id,
+    );
+    assert.ok(storedEmpty);
+    storedEmpty.status = "ready";
+    storedEmpty.structuredContent = { ...assimilLesson, dialogue: [] };
+    storedEmpty.processedAt = new Date();
+
+    const emptyAudio = await requestLessonAudio(
+      empty.server,
+      emptyProject.id,
+      emptyLesson.id,
+      cookie,
+      { version: "original", section: "dialogue", index: 0, voice: "female" },
+    );
+    assert.equal(emptyAudio.statusCode, 409);
+    assert.deepEqual(emptyAudio.json(), {
+      error: "LANGUAGE_ASSIMIL_DIALOGUE_AUDIO_UNAVAILABLE",
+      message:
+        "Esta lección Assimil no tiene un diálogo disponible para reproducir.",
+    });
+
+    for (const dependencies of [historical, empty]) {
+      assert.equal(dependencies.audioProvider.calls.length, 0);
+      assert.equal(dependencies.elevenLabsProvider.calls.length, 0);
+      assert.equal(dependencies.audioStore.assets.length, 0);
+    }
+  } finally {
+    await historical.server.close();
+    await empty.server.close();
   }
 });
 
@@ -4454,6 +4550,241 @@ test("lesson audio rejects arbitrary text, unsupported sections and invalid inde
     assert.equal(audioProvider.calls.length, 0);
   } finally {
     await server.close();
+  }
+});
+
+test("Assimil dialogue resolves persisted lines and deterministic voices through ElevenLabs cache", async () => {
+  const {
+    audioStore,
+    audioProvider,
+    audioStorage,
+    elevenLabsProvider,
+    server,
+  } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+
+  try {
+    const project = await createProject(server, cookie, "Deutsch");
+    const lesson = await createLesson(
+      server,
+      project.id,
+      cookie,
+      "assimil",
+      15,
+    );
+    const processed = await processAssimilLesson(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+    );
+    assert.equal(processed.statusCode, 200);
+    assert.deepEqual(processed.json().lesson.assimilContent.dialogue, [
+      { speaker: "Anna", text: "Ich bin müde." },
+      { speaker: "Ben", text: "Ich bin bereit." },
+      { speaker: "Anna", text: "Bis morgen." },
+    ]);
+
+    const requests = [
+      { version: "original", section: "dialogue", index: 0, voice: "female" },
+      { version: "original", section: "dialogue", index: 0, voice: "female" },
+      { version: "original", section: "dialogue", index: 1, voice: "male" },
+    ] as const;
+
+    for (const payload of requests) {
+      const response = await requestLessonAudio(
+        server,
+        project.id,
+        lesson.id,
+        cookie,
+        payload,
+      );
+      assert.equal(response.statusCode, 200);
+      assert.equal(response.headers["content-type"], "audio/mpeg");
+      assert.equal(response.body, "ID3");
+    }
+
+    const invalidPayloads = [
+      {
+        version: "original",
+        section: "dialogue",
+        index: 0,
+        voice: "female",
+        text: "Texto arbitrario del navegador",
+      },
+      {
+        version: "original",
+        section: "dialogue",
+        index: 0,
+        voice: "female",
+        voiceId: "arbitrary-voice-id",
+        model: "arbitrary-model",
+        provider: "openai",
+      },
+    ];
+    for (const payload of invalidPayloads) {
+      const response = await requestLessonAudio(
+        server,
+        project.id,
+        lesson.id,
+        cookie,
+        payload,
+      );
+      assert.equal(response.statusCode, 400);
+      assert.equal(response.json().error, "INVALID_LANGUAGE_AUDIO_REQUEST");
+    }
+
+    const mismatchedVoice = await requestLessonAudio(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      { version: "original", section: "dialogue", index: 0, voice: "male" },
+    );
+    const missingIndex = await requestLessonAudio(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      { version: "original", section: "dialogue", index: 99, voice: "female" },
+    );
+    const simplified = await requestLessonAudio(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      { version: "simplified", section: "dialogue", index: 0, voice: "female" },
+    );
+
+    assert.equal(mismatchedVoice.statusCode, 400);
+    assert.equal(
+      mismatchedVoice.json().error,
+      "INVALID_LANGUAGE_AUDIO_REQUEST",
+    );
+    assert.equal(missingIndex.statusCode, 400);
+    assert.equal(missingIndex.json().error, "INVALID_LANGUAGE_AUDIO_TARGET");
+    assert.equal(simplified.statusCode, 409);
+    assert.equal(simplified.json().error, "LANGUAGE_ASSIMIL_AUDIO_UNAVAILABLE");
+    assert.equal(audioProvider.calls.length, 0);
+    assert.deepEqual(elevenLabsProvider.calls, [
+      { text: "Ich bin müde.", language: "Deutsch" },
+      { text: "Ich bin bereit.", language: "Deutsch" },
+    ]);
+    assert.deepEqual(
+      elevenLabsProvider.configurations.map(({ provider, model, voice }) => ({
+        provider,
+        model,
+        voice,
+      })),
+      [
+        {
+          provider: "elevenlabs",
+          model: "eleven_multilingual_v2",
+          voice: "test-german-female-voice",
+        },
+        {
+          provider: "elevenlabs",
+          model: "eleven_multilingual_v2",
+          voice: "test-german-male-voice",
+        },
+      ],
+    );
+    assert.equal(audioStore.assets.length, 2);
+    assert.equal(audioStorage.puts.length, 2);
+    assert.equal(audioStorage.gets.length, 1);
+    assert.ok(
+      audioStore.assets.every(({ provider, model, storageKey }) =>
+        provider === "elevenlabs" &&
+        model === "eleven_multilingual_v2" &&
+        /^language-audio\/[a-f0-9]{64}\.mp3$/.test(storageKey),
+      ),
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("Assimil dialogue returns controlled language and voice errors without OpenAI fallback", async () => {
+  const unsupported = testServer();
+  const missingVoice = testServer();
+  const cookie = sessionCookie(firstUser.id);
+  const femaleVoice = process.env.ELEVENLABS_VOICE_ID_DE_FEMALE;
+
+  try {
+    const unsupportedProject = await createProject(
+      unsupported.server,
+      cookie,
+      "Klingon",
+    );
+    const unsupportedLesson = await createLesson(
+      unsupported.server,
+      unsupportedProject.id,
+      cookie,
+      "assimil",
+      15,
+    );
+    await processAssimilLesson(
+      unsupported.server,
+      unsupportedProject.id,
+      unsupportedLesson.id,
+      cookie,
+    );
+    const unavailable = await requestLessonAudio(
+      unsupported.server,
+      unsupportedProject.id,
+      unsupportedLesson.id,
+      cookie,
+      { version: "original", section: "dialogue", index: 0, voice: "female" },
+    );
+
+    const missingProject = await createProject(
+      missingVoice.server,
+      cookie,
+      "Alemán",
+    );
+    const missingLesson = await createLesson(
+      missingVoice.server,
+      missingProject.id,
+      cookie,
+      "assimil",
+      15,
+    );
+    await processAssimilLesson(
+      missingVoice.server,
+      missingProject.id,
+      missingLesson.id,
+      cookie,
+    );
+    delete process.env.ELEVENLABS_VOICE_ID_DE_FEMALE;
+    const voiceUnavailable = await requestLessonAudio(
+      missingVoice.server,
+      missingProject.id,
+      missingLesson.id,
+      cookie,
+      { version: "original", section: "dialogue", index: 0, voice: "female" },
+    );
+
+    for (const response of [unavailable, voiceUnavailable]) {
+      assert.equal(response.statusCode, 409);
+      assert.deepEqual(response.json(), {
+        error: "LANGUAGE_ASSIMIL_DIALOGUE_AUDIO_UNAVAILABLE",
+        message:
+          "El audio del diálogo todavía no está disponible para este idioma.",
+      });
+    }
+    for (const dependencies of [unsupported, missingVoice]) {
+      assert.equal(dependencies.audioProvider.calls.length, 0);
+      assert.equal(dependencies.elevenLabsProvider.calls.length, 0);
+      assert.equal(dependencies.audioStore.assets.length, 0);
+    }
+  } finally {
+    if (femaleVoice === undefined) {
+      delete process.env.ELEVENLABS_VOICE_ID_DE_FEMALE;
+    } else {
+      process.env.ELEVENLABS_VOICE_ID_DE_FEMALE = femaleVoice;
+    }
+    await unsupported.server.close();
+    await missingVoice.server.close();
   }
 });
 

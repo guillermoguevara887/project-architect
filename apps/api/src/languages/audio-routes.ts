@@ -5,6 +5,7 @@ import {
   getOrCreateLanguageAudio,
   languageLessonAudioRequestSchema,
   OPENAI_LANGUAGE_AUDIO_CONFIG,
+  resolveAssimilDialogueAudioTarget,
   resolveLanguageStoryAudioConfiguration,
   resolveLanguageStoryAudioLanguage,
   resolveLanguageLessonAudioText,
@@ -91,15 +92,58 @@ export function registerLanguageAudioRoutes(
           return reply.code(404).send({ error: "LANGUAGE_LESSON_NOT_FOUND" });
         }
 
-        if (
-          lesson.lessonSource === "assimil" &&
-          assimilLanguageLessonContentSchema.safeParse(lesson.structuredContent)
-            .success
-        ) {
+        const parsedAssimilContent =
+          lesson.lessonSource === "assimil"
+            ? assimilLanguageLessonContentSchema.safeParse(
+                lesson.structuredContent,
+              )
+            : null;
+        const assimilContent = parsedAssimilContent?.success
+          ? parsedAssimilContent.data
+          : null;
+        const assimilDialogueRequest =
+          assimilContent !== null &&
+          parsedInput.data.section === "dialogue" &&
+          parsedInput.data.version === "original";
+
+        if (assimilContent && !assimilDialogueRequest) {
           return reply.code(409).send({
             error: "LANGUAGE_ASSIMIL_AUDIO_UNAVAILABLE",
             message:
               "El audio de esta lección Assimil todavía no está disponible.",
+          });
+        }
+
+        if (assimilDialogueRequest && !assimilContent.dialogue?.length) {
+          return reply.code(409).send({
+            error: "LANGUAGE_ASSIMIL_DIALOGUE_AUDIO_UNAVAILABLE",
+            message:
+              "Esta lección Assimil no tiene un diálogo disponible para reproducir.",
+          });
+        }
+
+        const assimilDialogueTarget = assimilDialogueRequest
+          ? resolveAssimilDialogueAudioTarget(
+              assimilContent,
+              parsedInput.data.index,
+            )
+          : null;
+
+        if (assimilDialogueRequest && !assimilDialogueTarget) {
+          return reply.code(400).send({
+            error: "INVALID_LANGUAGE_AUDIO_TARGET",
+            message: "La pronunciación solicitada no existe.",
+          });
+        }
+
+        if (
+          assimilDialogueTarget &&
+          parsedInput.data.section === "dialogue" &&
+          parsedInput.data.voice !== assimilDialogueTarget.voice
+        ) {
+          return reply.code(400).send({
+            error: "INVALID_LANGUAGE_AUDIO_REQUEST",
+            message: "La voz solicitada no corresponde a esta intervención.",
           });
         }
 
@@ -126,11 +170,13 @@ export function registerLanguageAudioRoutes(
 
         const content = freeTextAudio
           ? null
-          : parsedInput.data.version === "simplified"
-            ? lesson.simplifiedStructuredContent
-            : lesson.structuredContent;
+          : assimilDialogueTarget
+            ? null
+            : parsedInput.data.version === "simplified"
+              ? lesson.simplifiedStructuredContent
+              : lesson.structuredContent;
 
-        if (!freeTextAudio && !content) {
+        if (!freeTextAudio && !assimilDialogueTarget && !content) {
           return reply.code(409).send({
             error: "LANGUAGE_LESSON_AUDIO_VERSION_UNAVAILABLE",
             message: "La versión solicitada no está disponible.",
@@ -150,16 +196,20 @@ export function registerLanguageAudioRoutes(
 
           if (!resolveLanguageStoryAudioLanguage(project.language)) {
             return reply.code(409).send({
-              error: freeAudio
-                ? "LANGUAGE_FREE_AUDIO_UNAVAILABLE"
-                : dialogueAudio
-                  ? "LANGUAGE_DIALOGUE_AUDIO_UNAVAILABLE"
-                  : "LANGUAGE_STORY_AUDIO_UNAVAILABLE",
-              message: freeAudio
-                ? "El audio de la lección libre todavía no está disponible para este idioma."
-                : dialogueAudio
-                  ? "El audio del diálogo todavía no está disponible para este idioma."
-                  : "El audio de Mini historia no está disponible para este idioma.",
+              error: assimilDialogueTarget
+                ? "LANGUAGE_ASSIMIL_DIALOGUE_AUDIO_UNAVAILABLE"
+                : freeAudio
+                  ? "LANGUAGE_FREE_AUDIO_UNAVAILABLE"
+                  : dialogueAudio
+                    ? "LANGUAGE_DIALOGUE_AUDIO_UNAVAILABLE"
+                    : "LANGUAGE_STORY_AUDIO_UNAVAILABLE",
+              message: assimilDialogueTarget
+                ? "El audio del diálogo todavía no está disponible para este idioma."
+                : freeAudio
+                  ? "El audio de la lección libre todavía no está disponible para este idioma."
+                  : dialogueAudio
+                    ? "El audio del diálogo todavía no está disponible para este idioma."
+                    : "El audio de Mini historia no está disponible para este idioma.",
             });
           }
 
@@ -174,25 +224,31 @@ export function registerLanguageAudioRoutes(
           const freeAudio = parsedInput.data.section === "freeText";
 
           return reply.code(409).send({
-            error: freeAudio
-              ? "LANGUAGE_FREE_AUDIO_VOICE_UNAVAILABLE"
-              : dialogueAudio
-                ? "LANGUAGE_DIALOGUE_AUDIO_VOICE_UNAVAILABLE"
-                : "LANGUAGE_STORY_AUDIO_VOICE_UNAVAILABLE",
-            message: freeAudio
-              ? "La voz de la lección libre todavía no está disponible."
-              : dialogueAudio
-                ? "La voz del diálogo todavía no está disponible."
-                : "La voz seleccionada todavía no está disponible.",
+            error: assimilDialogueTarget
+              ? "LANGUAGE_ASSIMIL_DIALOGUE_AUDIO_UNAVAILABLE"
+              : freeAudio
+                ? "LANGUAGE_FREE_AUDIO_VOICE_UNAVAILABLE"
+                : dialogueAudio
+                  ? "LANGUAGE_DIALOGUE_AUDIO_VOICE_UNAVAILABLE"
+                  : "LANGUAGE_STORY_AUDIO_VOICE_UNAVAILABLE",
+            message: assimilDialogueTarget
+              ? "El audio del diálogo todavía no está disponible para este idioma."
+              : freeAudio
+                ? "La voz de la lección libre todavía no está disponible."
+                : dialogueAudio
+                  ? "La voz del diálogo todavía no está disponible."
+                  : "La voz seleccionada todavía no está disponible.",
           });
         }
 
         const originalText = freeTextAudio
           ? lesson.sourceContent
-          : resolveLanguageLessonAudioText(
-              structuredLanguageLessonSchema.parse(content),
-              parsedInput.data,
-            );
+          : assimilDialogueTarget
+            ? assimilDialogueTarget.text
+            : resolveLanguageLessonAudioText(
+                structuredLanguageLessonSchema.parse(content),
+                parsedInput.data,
+              );
 
         if (!originalText) {
           return reply.code(400).send({

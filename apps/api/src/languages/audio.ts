@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import OpenAI from "openai";
 import { z } from "zod";
-import type { StructuredLanguageLesson } from "./contracts.js";
+import type {
+  AssimilLanguageLessonContent,
+  StructuredLanguageLesson,
+} from "./contracts.js";
 import type {
   LanguageAudioAsset,
   LanguageAudioStore,
@@ -34,6 +37,38 @@ const ELEVENLABS_AUDIO_FORMAT = "mp3_44100_128";
 
 export const languageStoryVoiceSchema = z.enum(["male", "female"]);
 export type LanguageStoryVoice = z.infer<typeof languageStoryVoiceSchema>;
+
+function normalizeLanguageDialogueSpeaker(speaker: string) {
+  return speaker.trim().toLocaleLowerCase("und");
+}
+
+export function assignLanguageDialogueVoices(
+  dialogue: ReadonlyArray<{ speaker: string }>,
+): LanguageStoryVoice[] {
+  const voicesBySpeaker = new Map<string, LanguageStoryVoice>();
+
+  return dialogue.map(({ speaker }) => {
+    const normalizedSpeaker = normalizeLanguageDialogueSpeaker(speaker);
+    const existingVoice = voicesBySpeaker.get(normalizedSpeaker);
+
+    if (existingVoice) return existingVoice;
+
+    const voice = voicesBySpeaker.size % 2 === 0 ? "female" : "male";
+    voicesBySpeaker.set(normalizedSpeaker, voice);
+    return voice;
+  });
+}
+
+export function resolveAssimilDialogueAudioTarget(
+  content: AssimilLanguageLessonContent,
+  index: number,
+) {
+  const dialogue = content.dialogue ?? [];
+  const line = dialogue[index];
+  const voice = assignLanguageDialogueVoices(dialogue)[index];
+
+  return line && voice ? { text: line.text, voice } : null;
+}
 
 export type LanguageStoryAudioLanguage =
   | "de"

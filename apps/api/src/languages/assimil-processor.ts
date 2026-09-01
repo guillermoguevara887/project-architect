@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { zodTextFormat } from "openai/helpers/zod";
 import {
   assimilLanguageLessonContentSchema,
+  generatedAssimilLanguageLessonContentSchema,
   type AssimilLanguageLessonContent,
 } from "./contracts.js";
 import { LanguageLessonProcessingError } from "./lesson-processor.js";
@@ -61,12 +62,17 @@ Respeta la filosofía Assimil:
 - notes contiene entre 3 y 5 aclaraciones breves en español.
 - patterns contiene entre 1 y 3 patrones útiles, con 1-3 ejemplos cada uno.
 - keyPhrases contiene entre 3 y 5 frases literales del material fuente.
+- dialogue extrae únicamente las intervenciones reales del material fuente.
+  Cada text debe ser literal, sin correcciones, paráfrasis ni reescrituras.
+  Usa speakers consistentes, conserva el orden y devuelve 2-16 líneas cuando
+  haya diálogo fiable; si no puede identificarse sin inventar, devuelve [].
 - practice contiene 2-4 elementos en impregnación y 3-5 en activación.
 - review solo contiene 2-5 puntos cuando se indique que es lección de repaso;
   en cualquier otra lección debe ser null.
 
-No uses la estructura general de ocho secciones de Marco de idiomas. No generes
-Mini historia, automaticThoughts, nextLevelBridge ni diálogo generado.
+No inventes diálogo ni completes intervenciones ausentes. No uses la estructura
+general de ocho secciones de Marco de idiomas. No generes Mini historia,
+automaticThoughts ni nextLevelBridge.
 `.trim();
 
 function responseContainsRefusal(output: unknown) {
@@ -131,10 +137,20 @@ export function normalizeAssimilLanguageLessonContent(
     content.keyPhrases,
     ({ text }) => text,
   );
+  const groundedDialogue = content.dialogue
+    ? groundedInSource(
+        input.sourceContent,
+        content.dialogue,
+        ({ text }) => text,
+      ).slice(0, 16)
+    : undefined;
+  const dialogue =
+    groundedDialogue?.length === 1 ? [] : groundedDialogue;
   const normalized = {
     ...content,
     comprehension,
     keyPhrases,
+    ...(dialogue === undefined ? {} : { dialogue }),
   };
   const parsed = assimilLanguageLessonContentSchema.safeParse(normalized);
   const practiceCount = content.practice.items.length;
@@ -180,7 +196,7 @@ export class OpenAIAssimilLanguageLessonProcessor
       );
     }
 
-    const parsed = assimilLanguageLessonContentSchema.safeParse(
+    const parsed = generatedAssimilLanguageLessonContentSchema.safeParse(
       response.output_parsed,
     );
     if (!parsed.success) {
@@ -207,7 +223,7 @@ export class OpenAIAssimilLanguageLessonProcessor
       store: false as const,
       text: {
         format: zodTextFormat(
-          assimilLanguageLessonContentSchema,
+          generatedAssimilLanguageLessonContentSchema,
           "assimil_language_lesson",
         ),
       },

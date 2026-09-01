@@ -232,6 +232,10 @@ export type StructuredLanguageLesson = {
 
 export type AssimilLanguageLessonContent = {
   kind: "assimil_v1";
+  dialogue?: Array<{
+    speaker: string;
+    text: string;
+  }>;
   comprehension: Array<{
     line: string;
     translation: string;

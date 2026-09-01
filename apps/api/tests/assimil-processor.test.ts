@@ -10,6 +10,7 @@ import {
 } from "../src/languages/assimil-processor.js";
 import {
   assimilLanguageLessonContentSchema,
+  generatedAssimilLanguageLessonContentSchema,
   type AssimilLanguageLessonContent,
 } from "../src/languages/contracts.js";
 import { LanguageLessonProcessingError } from "../src/languages/lesson-processor.js";
@@ -22,6 +23,10 @@ function validContent(
 ): AssimilLanguageLessonContent {
   return {
     kind: "assimil_v1",
+    dialogue: [
+      { speaker: "Anna", text: "Guten Morgen." },
+      { speaker: "Ben", text: "Ich bin müde." },
+    ],
     comprehension: [
       { line: "Guten Morgen.", translation: "Buenos días.", note: null },
       { line: "Ich bin müde.", translation: "Estoy cansado.", note: null },
@@ -132,6 +137,48 @@ test("Assimil content schema is strict and enforces independent section bounds",
   );
 });
 
+test("Assimil dialogue is optional historically and required for new generated output", () => {
+  const { dialogue: _dialogue, ...historical } = validContent();
+
+  assert.equal(
+    assimilLanguageLessonContentSchema.safeParse(historical).success,
+    true,
+  );
+  assert.equal(
+    generatedAssimilLanguageLessonContentSchema.safeParse(historical).success,
+    false,
+  );
+  assert.equal(
+    generatedAssimilLanguageLessonContentSchema.safeParse(
+      validContent({ dialogue: [] }),
+    ).success,
+    true,
+  );
+  assert.equal(
+    generatedAssimilLanguageLessonContentSchema.safeParse(
+      validContent({
+        dialogue: Array.from({ length: 17 }, (_, index) => ({
+          speaker: `Speaker ${index}`,
+          text: `Line ${index}`,
+        })),
+      }),
+    ).success,
+    false,
+  );
+  assert.equal(
+    generatedAssimilLanguageLessonContentSchema.safeParse(
+      validContent({ dialogue: [{ speaker: "", text: "Guten Morgen." }] }),
+    ).success,
+    false,
+  );
+  assert.equal(
+    generatedAssimilLanguageLessonContentSchema.safeParse(
+      validContent({ dialogue: [{ speaker: "Anna", text: "   " }] }),
+    ).success,
+    false,
+  );
+});
+
 test("Assimil normalization grounds, deduplicates and source-orders comprehension and key phrases", () => {
   const content = validContent({
     comprehension: [
@@ -158,6 +205,29 @@ test("Assimil normalization grounds, deduplicates and source-orders comprehensio
     normalized.keyPhrases.map(({ text }) => text),
     ["Guten Morgen.", "Ich bin müde.", "Bis morgen."],
   );
+});
+
+test("Assimil dialogue normalization keeps literal unique lines in source order", () => {
+  const exactSource = input.sourceContent;
+  const normalized = normalizeAssimilLanguageLessonContent(
+    input,
+    validContent({
+      dialogue: [
+        { speaker: "Ben", text: "Ich bin müde." },
+        { speaker: "Invented", text: "Das wurde erfunden." },
+        { speaker: "Anna", text: "Guten Morgen." },
+        { speaker: "Ben again", text: "Ich bin müde." },
+        { speaker: "Clara", text: "Ich bin bereit." },
+      ],
+    }),
+  );
+
+  assert.deepEqual(normalized.dialogue, [
+    { speaker: "Anna", text: "Guten Morgen." },
+    { speaker: "Ben", text: "Ich bin müde." },
+    { speaker: "Clara", text: "Ich bin bereit." },
+  ]);
+  assert.equal(input.sourceContent, exactSource);
 });
 
 test("Assimil normalization rejects ungrounded comprehension and too few grounded key phrases", () => {
@@ -261,7 +331,10 @@ test("OpenAI Assimil processor makes one private structured request with server 
     assert.match(String(requests[0]?.input), /Lección de repaso: no/);
     assert.match(ASSIMIL_LESSON_INSTRUCTIONS, /filosofía Assimil/i);
     assert.match(ASSIMIL_LESSON_INSTRUCTIONS, /contenido no confiable/i);
-    assert.match(ASSIMIL_LESSON_INSTRUCTIONS, /No generes/);
+    assert.match(ASSIMIL_LESSON_INSTRUCTIONS, /dialogue extrae únicamente/i);
+    assert.match(ASSIMIL_LESSON_INSTRUCTIONS, /Cada text debe ser literal/i);
+    assert.match(ASSIMIL_LESSON_INSTRUCTIONS, /No inventes diálogo/i);
+    assert.match(ASSIMIL_LESSON_INSTRUCTIONS, /2-16 líneas/i);
     assert.match(ASSIMIL_LESSON_INSTRUCTIONS, /Mini historia/);
     assert.match(ASSIMIL_LESSON_INSTRUCTIONS, /automaticThoughts/);
     assert.match(ASSIMIL_LESSON_INSTRUCTIONS, /nextLevelBridge/);
