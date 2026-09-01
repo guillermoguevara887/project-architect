@@ -565,6 +565,16 @@ export function languageLessonAudioErrorMessage(
     return "La voz del diálogo todavía no está disponible.";
   }
 
+  if (
+    status === 409 &&
+    result.error === "LANGUAGE_ASSIMIL_DIALOGUE_AUDIO_UNAVAILABLE"
+  ) {
+    return (
+      result.message ??
+      "El audio del diálogo todavía no está disponible para esta lección Assimil."
+    );
+  }
+
   if (status === 409 && result.error === "LANGUAGE_FREE_AUDIO_UNAVAILABLE") {
     return "El audio de la lección libre todavía no está disponible para este idioma.";
   }

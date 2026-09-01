@@ -1249,6 +1249,100 @@ button:disabled {
   margin: 0.85rem 0 0;
 }
 
+.assimil-dialogue {
+  --lesson-section-accent: #0e7473;
+  --lesson-section-border: #bfe8e4;
+  --lesson-section-divider: #d3e9e7;
+}
+
+.assimil-dialogue-header {
+  display: grid;
+  min-width: 0;
+  gap: 1rem;
+}
+
+.assimil-dialogue-controls {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+}
+
+.assimil-dialogue-controls .lesson-audio-rate-control {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.assimil-dialogue-controls .lesson-audio-error {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+.assimil-dialogue-list {
+  display: grid;
+  min-width: 0;
+  gap: 0;
+  margin-top: 1rem;
+}
+
+.assimil-dialogue-line {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.55rem 0.75rem;
+  padding: 0.8rem;
+  border-top: 1px solid var(--lesson-section-divider);
+  background: #fff;
+  transition:
+    background-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.assimil-dialogue-line:first-child {
+  border-top: 0;
+  border-radius: 0.75rem 0.75rem 0 0;
+}
+
+.assimil-dialogue-line:last-child {
+  border-radius: 0 0 0.75rem 0.75rem;
+}
+
+.assimil-dialogue-line[data-active="true"] {
+  background: #eef9f7;
+  box-shadow: inset 0.2rem 0 0 #0ea5a4;
+}
+
+.assimil-dialogue-copy {
+  display: grid;
+  min-width: 0;
+  gap: 0.2rem;
+}
+
+.assimil-dialogue-speaker {
+  color: #0e7473;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  overflow-wrap: anywhere;
+  text-transform: uppercase;
+}
+
+.assimil-dialogue-text {
+  min-width: 0;
+  margin: 0;
+  color: #0f2147;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.assimil-dialogue-line .lesson-audio-error {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
 .assimil-comprehension-list,
 .assimil-practice-list {
   display: grid;
@@ -2571,7 +2665,8 @@ button:disabled {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .lesson-dialogue-line {
+  .lesson-dialogue-line,
+  .assimil-dialogue-line {
     transition: none;
   }
 }
@@ -3380,6 +3475,19 @@ button:disabled {
   .assimil-section-header {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .assimil-dialogue-controls {
+    display: grid;
+    align-items: stretch;
+  }
+
+  .assimil-dialogue-controls .lesson-dialogue-play-button {
+    width: 100%;
+  }
+
+  .assimil-dialogue-controls .lesson-audio-rate-control {
+    justify-content: space-between;
   }
 
   .assimil-section-header .copy-button,

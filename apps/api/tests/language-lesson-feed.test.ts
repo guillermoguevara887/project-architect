@@ -150,6 +150,19 @@ test("lesson audio UI builds positional requests without arbitrary text", () => 
     },
   );
   assert.equal(
+    languageLessonAudioKey("original", "dialogue", 2, "female"),
+    "original:dialogue:2:female",
+  );
+  const assimilDialogueRequest = languageLessonAudioRequest(
+    "original",
+    "dialogue",
+    0,
+    "male",
+  );
+  for (const browserField of ["text", "provider", "model", "voiceId"]) {
+    assert.equal(browserField in assimilDialogueRequest, false);
+  }
+  assert.equal(
     languageLessonAudioKey("simplified", "dialogue", 1, "male"),
     "simplified:dialogue:1:male",
   );
@@ -411,6 +424,23 @@ test("mini story has concise accessible labels and a controlled unavailable erro
       error: "LANGUAGE_STORY_AUDIO_VOICE_UNAVAILABLE",
     }),
     "La voz seleccionada todavía no está disponible.",
+  );
+});
+
+test("Assimil dialogue audio errors preserve useful backend copy and have a safe fallback", () => {
+  assert.equal(
+    languageLessonAudioErrorMessage(409, {
+      error: "LANGUAGE_ASSIMIL_DIALOGUE_AUDIO_UNAVAILABLE",
+      message:
+        "Esta lección Assimil no tiene un diálogo disponible para reproducir.",
+    }),
+    "Esta lección Assimil no tiene un diálogo disponible para reproducir.",
+  );
+  assert.equal(
+    languageLessonAudioErrorMessage(409, {
+      error: "LANGUAGE_ASSIMIL_DIALOGUE_AUDIO_UNAVAILABLE",
+    }),
+    "El audio del diálogo todavía no está disponible para esta lección Assimil.",
   );
 });
 
@@ -889,7 +919,7 @@ test("lesson audio controls use an accessible spinner and non-color playing cue"
     /async function downloadMiniStoryAudio\([\s\S]*?\n  }/,
   )?.[0];
   const dialogueHandler = component.match(
-    /async function playDialogueAudio\([\s\S]*?\n  }/,
+    /async function playDialogueAudioSequence\([\s\S]*?(?=\n  async function playDialogueAudio)/,
   )?.[0];
   const stopHandler = component.match(
     /function stopCurrentLanguageAudio\([\s\S]*?\n  }/,
@@ -942,7 +972,10 @@ test("lesson audio controls use an accessible spinner and non-color playing cue"
   assert.match(component, /Reproducir diálogo/);
   assert.match(component, /Detener diálogo/);
   assert.match(dialogueHandler, /playLanguageDialogueSequentially/);
-  assert.match(dialogueHandler, /playLanguageAudio\("dialogue", index, voices\[index\], sequenceId\)/);
+  assert.match(
+    dialogueHandler,
+    /playLanguageAudio\([\s\S]*?"dialogue",[\s\S]*?voices\[index\],[\s\S]*?sequenceId,[\s\S]*?audioVersion/,
+  );
   assert.doesNotMatch(dialogueHandler, /Promise\.all|map\(.*fetch/);
   assert.match(stopHandler, /audioAbortControllerRef\.current\?\.abort\(\)/);
   assert.match(stopHandler, /stopPlayableLanguageAudio\(audio\)/);
@@ -1438,6 +1471,7 @@ test("Assimil v1 ready UI uses its own ordered study renderer", async () => {
   assert.ok(renderer);
   const orderedHeadings = [
     "Texto original",
+    "Diálogo",
     "Comprensión línea por línea",
     "Notas",
     "Patrones",
@@ -1479,9 +1513,115 @@ test("Assimil v1 ready UI uses its own ordered study renderer", async () => {
   assert.match(renderer, /\{revealed \? \([\s\S]*?\{item\.answer\}/);
   assert.match(renderer, /\{content\.review \? \([\s\S]*?content\.review\.points\.map/);
 
-  assert.doesNotMatch(renderer, /LessonAudioButton|playLanguageAudio|\/audio/);
+  assert.match(renderer, /content\.dialogue && content\.dialogue\.length >= 2/);
+  assert.match(renderer, /<LanguageDialogueAudioButton/);
+  assert.match(renderer, /<LanguageAudioRateControl/);
+  assert.match(renderer, /<LessonAudioButton/);
+  assert.doesNotMatch(renderer, /fetch|\/audio|LanguageStoryVoiceControl/);
+  assert.doesNotMatch(renderer, /Descargar MP3|DownloadIcon|onDownload/);
   assert.doesNotMatch(renderer, /function ReadyLesson|<ReadyLesson/);
   assert.doesNotMatch(renderer, /Simplificar|simplificada|Dividir en 1A/);
+});
+
+test("Assimil dialogue UI uses original voiced line targets and the shared sequential player", async () => {
+  const component = await readFile(
+    new URL(
+      "../../web/src/components/language-lesson-screen.tsx",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  const renderer = component.match(
+    /function AssimilReadyLesson\([\s\S]*?\n}\n\nfunction LessonSection/,
+  )?.[0];
+  const sharedSequenceHandler = component.match(
+    /async function playDialogueAudioSequence\([\s\S]*?(?=\n  async function playDialogueAudio)/,
+  )?.[0];
+  const assimilLineHandler = component.match(
+    /function playAssimilDialogueLine\([\s\S]*?(?=\n  async function playAssimilDialogueAudio)/,
+  )?.[0];
+  const assimilFullHandler = component.match(
+    /async function playAssimilDialogueAudio\([\s\S]*?(?=\n  async function downloadMiniStoryAudio)/,
+  )?.[0];
+  const commonAudioHandler = component.match(
+    /async function playLanguageAudio\([\s\S]*?(?=\n  async function playDialogueAudioSequence)/,
+  )?.[0];
+
+  assert.ok(renderer);
+  assert.ok(sharedSequenceHandler);
+  assert.ok(assimilLineHandler);
+  assert.ok(assimilFullHandler);
+  assert.ok(commonAudioHandler);
+
+  assert.match(renderer, /\{dialogue \? \(/);
+  assert.match(renderer, /className="assimil-section assimil-dialogue"/);
+  assert.match(renderer, />Diálogo<\/h2>/);
+  assert.match(renderer, /playback=\{dialoguePlayback\}/);
+  assert.match(renderer, /onPlay=\{onPlayDialogue\}/);
+  assert.match(renderer, /playbackRate=\{audioPlaybackRate\}/);
+  assert.match(renderer, /\{line\.speaker\}/);
+  assert.match(renderer, /\{line\.text\}/);
+  assert.match(
+    renderer,
+    /accessibleLabel=\{`intervención de \$\{line\.speaker\}`\}/,
+  );
+  assert.match(renderer, /onPlayDialogueLine\(index, voice\)/);
+  assert.match(renderer, /assignLanguageDialogueVoices\(dialogue \?\? \[\]\)/);
+  assert.match(
+    renderer,
+    /languageLessonAudioKey\(\s*"original",\s*"dialogue",\s*index,\s*voice/,
+  );
+  assert.match(
+    renderer,
+    /languageDialogueLineIsActive\(\s*audioPlayback,\s*"original",\s*index,\s*voice/,
+  );
+  assert.match(renderer, /data-active=\{active \? "true" : undefined\}/);
+  assert.doesNotMatch(renderer, /contentVersion|"simplified"/);
+  assert.doesNotMatch(renderer, /LanguageStoryVoiceControl|Descargar MP3/);
+
+  const comprehensionSection = renderer.slice(
+    renderer.indexOf("Comprensión línea por línea"),
+    renderer.indexOf("Notas"),
+  );
+  assert.doesNotMatch(comprehensionSection, /LessonAudioButton|onPlayDialogue/);
+
+  assert.match(sharedSequenceHandler, /playLanguageDialogueSequentially/);
+  assert.match(sharedSequenceHandler, /dialogueSequenceIdRef\.current/);
+  assert.match(sharedSequenceHandler, /playLanguageAudio\(/);
+  assert.match(sharedSequenceHandler, /audioVersion/);
+  assert.doesNotMatch(sharedSequenceHandler, /Promise\.all|new Audio/);
+  assert.match(
+    assimilLineHandler,
+    /playLanguageAudio\(\s*"dialogue",\s*index,\s*voice,\s*undefined,\s*"original"/,
+  );
+  assert.match(assimilFullHandler, /isAssimilV1LanguageLesson\(lesson\)/);
+  assert.match(assimilFullHandler, /dialogue\.length < 2/);
+  assert.match(
+    assimilFullHandler,
+    /playDialogueAudioSequence\(dialogue, "original"\)/,
+  );
+  assert.match(commonAudioHandler, /audioVersionOverride/);
+  assert.match(
+    commonAudioHandler,
+    /audioVersionOverride \?\?[\s\S]*?section === "freeText" \? "original" : contentVersion/,
+  );
+  assert.match(
+    commonAudioHandler,
+    /languageLessonAudioRequest\(\s*audioVersion,\s*section,\s*index,\s*voice/,
+  );
+  assert.equal(component.match(/new Audio\(\)/g)?.length, 1);
+
+  assert.match(component, /audioPlayback=\{audioPlayback\}/);
+  assert.match(component, /dialoguePlayback=\{dialoguePlayback\}/);
+  assert.match(
+    component,
+    /onPlayDialogue=\{\(\) => void playAssimilDialogueAudio\(\)\}/,
+  );
+  assert.match(component, /playAssimilDialogueLine\(index, voice\)/);
+  assert.match(
+    component,
+    /onPlaybackRateChange=\{updateLanguageAudioPlaybackRate\}/,
+  );
 });
 
 test("Assimil v1 routing resets reveals and excludes Framework-only controls", async () => {
@@ -1541,6 +1681,12 @@ test("Assimil study styles preserve source formatting and fit mobile screens", a
   assert.match(styles, /\.assimil-comprehension-item/);
   assert.match(styles, /\.assimil-pattern-card/);
   assert.match(styles, /\.assimil-answer/);
+  assert.match(styles, /\.assimil-dialogue-header/);
+  assert.match(styles, /\.assimil-dialogue-controls/);
+  assert.match(styles, /\.assimil-dialogue-line/);
+  assert.match(styles, /\.assimil-dialogue-speaker/);
+  assert.match(styles, /\.assimil-dialogue-text/);
+  assert.match(styles, /\.assimil-dialogue-line\[data-active="true"\]/);
   assert.match(
     styles,
     /@media \(max-width: 36rem\)[\s\S]*?\.assimil-section\s*\{[\s\S]*?width: 100%;/,
@@ -1548,6 +1694,10 @@ test("Assimil study styles preserve source formatting and fit mobile screens", a
   assert.match(
     styles,
     /\.assimil-section-header \.copy-button,[\s\S]*?\.assimil-reveal-button\s*\{[\s\S]*?width: 100%;/,
+  );
+  assert.match(
+    styles,
+    /@media \(max-width: 36rem\)[\s\S]*?\.assimil-dialogue-controls \.lesson-dialogue-play-button\s*\{[\s\S]*?width: 100%;/,
   );
 });
 

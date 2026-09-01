@@ -576,6 +576,12 @@ function AssimilReadyLesson({
   reviewLesson,
   sourceContent,
   progressControls,
+  audioPlayback,
+  dialoguePlayback,
+  audioPlaybackRate,
+  onPlayDialogue,
+  onPlayDialogueLine,
+  onPlaybackRateChange,
 }: {
   lessonId: string;
   content: AssimilLanguageLessonContent;
@@ -583,6 +589,15 @@ function AssimilReadyLesson({
   reviewLesson: boolean;
   sourceContent: string;
   progressControls: ReactNode;
+  audioPlayback: LanguageLessonAudioPlayback | null;
+  dialoguePlayback: Pick<
+    LanguageLessonAudioPlayback,
+    "status" | "error"
+  > | null;
+  audioPlaybackRate: LanguageAudioPlaybackRate;
+  onPlayDialogue: () => void;
+  onPlayDialogueLine: (index: number, voice: LanguageStoryVoice) => void;
+  onPlaybackRateChange: (playbackRate: LanguageAudioPlaybackRate) => void;
 }) {
   const [copiedOriginal, setCopiedOriginal] = useState(false);
   const [copyError, setCopyError] = useState<string | null>(null);
@@ -593,6 +608,11 @@ function AssimilReadyLesson({
     () => new Set(),
   );
   const copyResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dialogue =
+    content.dialogue && content.dialogue.length >= 2
+      ? content.dialogue
+      : null;
+  const dialogueVoices = assignLanguageDialogueVoices(dialogue ?? []);
 
   useEffect(() => {
     return () => {
@@ -689,6 +709,67 @@ function AssimilReadyLesson({
             </p>
           ) : null}
         </section>
+
+        {dialogue ? (
+          <section
+            className="assimil-section assimil-dialogue"
+            aria-labelledby={`assimil-dialogue-heading-${lessonId}`}
+          >
+            <header className="assimil-dialogue-header">
+              <h2 id={`assimil-dialogue-heading-${lessonId}`}>Diálogo</h2>
+              <div className="assimil-dialogue-controls">
+                <LanguageDialogueAudioButton
+                  playback={dialoguePlayback}
+                  onPlay={onPlayDialogue}
+                />
+                <LanguageAudioRateControl
+                  playbackRate={audioPlaybackRate}
+                  onPlaybackRateChange={onPlaybackRateChange}
+                />
+              </div>
+            </header>
+            <div className="assimil-dialogue-list">
+              {dialogue.map((line, index) => {
+                const voice = dialogueVoices[index]!;
+                const lineKey = languageLessonAudioKey(
+                  "original",
+                  "dialogue",
+                  index,
+                  voice,
+                );
+                const linePlayback =
+                  audioPlayback?.key === lineKey ? audioPlayback : null;
+                const active = languageDialogueLineIsActive(
+                  audioPlayback,
+                  "original",
+                  index,
+                  voice,
+                );
+
+                return (
+                  <div
+                    className="assimil-dialogue-line"
+                    data-active={active ? "true" : undefined}
+                    key={`${line.speaker}-${index}`}
+                  >
+                    <div className="assimil-dialogue-copy">
+                      <strong className="assimil-dialogue-speaker">
+                        {line.speaker}
+                      </strong>
+                      <p className="assimil-dialogue-text">{line.text}</p>
+                    </div>
+                    <LessonAudioButton
+                      text={line.text}
+                      accessibleLabel={`intervención de ${line.speaker}`}
+                      playback={linePlayback}
+                      onPlay={() => onPlayDialogueLine(index, voice)}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        ) : null}
 
         <section
           className="assimil-section"
@@ -2099,6 +2180,7 @@ export function LanguageLessonScreen({
     index: number,
     dialogueVoice?: LanguageStoryVoice,
     dialogueSequenceId?: number,
+    audioVersionOverride?: LanguageLessonContentVersion,
   ): Promise<LanguageAudioPlaybackCompletion> {
     const voice =
       section === "miniStory" || section === "freeText"
@@ -2106,7 +2188,9 @@ export function LanguageLessonScreen({
         : section === "dialogue"
           ? dialogueVoice
           : undefined;
-    const audioVersion = section === "freeText" ? "original" : contentVersion;
+    const audioVersion =
+      audioVersionOverride ??
+      (section === "freeText" ? "original" : contentVersion);
     const key = languageLessonAudioKey(audioVersion, section, index, voice);
     const toggleAction = languageLessonAudioToggleAction(
       audioPlaybackRef.current,
@@ -2264,7 +2348,10 @@ export function LanguageLessonScreen({
     }
   }
 
-  async function playDialogueAudio() {
+  async function playDialogueAudioSequence(
+    dialogue: ReadonlyArray<{ speaker: string; text: string }>,
+    audioVersion: LanguageLessonContentVersion,
+  ) {
     if (
       dialoguePlaybackRef.current?.status === "loading" ||
       dialoguePlaybackRef.current?.status === "playing"
@@ -2274,20 +2361,24 @@ export function LanguageLessonScreen({
       return;
     }
 
-    if (!lesson) return;
-    const content = languageLessonContentForVersion(lesson, contentVersion);
-    if (!content?.dialogue.length) return;
+    if (!dialogue.length) return;
 
-    const voices = assignLanguageDialogueVoices(content.dialogue);
+    const voices = assignLanguageDialogueVoices(dialogue);
     stopLanguageAudio();
     updateAudioPlayback(null);
     const sequenceId = dialogueSequenceIdRef.current;
     updateDialoguePlayback({ status: "loading", error: null });
 
     const result = await playLanguageDialogueSequentially(
-      content.dialogue.length,
+      dialogue.length,
       (index) =>
-        playLanguageAudio("dialogue", index, voices[index], sequenceId),
+        playLanguageAudio(
+          "dialogue",
+          index,
+          voices[index],
+          sequenceId,
+          audioVersion,
+        ),
       () => sequenceId === dialogueSequenceIdRef.current,
     );
 
@@ -2297,6 +2388,35 @@ export function LanguageLessonScreen({
       updateDialoguePlayback(null);
       updateAudioPlayback(null);
     }
+  }
+
+  async function playDialogueAudio() {
+    if (!lesson) return;
+    const content = languageLessonContentForVersion(lesson, contentVersion);
+    if (!content?.dialogue.length) return;
+
+    await playDialogueAudioSequence(content.dialogue, contentVersion);
+  }
+
+  function playAssimilDialogueLine(
+    index: number,
+    voice: LanguageStoryVoice,
+  ) {
+    return playLanguageAudio(
+      "dialogue",
+      index,
+      voice,
+      undefined,
+      "original",
+    );
+  }
+
+  async function playAssimilDialogueAudio() {
+    if (!lesson || !isAssimilV1LanguageLesson(lesson)) return;
+    const dialogue = lesson.assimilContent.dialogue;
+    if (!dialogue || dialogue.length < 2) return;
+
+    await playDialogueAudioSequence(dialogue, "original");
   }
 
   async function downloadMiniStoryAudio() {
@@ -2531,13 +2651,21 @@ export function LanguageLessonScreen({
 
         {lesson.status === "ready" && assimilV1Lesson ? (
           <AssimilReadyLesson
+            audioPlayback={audioPlayback}
+            audioPlaybackRate={audioPlaybackRate}
             content={lesson.assimilContent}
+            dialoguePlayback={dialoguePlayback}
             key={lesson.id}
             lessonId={lesson.id}
             phase={lesson.assimilPhase}
             progressControls={progressControls}
             reviewLesson={lesson.assimilReviewLesson === true}
             sourceContent={lesson.sourceContent ?? ""}
+            onPlayDialogue={() => void playAssimilDialogueAudio()}
+            onPlayDialogueLine={(index, voice) =>
+              void playAssimilDialogueLine(index, voice)
+            }
+            onPlaybackRateChange={updateLanguageAudioPlaybackRate}
           />
         ) : (
           progressControls
