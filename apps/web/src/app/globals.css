@@ -3209,6 +3209,77 @@ button:disabled {
   font-weight: 800;
 }
 
+.exercise-delete-zone {
+  display: flex;
+  min-width: 0;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1.5rem;
+  margin-top: 2rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border);
+}
+
+.exercise-delete-copy {
+  min-width: 0;
+}
+
+.exercise-delete-copy h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.exercise-delete-copy > p:last-child {
+  max-width: 34rem;
+  margin: 0.45rem 0 0;
+  color: #69758a;
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+.exercise-delete-button {
+  flex: 0 0 auto;
+  border: 1px solid #e6aaa4;
+  background: transparent;
+  color: #a7281e;
+}
+
+.exercise-delete-button:hover:not(:disabled) {
+  border-color: #c33a2e;
+  background: #fff5f4;
+}
+
+.exercise-delete-confirmation {
+  display: grid;
+  width: min(100%, 30rem);
+  min-width: 0;
+  justify-items: end;
+  gap: 0.75rem;
+}
+
+.exercise-delete-confirmation p {
+  margin: 0;
+  color: #7a231b;
+  font-size: 0.9rem;
+  font-weight: 650;
+  line-height: 1.5;
+  text-align: right;
+}
+
+.exercise-delete-confirmation-actions {
+  display: flex;
+  gap: 0.65rem;
+}
+
+.exercise-delete-confirm-button {
+  background: #b42318;
+  color: #fff;
+}
+
+.exercise-delete-confirm-button:hover:not(:disabled) {
+  background: #8f1d14;
+}
+
 .visually-hidden {
   position: absolute;
   width: 1px;
@@ -3328,6 +3399,30 @@ button:disabled {
   .exercise-guide-concepts > div {
     grid-template-columns: 1fr;
     gap: 0.3rem;
+  }
+
+  .exercise-delete-zone {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .exercise-delete-button,
+  .exercise-delete-confirmation,
+  .exercise-delete-confirmation-actions,
+  .exercise-delete-confirmation-actions > button {
+    width: 100%;
+  }
+
+  .exercise-delete-confirmation {
+    justify-items: stretch;
+  }
+
+  .exercise-delete-confirmation p {
+    text-align: left;
+  }
+
+  .exercise-delete-confirmation-actions {
+    flex-direction: column;
   }
 
   .exercise-status-control {

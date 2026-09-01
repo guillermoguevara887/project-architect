@@ -45,6 +45,9 @@ export function ExerciseDetailScreen({ exerciseId }: { exerciseId: string }) {
   >("");
   const [workspaceValue, setWorkspaceValue] = useState("");
   const [copied, setCopied] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     if (!authorized) {
@@ -290,6 +293,48 @@ export function ExerciseDetailScreen({ exerciseId }: { exerciseId: string }) {
     }
   }
 
+  async function deleteExercise() {
+    if (deleting) {
+      return;
+    }
+
+    setDeleting(true);
+    setActionError(null);
+    setDeleteError(null);
+    let navigatingAway = false;
+
+    try {
+      const response = await fetch(
+        `/api/exercises/${encodeURIComponent(exerciseId)}`,
+        { method: "DELETE", credentials: "include" },
+      );
+
+      if (response.status === 401) {
+        navigatingAway = true;
+        router.replace("/");
+        return;
+      }
+
+      if (!response.ok) {
+        const result = (await response.json().catch(() => null)) as {
+          message?: string;
+        } | null;
+        setDeleteError(result?.message ?? "No se pudo eliminar el ejercicio.");
+        return;
+      }
+
+      navigatingAway = true;
+      router.replace("/exercises");
+      router.refresh();
+    } catch {
+      setDeleteError("No se pudo eliminar el ejercicio.");
+    } finally {
+      if (!navigatingAway) {
+        setDeleting(false);
+      }
+    }
+  }
+
   if (!authorized || (!exercise && !loadError)) {
     return (
       <main className="flow-shell">
@@ -324,12 +369,19 @@ export function ExerciseDetailScreen({ exerciseId }: { exerciseId: string }) {
     exercise.guideStructuredContent || exercise.guideContent,
   );
   const guideLimitReached = exercise.guideGenerationCount >= 2;
+  const actionInProgress =
+    savingDetails ||
+    savingStatus ||
+    savingWorkspace ||
+    generating !== null ||
+    deleting;
 
   return (
     <main className="flow-shell exercises-shell">
       <article
         className="flow-card exercise-detail-card"
         aria-labelledby="exercise-title"
+        aria-busy={deleting}
       >
         <p className="brand">MemoOS · Ejercicios</p>
         <Link className="back-link" href="/exercises">
@@ -348,7 +400,7 @@ export function ExerciseDetailScreen({ exerciseId }: { exerciseId: string }) {
             <select
               value={exercise.status}
               onChange={(event) => void changeStatus(event)}
-              disabled={savingStatus}
+              disabled={savingStatus || deleting}
             >
               {EXERCISE_STATUSES.map((status) => (
                 <option key={status} value={status}>
@@ -368,6 +420,7 @@ export function ExerciseDetailScreen({ exerciseId }: { exerciseId: string }) {
               role="tab"
               aria-controls={`exercise-panel-${tab.id}`}
               aria-selected={activeTab === tab.id}
+              disabled={deleting}
               onClick={() => {
                 setActiveTab(tab.id);
                 setActionError(null);
@@ -397,6 +450,7 @@ export function ExerciseDetailScreen({ exerciseId }: { exerciseId: string }) {
                 <button
                   className="secondary-button compact-button"
                   type="button"
+                  disabled={deleting}
                   onClick={() => setEditing((value) => !value)}
                 >
                   {editing ? "Cancelar" : "Editar"}
@@ -453,7 +507,10 @@ export function ExerciseDetailScreen({ exerciseId }: { exerciseId: string }) {
                     rows={10}
                     required
                   />
-                  <button type="submit" disabled={savingDetails}>
+                  <button
+                    type="submit"
+                    disabled={savingDetails || deleting}
+                  >
                     {savingDetails ? "Guardando…" : "Guardar cambios"}
                   </button>
                 </form>
@@ -510,6 +567,7 @@ export function ExerciseDetailScreen({ exerciseId }: { exerciseId: string }) {
                   <button
                     className="secondary-button compact-button"
                     type="button"
+                    disabled={deleting}
                     onClick={() => void copyLocalPath()}
                   >
                     {copied ? "Ruta copiada" : "Copiar ruta"}
@@ -529,6 +587,7 @@ export function ExerciseDetailScreen({ exerciseId }: { exerciseId: string }) {
                 <select
                   id="workspace-type"
                   value={workspaceType}
+                  disabled={deleting}
                   onChange={(event) => {
                     setWorkspaceType(
                       event.target.value as ExerciseWorkspaceType | "",
@@ -552,6 +611,7 @@ export function ExerciseDetailScreen({ exerciseId }: { exerciseId: string }) {
                     <input
                       id="workspace-value"
                       value={workspaceValue}
+                      disabled={deleting}
                       onChange={(event) => setWorkspaceValue(event.target.value)}
                       maxLength={4_000}
                       required
@@ -561,7 +621,10 @@ export function ExerciseDetailScreen({ exerciseId }: { exerciseId: string }) {
                   </>
                 ) : null}
 
-                <button type="submit" disabled={savingWorkspace}>
+                <button
+                  type="submit"
+                  disabled={savingWorkspace || deleting}
+                >
                   {savingWorkspace ? "Guardando…" : "Guardar espacio"}
                 </button>
               </form>
@@ -584,7 +647,9 @@ export function ExerciseDetailScreen({ exerciseId }: { exerciseId: string }) {
               <div className="exercise-guide-actions">
                 <button
                   type="button"
-                  disabled={generating !== null || guideLimitReached}
+                  disabled={
+                    generating !== null || guideLimitReached || deleting
+                  }
                   onClick={() => void generate("guide")}
                 >
                   {generating === "guide"
@@ -633,7 +698,7 @@ export function ExerciseDetailScreen({ exerciseId }: { exerciseId: string }) {
               </div>
               <button
                 type="button"
-                disabled={generating !== null}
+                disabled={generating !== null || deleting}
                 onClick={() => void generate("steps")}
               >
                 {generating === "steps"
@@ -658,6 +723,65 @@ export function ExerciseDetailScreen({ exerciseId }: { exerciseId: string }) {
             )}
           </section>
         ) : null}
+
+        <footer className="exercise-delete-zone">
+          <div className="exercise-delete-copy">
+            <p className="section-kicker">Acción secundaria</p>
+            <h2>Eliminar ejercicio</h2>
+            <p>El ejercicio y todo su contenido guardado desaparecerán.</p>
+          </div>
+
+          {confirmingDelete ? (
+            <div
+              className="exercise-delete-confirmation"
+              role="group"
+              aria-labelledby="exercise-delete-confirmation"
+            >
+              <p id="exercise-delete-confirmation" role="alert">
+                ¿Eliminar este ejercicio? Esta acción no se puede deshacer.
+              </p>
+              {deleteError ? (
+                <p className="form-error" role="alert">
+                  {deleteError}
+                </p>
+              ) : null}
+              <div className="exercise-delete-confirmation-actions">
+                <button
+                  className="secondary-button compact-button"
+                  type="button"
+                  disabled={deleting}
+                  onClick={() => {
+                    setConfirmingDelete(false);
+                    setDeleteError(null);
+                  }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  className="exercise-delete-confirm-button compact-button"
+                  type="button"
+                  disabled={actionInProgress}
+                  onClick={() => void deleteExercise()}
+                >
+                  {deleting ? "Eliminando…" : "Eliminar"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              className="exercise-delete-button compact-button"
+              type="button"
+              disabled={actionInProgress}
+              onClick={() => {
+                setActionError(null);
+                setDeleteError(null);
+                setConfirmingDelete(true);
+              }}
+            >
+              Eliminar ejercicio
+            </button>
+          )}
+        </footer>
       </article>
     </main>
   );

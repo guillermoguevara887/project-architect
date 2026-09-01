@@ -58,6 +58,7 @@ export interface ExerciseStore {
     exerciseId: string,
     userId: string,
   ): Promise<Exercise | null>;
+  deleteExercise(exerciseId: string, userId: string): Promise<boolean>;
   updateExercise(input: UpdateExerciseInput): Promise<Exercise | null>;
   updateStatus(
     exerciseId: string,
@@ -117,6 +118,15 @@ export const exerciseStore: ExerciseStore = {
       .limit(1);
 
     return exercise ?? null;
+  },
+
+  async deleteExercise(exerciseId, userId) {
+    const deleted = await getDb()
+      .delete(exercises)
+      .where(ownedExercise(exerciseId, userId))
+      .returning({ id: exercises.id });
+
+    return deleted.length === 1;
   },
 
   async updateExercise(input) {

@@ -165,6 +165,40 @@ export function registerExerciseRoutes(
     },
   );
 
+  server.delete<{ Params: { exerciseId: string } }>(
+    "/exercises/:exerciseId",
+    async (request, reply) => {
+      try {
+        const userId = await authenticatedUserId(request, authStore);
+
+        if (!userId) {
+          return reply.code(401).send({ error: "UNAUTHORIZED" });
+        }
+
+        if (!exerciseIdSchema.safeParse(request.params.exerciseId).success) {
+          return reply.code(404).send({ error: "EXERCISE_NOT_FOUND" });
+        }
+
+        const deleted = await store.deleteExercise(
+          request.params.exerciseId,
+          userId,
+        );
+
+        if (!deleted) {
+          return reply.code(404).send({ error: "EXERCISE_NOT_FOUND" });
+        }
+
+        return reply.code(204).send();
+      } catch (error) {
+        server.log.error({ error }, "Exercise deletion failed.");
+        return reply.code(503).send({
+          error: "EXERCISES_UNAVAILABLE",
+          message: "No se pudo eliminar el ejercicio.",
+        });
+      }
+    },
+  );
+
   server.patch<{ Params: { exerciseId: string } }>(
     "/exercises/:exerciseId",
     async (request, reply) => {

@@ -103,6 +103,20 @@ class MemoryExerciseStore implements ExerciseStore {
     return this.findOwned(exerciseId, userId);
   }
 
+  async deleteExercise(exerciseId: string, userId: string) {
+    const index = this.exercises.findIndex(
+      (exercise) =>
+        exercise.id === exerciseId && exercise.userId === userId,
+    );
+
+    if (index === -1) {
+      return false;
+    }
+
+    this.exercises.splice(index, 1);
+    return true;
+  }
+
   async updateExercise(input: UpdateExerciseInput) {
     const exercise = this.findOwned(input.exerciseId, input.userId);
 
@@ -369,6 +383,72 @@ test("creation, listing, reading and updates stay isolated by user", async () =>
     assert.equal(update.json().exercise.title, "Tensores actualizados");
     assert.equal(update.json().exercise.chapter, null);
     assert.equal(foreignUpdate.statusCode, 404);
+  } finally {
+    await server.close();
+  }
+});
+
+test("exercise deletion requires authentication and stays isolated by user", async () => {
+  const { store, server } = testServer();
+  const ownerCookie = sessionCookie(firstUser.id);
+  const otherCookie = sessionCookie(secondUser.id);
+
+  try {
+    const exercise = await createExercise(server, ownerCookie);
+    const stored = store.exercises[0];
+    assert.ok(stored);
+    stored.status = "working";
+    stored.guideContent = "Guía legacy completa.";
+    stored.guideStructuredContent = guideFixture();
+    stored.guideGenerationCount = 2;
+    stored.suggestedSteps = ["Revisar el enunciado", "Probar la solución"];
+    stored.workspaceType = "local";
+    stored.workspaceValue = "C:\\Users\\memoos\\exercise.py";
+
+    const unauthorized = await server.inject({
+      method: "DELETE",
+      url: `/exercises/${exercise.id}`,
+    });
+    const foreignDeletion = await server.inject({
+      method: "DELETE",
+      url: `/exercises/${exercise.id}`,
+      headers: { cookie: otherCookie },
+    });
+    const missingDeletion = await server.inject({
+      method: "DELETE",
+      url: `/exercises/${randomUUID()}`,
+      headers: { cookie: ownerCookie },
+    });
+
+    assert.equal(unauthorized.statusCode, 401);
+    assert.equal(foreignDeletion.statusCode, 404);
+    assert.equal(foreignDeletion.json().error, "EXERCISE_NOT_FOUND");
+    assert.equal(missingDeletion.statusCode, 404);
+    assert.equal(missingDeletion.json().error, "EXERCISE_NOT_FOUND");
+    assert.equal(store.exercises.length, 1);
+
+    const deletion = await server.inject({
+      method: "DELETE",
+      url: `/exercises/${exercise.id}`,
+      headers: { cookie: ownerCookie },
+    });
+    const deletedDetail = await server.inject({
+      method: "GET",
+      url: `/exercises/${exercise.id}`,
+      headers: { cookie: ownerCookie },
+    });
+    const ownerList = await server.inject({
+      method: "GET",
+      url: "/exercises",
+      headers: { cookie: ownerCookie },
+    });
+
+    assert.equal(deletion.statusCode, 204);
+    assert.equal(deletion.body, "");
+    assert.equal(deletedDetail.statusCode, 404);
+    assert.equal(deletedDetail.json().error, "EXERCISE_NOT_FOUND");
+    assert.deepEqual(ownerList.json().exercises, []);
+    assert.equal(store.exercises.length, 0);
   } finally {
     await server.close();
   }
