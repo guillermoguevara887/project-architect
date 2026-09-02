@@ -1532,6 +1532,20 @@ button:disabled {
   color: #64748b;
 }
 
+.free-title-generation-status,
+.free-title-generation-error {
+  margin-top: -0.35rem;
+  font-size: 0.82rem;
+}
+
+.free-title-generation-status {
+  color: #3157d5;
+}
+
+.free-title-generation-error {
+  color: #9f3a47;
+}
+
 .free-lesson-ready {
   display: grid;
   gap: 1.1rem;

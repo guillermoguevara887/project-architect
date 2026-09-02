@@ -24,6 +24,8 @@ import type {
 } from "../src/languages/audio-storage.js";
 import {
   LANGUAGE_FREE_LESSON_TITLE_MAX_LENGTH,
+  LANGUAGE_FREE_LESSON_TITLE_MIN_SOURCE_LENGTH,
+  generateFreeLanguageLessonTitleSchema,
   languageLessonDifficultySchema,
   languageLessonLearningStatusSchema,
   prepareFreeLanguageLessonSchema,
@@ -39,6 +41,11 @@ import type {
   AnalyzeFreeLanguageLessonInput,
   FreeLanguageLessonAnalyzer,
 } from "../src/languages/free-analyzer.js";
+import {
+  FreeLanguageLessonTitleGenerationError,
+  type FreeLanguageLessonTitleGenerator,
+  type GenerateFreeLanguageLessonTitleInput,
+} from "../src/languages/free-title-generator.js";
 import {
   LanguageLessonProcessingError,
   type LanguageLessonProcessor,
@@ -1179,6 +1186,20 @@ class FakeFreeLanguageLessonAnalyzer implements FreeLanguageLessonAnalyzer {
   }
 }
 
+class FakeFreeLanguageLessonTitleGenerator
+  implements FreeLanguageLessonTitleGenerator
+{
+  readonly calls: GenerateFreeLanguageLessonTitleInput[] = [];
+  result = "Esperar el tren en la estación";
+  error: Error | null = null;
+
+  async generate(input: GenerateFreeLanguageLessonTitleInput) {
+    this.calls.push(input);
+    if (this.error) throw this.error;
+    return this.result;
+  }
+}
+
 class MemoryLanguageAudioStorage implements LanguageAudioStorage {
   readonly objects = new Map<string, Uint8Array>();
   readonly puts: PutLanguageAudioInput[] = [];
@@ -1214,6 +1235,7 @@ function testServer(
   splitter = new FakeLanguageLessonSplitter(),
   verySimplifier = new FakeLanguageLessonVerySimplifier(),
   assimilProcessor = new FakeAssimilLanguageLessonProcessor(),
+  freeTitleGenerator = new FakeFreeLanguageLessonTitleGenerator(),
 ) {
   return {
     store,
@@ -1225,6 +1247,7 @@ function testServer(
     audioStorage,
     elevenLabsProvider,
     freeAnalyzer,
+    freeTitleGenerator,
     assimilProcessor,
     server: createServer(
       {},
@@ -1235,6 +1258,7 @@ function testServer(
         languageLessonSplitter: splitter,
         languageLessonVerySimplifier: verySimplifier,
         freeLanguageLessonAnalyzer: freeAnalyzer,
+        freeLanguageLessonTitleGenerator: freeTitleGenerator,
         assimilLanguageLessonProcessor: assimilProcessor,
         languageAudioStore: audioStore,
         languageAudioProvider: audioProvider,
@@ -1353,6 +1377,23 @@ async function prepareFreeLesson(
     method: "POST",
     url: `/languages/projects/${projectId}/lessons/${lessonId}/free/prepare`,
     headers: { cookie },
+    payload,
+  });
+}
+
+async function generateFreeLessonTitle(
+  server: ReturnType<typeof createServer>,
+  projectId: string,
+  lessonId: string,
+  cookie?: string,
+  payload: unknown = {
+    sourceContent: "Ich warte am Bahnhof. Der Zug kommt gleich.",
+  },
+) {
+  return server.inject({
+    method: "POST",
+    url: `/languages/projects/${projectId}/lessons/${lessonId}/free/generate-title`,
+    ...(cookie ? { headers: { cookie } } : {}),
     payload,
   });
 }
@@ -1694,6 +1735,221 @@ test("free lesson preparation contract is strict and preserves source text", () 
     }).success,
     false,
   );
+});
+
+test("free lesson title generation contract requires enough valid source text", () => {
+  const exactText = "  Ich warte am Bahnhof. Der Zug kommt gleich.  ";
+  const valid = generateFreeLanguageLessonTitleSchema.parse({
+    sourceContent: exactText,
+  });
+
+  assert.equal(LANGUAGE_FREE_LESSON_TITLE_MIN_SOURCE_LENGTH, 20);
+  assert.equal(valid.sourceContent, exactText);
+  for (const sourceContent of ["", "   ", "a".repeat(19)]) {
+    assert.equal(
+      generateFreeLanguageLessonTitleSchema.safeParse({ sourceContent }).success,
+      false,
+    );
+  }
+  assert.equal(
+    generateFreeLanguageLessonTitleSchema.safeParse({
+      sourceContent: "a".repeat(100_001),
+    }).success,
+    false,
+  );
+  assert.equal(
+    generateFreeLanguageLessonTitleSchema.safeParse({
+      sourceContent: exactText,
+      model: "expensive-model",
+    }).success,
+    false,
+  );
+});
+
+test("free lesson title generation requires auth, ownership and an editable free lesson", async () => {
+  const { freeTitleGenerator, server } = testServer();
+  const ownerCookie = sessionCookie(firstUser.id);
+  const otherCookie = sessionCookie(secondUser.id);
+
+  try {
+    const project = await createProject(server, ownerCookie);
+    const freeLesson = await createLesson(server, project.id, ownerCookie, "free");
+    const frameworkLesson = await createLesson(
+      server,
+      project.id,
+      ownerCookie,
+      "language_framework",
+    );
+
+    assert.equal(
+      (await generateFreeLessonTitle(server, project.id, freeLesson.id)).statusCode,
+      401,
+    );
+    const invalid = await generateFreeLessonTitle(
+      server,
+      project.id,
+      freeLesson.id,
+      ownerCookie,
+      { sourceContent: "Muy corto" },
+    );
+    assert.equal(invalid.statusCode, 400);
+    assert.equal(invalid.json().error, "INVALID_LANGUAGE_FREE_TITLE_REQUEST");
+    assert.equal(
+      (
+        await generateFreeLessonTitle(
+          server,
+          project.id,
+          freeLesson.id,
+          otherCookie,
+        )
+      ).statusCode,
+      404,
+    );
+    const wrongSource = await generateFreeLessonTitle(
+      server,
+      project.id,
+      frameworkLesson.id,
+      ownerCookie,
+    );
+    assert.equal(wrongSource.statusCode, 409);
+    assert.equal(wrongSource.json().error, "LANGUAGE_LESSON_NOT_FREE");
+    assert.equal(freeTitleGenerator.calls.length, 0);
+  } finally {
+    await server.close();
+  }
+});
+
+test("generated and manually edited free lesson titles use the existing persistence path", async () => {
+  const { freeTitleGenerator, server, store } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+  const exactSource = "  Could I see the menu? I would like to order the soup.  ";
+  freeTitleGenerator.result = "Pedir comida en un restaurante";
+
+  try {
+    const project = await createProject(server, cookie, "Inglés", "B1");
+    const generatedLesson = await createLesson(
+      server,
+      project.id,
+      cookie,
+      "free",
+    );
+    const generated = await generateFreeLessonTitle(
+      server,
+      project.id,
+      generatedLesson.id,
+      cookie,
+      { sourceContent: exactSource },
+    );
+
+    assert.equal(generated.statusCode, 200);
+    assert.equal(generated.json().title, "Pedir comida en un restaurante");
+    assert.deepEqual(freeTitleGenerator.calls[0], {
+      language: "Inglés",
+      level: "B1",
+      sourceContent: exactSource,
+    });
+    const beforeSave = store.lessons.find(({ id }) => id === generatedLesson.id);
+    assert.ok(beforeSave);
+    assert.equal(beforeSave.freeTitle, null);
+    assert.equal(beforeSave.status, "draft");
+
+    const savedGenerated = await prepareFreeLesson(
+      server,
+      project.id,
+      generatedLesson.id,
+      cookie,
+      { title: generated.json().title, sourceContent: exactSource },
+    );
+    assert.equal(savedGenerated.statusCode, 200);
+    assert.equal(
+      savedGenerated.json().lesson.freeTitle,
+      "Pedir comida en un restaurante",
+    );
+
+    const manuallyEditedLesson = await createLesson(
+      server,
+      project.id,
+      cookie,
+      "free",
+    );
+    const proposed = await generateFreeLessonTitle(
+      server,
+      project.id,
+      manuallyEditedLesson.id,
+      cookie,
+      { sourceContent: exactSource },
+    );
+    assert.equal(proposed.statusCode, 200);
+    const savedManual = await prepareFreeLesson(
+      server,
+      project.id,
+      manuallyEditedLesson.id,
+      cookie,
+      { title: "Mi título personalizado", sourceContent: exactSource },
+    );
+    assert.equal(savedManual.statusCode, 200);
+    assert.equal(savedManual.json().lesson.freeTitle, "Mi título personalizado");
+
+    const regeneratePrepared = await generateFreeLessonTitle(
+      server,
+      project.id,
+      manuallyEditedLesson.id,
+      cookie,
+      { sourceContent: exactSource },
+    );
+    assert.equal(regeneratePrepared.statusCode, 409);
+    assert.equal(
+      regeneratePrepared.json().error,
+      "LANGUAGE_FREE_LESSON_NOT_EDITABLE",
+    );
+    assert.equal(freeTitleGenerator.calls.length, 2);
+  } finally {
+    await server.close();
+  }
+});
+
+test("title generation failure leaves manual free lesson preparation available", async () => {
+  const { freeTitleGenerator, server, store } = testServer();
+  const cookie = sessionCookie(firstUser.id);
+  freeTitleGenerator.error = new FreeLanguageLessonTitleGenerationError(
+    "provider_error",
+  );
+
+  try {
+    const project = await createProject(server, cookie);
+    const lesson = await createLesson(server, project.id, cookie, "free");
+    const failed = await generateFreeLessonTitle(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+    );
+
+    assert.equal(failed.statusCode, 502);
+    assert.equal(failed.json().error, "LANGUAGE_FREE_TITLE_GENERATION_FAILED");
+    const afterFailure = store.lessons.find(({ id }) => id === lesson.id);
+    assert.ok(afterFailure);
+    assert.equal(afterFailure.freeTitle, null);
+    assert.equal(afterFailure.status, "draft");
+
+    const manual = await prepareFreeLesson(
+      server,
+      project.id,
+      lesson.id,
+      cookie,
+      {
+        title: "Título escrito manualmente",
+        sourceContent: "Ich warte am Bahnhof. Der Zug kommt gleich.",
+      },
+    );
+    assert.equal(manual.statusCode, 200);
+    assert.equal(
+      manual.json().lesson.freeTitle,
+      "Título escrito manualmente",
+    );
+  } finally {
+    await server.close();
+  }
 });
 
 test("free lesson preparation requires auth, ownership and a free lesson", async () => {

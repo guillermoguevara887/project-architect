@@ -6,6 +6,7 @@ import {
   freeLanguageLessonAnalysisSchema,
   createLanguageLessonSchema,
   createLanguageProjectSchema,
+  generateFreeLanguageLessonTitleSchema,
   LANGUAGE_LESSON_SOURCE_MAX_LENGTH,
   languageLessonIdSchema,
   languageProjectIdSchema,
@@ -25,6 +26,10 @@ import {
   FreeLanguageLessonAnalysisError,
   type FreeLanguageLessonAnalyzer,
 } from "./free-analyzer.js";
+import {
+  FreeLanguageLessonTitleGenerationError,
+  type FreeLanguageLessonTitleGenerator,
+} from "./free-title-generator.js";
 import {
   LanguageLessonProcessingError,
   type LanguageLessonProcessor,
@@ -171,6 +176,7 @@ export function registerLanguageRoutes(
   splitter: LanguageLessonSplitter,
   verySimplifier: LanguageLessonVerySimplifier,
   freeAnalyzer: FreeLanguageLessonAnalyzer,
+  freeTitleGenerator: FreeLanguageLessonTitleGenerator,
   assimilProcessor: AssimilLanguageLessonProcessor,
 ) {
   server.get("/languages/projects", async (request, reply) => {
@@ -427,6 +433,89 @@ export function registerLanguageRoutes(
         return reply.code(503).send({
           error: "LANGUAGES_UNAVAILABLE",
           message: "No se pudo guardar el material.",
+        });
+      }
+    },
+  );
+
+  server.post<{ Params: { projectId: string; lessonId: string } }>(
+    "/languages/projects/:projectId/lessons/:lessonId/free/generate-title",
+    async (request, reply) => {
+      const { projectId, lessonId } = request.params;
+
+      try {
+        const userId = await authenticatedUserId(request, authStore);
+        if (!userId) {
+          return reply.code(401).send({ error: "UNAUTHORIZED" });
+        }
+
+        if (
+          !languageProjectIdSchema.safeParse(projectId).success ||
+          !languageLessonIdSchema.safeParse(lessonId).success
+        ) {
+          return reply.code(404).send({ error: "LANGUAGE_LESSON_NOT_FOUND" });
+        }
+
+        const parsedInput = generateFreeLanguageLessonTitleSchema.safeParse(
+          request.body,
+        );
+        if (!parsedInput.success) {
+          return reply.code(400).send({
+            error: "INVALID_LANGUAGE_FREE_TITLE_REQUEST",
+            message: "Añade un poco más de texto para generar el título.",
+          });
+        }
+
+        const project = await store.findProjectByIdForUser(projectId, userId);
+        const lesson = await store.findLessonByIdForUser(
+          lessonId,
+          projectId,
+          userId,
+        );
+
+        if (!project || !lesson) {
+          return reply.code(404).send({ error: "LANGUAGE_LESSON_NOT_FOUND" });
+        }
+
+        if (lesson.lessonSource !== "free") {
+          return reply.code(409).send({
+            error: "LANGUAGE_LESSON_NOT_FREE",
+            message: "Esta lección no es una Lección libre.",
+          });
+        }
+
+        if (
+          lesson.freeTitle !== null ||
+          !(lesson.status === "draft" || lesson.status === "failed")
+        ) {
+          return reply.code(409).send({
+            error: "LANGUAGE_FREE_LESSON_NOT_EDITABLE",
+            message: "La lección libre ya fue preparada.",
+          });
+        }
+
+        const title = await freeTitleGenerator.generate({
+          language: project.language,
+          level: project.level,
+          sourceContent: parsedInput.data.sourceContent,
+        });
+
+        return { title };
+      } catch (error) {
+        const errorType =
+          error instanceof FreeLanguageLessonTitleGenerationError
+            ? error.code
+            : "unexpected";
+        server.log.error(
+          { projectId, lessonId, errorType },
+          "Free language lesson title generation failed.",
+        );
+        const notConfigured = errorType === "not_configured";
+        return reply.code(notConfigured ? 503 : 502).send({
+          error: notConfigured
+            ? "LANGUAGE_FREE_TITLE_NOT_CONFIGURED"
+            : "LANGUAGE_FREE_TITLE_GENERATION_FAILED",
+          message: "No se pudo generar el título. Puedes escribirlo manualmente.",
         });
       }
     },

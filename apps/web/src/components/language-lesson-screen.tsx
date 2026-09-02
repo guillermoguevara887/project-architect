@@ -55,6 +55,7 @@ import {
   LANGUAGE_STORY_VOICE_OPTIONS,
   playExclusiveLanguageAudio,
   playLanguageDialogueSequentially,
+  shouldGenerateLanguageFreeLessonTitle,
   stopPlayableLanguageAudio,
   type AssimilLanguageLessonContent,
   type AssimilPhase,
@@ -1407,6 +1408,14 @@ export function LanguageLessonScreen({
   const [splitError, setSplitError] = useState<string | null>(null);
   const [freeTitle, setFreeTitle] = useState("");
   const [sourceContent, setSourceContent] = useState("");
+  const sourceContentRef = useRef("");
+  const freeTitleManuallyEditedRef = useRef(false);
+  const lastFreeTitleAttemptRef = useRef<string | null>(null);
+  const generatingFreeTitleRef = useRef(false);
+  const [generatingFreeTitle, setGeneratingFreeTitle] = useState(false);
+  const [freeTitleGenerationError, setFreeTitleGenerationError] = useState<
+    string | null
+  >(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [progressError, setProgressError] = useState<string | null>(null);
@@ -1649,8 +1658,14 @@ export function LanguageLessonScreen({
               lessonResult.lesson.id,
             ),
           );
-          setFreeTitle(lessonResult.lesson.freeTitle ?? "");
-          setSourceContent(lessonResult.lesson.sourceContent ?? "");
+          const loadedFreeTitle = lessonResult.lesson.freeTitle ?? "";
+          const loadedSourceContent = lessonResult.lesson.sourceContent ?? "";
+          setFreeTitle(loadedFreeTitle);
+          setSourceContent(loadedSourceContent);
+          sourceContentRef.current = loadedSourceContent;
+          freeTitleManuallyEditedRef.current = Boolean(loadedFreeTitle);
+          lastFreeTitleAttemptRef.current = null;
+          setFreeTitleGenerationError(null);
           setContentVersion("original");
           setVerySimplificationError(null);
         }
@@ -1729,11 +1744,81 @@ export function LanguageLessonScreen({
       setLesson(result.lesson);
       setFreeTitle(result.lesson.freeTitle ?? "");
       setSourceContent(result.lesson.sourceContent ?? "");
+      sourceContentRef.current = result.lesson.sourceContent ?? "";
     } catch {
       setActionError("No se pudo preparar la lección libre.");
     } finally {
       preparingFreeRef.current = false;
       setPreparingFree(false);
+    }
+  }
+
+  async function generateFreeLessonTitle() {
+    if (generatingFreeTitleRef.current) return;
+
+    const source = sourceContentRef.current.trim();
+    if (
+      !shouldGenerateLanguageFreeLessonTitle({
+        sourceContent: source,
+        titleManuallyEdited: freeTitleManuallyEditedRef.current,
+        lastAttemptedSource: lastFreeTitleAttemptRef.current,
+      })
+    ) {
+      return;
+    }
+
+    lastFreeTitleAttemptRef.current = source;
+    generatingFreeTitleRef.current = true;
+    setGeneratingFreeTitle(true);
+    setFreeTitleGenerationError(null);
+
+    try {
+      const response = await fetch(
+        `/api/languages/projects/${encodeURIComponent(projectId)}/lessons/${encodeURIComponent(lessonId)}/free/generate-title`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ sourceContent: source }),
+        },
+      );
+
+      if (response.status === 401) {
+        router.replace("/");
+        return;
+      }
+
+      const result = (await response.json()) as {
+        title?: string;
+        message?: string;
+      };
+      const sourceIsCurrent = sourceContentRef.current.trim() === source;
+
+      if (!response.ok || !result.title) {
+        if (sourceIsCurrent && !freeTitleManuallyEditedRef.current) {
+          setFreeTitleGenerationError(
+            result.message ??
+              "No se pudo generar el título. Puedes escribirlo manualmente.",
+          );
+        }
+        return;
+      }
+
+      if (sourceIsCurrent && !freeTitleManuallyEditedRef.current) {
+        setFreeTitle(result.title);
+      }
+    } catch {
+      if (
+        sourceContentRef.current.trim() === source &&
+        !freeTitleManuallyEditedRef.current
+      ) {
+        setFreeTitleGenerationError(
+          "No se pudo generar el título. Puedes escribirlo manualmente.",
+        );
+      }
+    } finally {
+      generatingFreeTitleRef.current = false;
+      setGeneratingFreeTitle(false);
     }
   }
 
@@ -2786,18 +2871,6 @@ export function LanguageLessonScreen({
                 Podrás copiar el título y el texto para usarlos donde quieras.
               </small>
             </div>
-            <label htmlFor="free-lesson-title">Título</label>
-            <input
-              id="free-lesson-title"
-              maxLength={FREE_LESSON_TITLE_MAX_LENGTH}
-              required
-              type="text"
-              value={freeTitle}
-              onChange={(event) => setFreeTitle(event.target.value)}
-            />
-            <small className="lesson-input-limit">
-              Máximo {FREE_LESSON_TITLE_MAX_LENGTH} caracteres.
-            </small>
             <label htmlFor="free-lesson-text">Texto</label>
             <textarea
               id="free-lesson-text"
@@ -2806,10 +2879,42 @@ export function LanguageLessonScreen({
               required
               rows={18}
               value={sourceContent}
-              onChange={(event) => setSourceContent(event.target.value)}
+              onBlur={() => void generateFreeLessonTitle()}
+              onChange={(event) => {
+                sourceContentRef.current = event.target.value;
+                setSourceContent(event.target.value);
+                setFreeTitleGenerationError(null);
+              }}
             />
             <small className="lesson-input-limit">
               Máximo {SOURCE_CONTENT_MAX_LENGTH.toLocaleString("es")} caracteres.
+            </small>
+            {generatingFreeTitle ? (
+              <small aria-live="polite" className="free-title-generation-status">
+                Generando título…
+              </small>
+            ) : null}
+            {freeTitleGenerationError ? (
+              <small className="free-title-generation-error" role="status">
+                {freeTitleGenerationError}
+              </small>
+            ) : null}
+            <label htmlFor="free-lesson-title">Título</label>
+            <input
+              id="free-lesson-title"
+              maxLength={FREE_LESSON_TITLE_MAX_LENGTH}
+              placeholder="MemoOS lo generará a partir del texto."
+              required
+              type="text"
+              value={freeTitle}
+              onChange={(event) => {
+                freeTitleManuallyEditedRef.current = true;
+                setFreeTitle(event.target.value);
+                setFreeTitleGenerationError(null);
+              }}
+            />
+            <small className="lesson-input-limit">
+              Máximo {FREE_LESSON_TITLE_MAX_LENGTH} caracteres.
             </small>
             {actionError ? (
               <p className="form-error" role="alert">

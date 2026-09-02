@@ -12,6 +12,22 @@ export type LanguageLessonStatus =
   | "ready"
   | "failed";
 
+export const LANGUAGE_FREE_TITLE_MIN_SOURCE_LENGTH = 20;
+
+export function shouldGenerateLanguageFreeLessonTitle(input: {
+  sourceContent: string;
+  titleManuallyEdited: boolean;
+  lastAttemptedSource: string | null;
+}) {
+  const sourceContent = input.sourceContent.trim();
+
+  return (
+    sourceContent.length >= LANGUAGE_FREE_TITLE_MIN_SOURCE_LENGTH &&
+    !input.titleManuallyEdited &&
+    sourceContent !== input.lastAttemptedSource
+  );
+}
+
 export const LANGUAGE_LESSON_LEARNING_STATUS_OPTIONS = [
   { value: "pending", label: "Pendiente" },
   { value: "in_progress", label: "En curso" },

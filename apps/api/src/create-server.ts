@@ -38,6 +38,10 @@ import {
   type FreeLanguageLessonAnalyzer,
 } from "./languages/free-analyzer.js";
 import {
+  freeLanguageLessonTitleGenerator,
+  type FreeLanguageLessonTitleGenerator,
+} from "./languages/free-title-generator.js";
+import {
   assimilLanguageLessonProcessor,
   type AssimilLanguageLessonProcessor,
 } from "./languages/assimil-processor.js";
@@ -86,6 +90,7 @@ type ServerDependencies = {
   languageLessonSplitter?: LanguageLessonSplitter;
   languageLessonVerySimplifier?: LanguageLessonVerySimplifier;
   freeLanguageLessonAnalyzer?: FreeLanguageLessonAnalyzer;
+  freeLanguageLessonTitleGenerator?: FreeLanguageLessonTitleGenerator;
   assimilLanguageLessonProcessor?: AssimilLanguageLessonProcessor;
   languageAudioStore?: LanguageAudioStore;
   languageAudioProvider?: LanguageAudioProvider;
@@ -206,6 +211,8 @@ export function configureServer(
     dependencies.languageLessonSplitter ?? languageLessonSplitter,
     dependencies.languageLessonVerySimplifier ?? languageLessonVerySimplifier,
     dependencies.freeLanguageLessonAnalyzer ?? freeLanguageLessonAnalyzer,
+    dependencies.freeLanguageLessonTitleGenerator ??
+      freeLanguageLessonTitleGenerator,
     dependencies.assimilLanguageLessonProcessor ?? assimilLanguageLessonProcessor,
   );
   registerLanguageAudioRoutes(server, {

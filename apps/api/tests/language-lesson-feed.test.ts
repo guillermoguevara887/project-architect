@@ -20,6 +20,7 @@ import {
   isPreparedFreeLanguageLesson,
   isJapaneseLanguage,
   LANGUAGE_AUDIO_PLAYBACK_RATE_OPTIONS,
+  LANGUAGE_FREE_TITLE_MIN_SOURCE_LENGTH,
   LANGUAGE_LESSON_DIFFICULTY_OPTIONS,
   LANGUAGE_LESSON_LEARNING_STATUS_OPTIONS,
   LANGUAGE_LESSON_SOURCE_OPTIONS,
@@ -58,6 +59,7 @@ import {
   languageStoryVoiceChangeStopsPlayback,
   playExclusiveLanguageAudio,
   playLanguageDialogueSequentially,
+  shouldGenerateLanguageFreeLessonTitle,
   stopPlayableLanguageAudio,
   type AssimilLanguageLessonContent,
   type LanguageLesson,
@@ -1744,6 +1746,60 @@ test("free lesson UI prepares exact text and keeps copy, audio and download inde
     component.match(/async function prepareFreeLesson[\s\S]*?\n  }/m)?.[0] ?? "",
     /process|simplif|OpenAI|ElevenLabs|R2/,
   );
+});
+
+test("free lesson title generation waits for blur and never overwrites manual edits", async () => {
+  assert.equal(LANGUAGE_FREE_TITLE_MIN_SOURCE_LENGTH, 20);
+  assert.equal(
+    shouldGenerateLanguageFreeLessonTitle({
+      sourceContent: "Contenido suficiente para titular esta lección.",
+      titleManuallyEdited: false,
+      lastAttemptedSource: null,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldGenerateLanguageFreeLessonTitle({
+      sourceContent: "Muy corto",
+      titleManuallyEdited: false,
+      lastAttemptedSource: null,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldGenerateLanguageFreeLessonTitle({
+      sourceContent: "Texto suficiente para identificar un tema concreto.",
+      titleManuallyEdited: true,
+      lastAttemptedSource: null,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldGenerateLanguageFreeLessonTitle({
+      sourceContent: "Texto suficiente para identificar un tema concreto.",
+      titleManuallyEdited: false,
+      lastAttemptedSource:
+        "Texto suficiente para identificar un tema concreto.",
+    }),
+    false,
+  );
+
+  const component = await readFile(
+    new URL(
+      "../../web/src/components/language-lesson-screen.tsx",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(component, /\/free\/generate-title/);
+  assert.match(component, /onBlur=\{\(\) => void generateFreeLessonTitle\(\)\}/);
+  assert.match(component, /freeTitleManuallyEditedRef\.current = true/);
+  assert.match(
+    component,
+    /sourceIsCurrent && !freeTitleManuallyEditedRef\.current/,
+  );
+  assert.match(component, /Puedes escribirlo manualmente/);
+  assert.doesNotMatch(component, /onChange=.*generateFreeLessonTitle/);
 });
 
 test("Free L1 analysis is optional, retryable and does not replace its existing UI", async () => {
