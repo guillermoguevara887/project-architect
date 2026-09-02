@@ -4,7 +4,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "MemoOS",
     short_name: "MemoOS",
-    description: "Hub personal para Project Architect y Journey.",
+    description: "Hub personal para Proyectos, Journey y aprendizaje.",
     start_url: "/",
     scope: "/",
     display: "standalone",

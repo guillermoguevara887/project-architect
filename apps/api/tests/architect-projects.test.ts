@@ -1,11 +1,21 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import type {
   ArchitectProject,
   ArchitectProjectStore,
   CreateCompetitionInput,
+  CreateProjectInput,
+  CreateProjectLinkInput,
+  ProjectLink,
+  ProjectStatus,
+  UpdateProjectInput,
 } from "../src/architect-projects/repository.js";
+import {
+  ProjectTextImproverError,
+  type ProjectTextImprover,
+} from "../src/architect-projects/text-improver.js";
 import type { AuthStore, AuthUser } from "../src/auth/repository.js";
 import { createSessionCookie } from "../src/auth/session.js";
 import { createServer } from "../src/create-server.js";
@@ -40,16 +50,48 @@ class MemoryAuthStore implements AuthStore {
   }
 }
 
+function projectRecord(
+  input: CreateProjectInput,
+  overrides: Partial<ArchitectProject> = {},
+): ArchitectProject {
+  const now = new Date();
+  return {
+    id: randomUUID(),
+    userId: input.userId,
+    projectType: "project",
+    sourceText: input.sourceText,
+    officialUrl: null,
+    analysisStatus: "pending",
+    structuredData: null,
+    name: input.name,
+    objective: input.objective,
+    status: input.status,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  };
+}
+
 class MemoryArchitectProjectStore implements ArchitectProjectStore {
   readonly projects: ArchitectProject[] = [];
+  readonly links: ProjectLink[] = [];
 
-  async listForUser(userId: string) {
+  async listForUser(userId: string, status?: ProjectStatus) {
     return this.projects
-      .filter((project) => project.userId === userId)
+      .filter(
+        (project) =>
+          project.userId === userId && (!status || project.status === status),
+      )
       .sort(
         (first, second) =>
-          second.createdAt.getTime() - first.createdAt.getTime(),
+          second.updatedAt.getTime() - first.updatedAt.getTime(),
       );
+  }
+
+  async createProject(input: CreateProjectInput) {
+    const project = projectRecord(input);
+    this.projects.push(project);
+    return project;
   }
 
   async createCompetition(input: CreateCompetitionInput) {
@@ -62,10 +104,12 @@ class MemoryArchitectProjectStore implements ArchitectProjectStore {
       officialUrl: input.officialUrl,
       analysisStatus: "pending",
       structuredData: null,
+      name: null,
+      objective: null,
+      status: null,
       createdAt: now,
       updatedAt: now,
     };
-
     this.projects.push(project);
     return project;
   }
@@ -77,241 +121,511 @@ class MemoryArchitectProjectStore implements ArchitectProjectStore {
       ) ?? null
     );
   }
+
+  async updateForUser(
+    projectId: string,
+    userId: string,
+    input: UpdateProjectInput,
+  ) {
+    const index = this.projects.findIndex(
+      (project) => project.id === projectId && project.userId === userId,
+    );
+    if (index < 0) return null;
+
+    const updated = {
+      ...this.projects[index]!,
+      name: input.name,
+      sourceText: input.sourceText,
+      objective: input.objective,
+      status: input.status,
+      updatedAt: new Date(),
+    };
+    this.projects[index] = updated;
+    return updated;
+  }
+
+  async listLinksForProject(projectId: string, userId: string) {
+    const project = await this.findByIdForUser(projectId, userId);
+    return project
+      ? this.links.filter((link) => link.projectId === projectId)
+      : [];
+  }
+
+  async createLink(input: CreateProjectLinkInput) {
+    const project = await this.findByIdForUser(input.projectId, input.userId);
+    if (!project) return null;
+
+    const link: ProjectLink = {
+      id: randomUUID(),
+      projectId: input.projectId,
+      name: input.name,
+      url: input.url,
+      createdAt: new Date(),
+    };
+    this.links.push(link);
+    const projectIndex = this.projects.findIndex(
+      (storedProject) => storedProject.id === input.projectId,
+    );
+    if (projectIndex >= 0) {
+      this.projects[projectIndex] = {
+        ...this.projects[projectIndex]!,
+        updatedAt: new Date(),
+      };
+    }
+    return link;
+  }
+
+  async deleteLink(projectId: string, linkId: string, userId: string) {
+    const project = await this.findByIdForUser(projectId, userId);
+    if (!project) return false;
+    const index = this.links.findIndex(
+      (link) => link.id === linkId && link.projectId === projectId,
+    );
+    if (index < 0) return false;
+    this.links.splice(index, 1);
+    const projectIndex = this.projects.findIndex(
+      (storedProject) => storedProject.id === projectId,
+    );
+    if (projectIndex >= 0) {
+      this.projects[projectIndex] = {
+        ...this.projects[projectIndex]!,
+        updatedAt: new Date(),
+      };
+    }
+    return true;
+  }
+}
+
+class StubTextImprover implements ProjectTextImprover {
+  readonly inputs: string[] = [];
+
+  constructor(
+    private readonly result: string | ProjectTextImproverError =
+      "Texto claro y profesional.",
+  ) {}
+
+  async improve(text: string) {
+    this.inputs.push(text);
+    if (this.result instanceof ProjectTextImproverError) throw this.result;
+    return this.result;
+  }
 }
 
 function sessionCookie(userId: string) {
   return createSessionCookie(userId).split(";", 1)[0];
 }
 
-function testServer(projectStore = new MemoryArchitectProjectStore()) {
+function testServer(
+  projectStore = new MemoryArchitectProjectStore(),
+  textImprover = new StubTextImprover(),
+) {
   return {
     projectStore,
+    textImprover,
     server: createServer(
       {},
       {
         authStore: new MemoryAuthStore(),
         architectProjectStore: projectStore,
+        projectTextImprover: textImprover,
       },
     ),
   };
 }
 
-test("an unauthenticated user cannot list, create or read a competition", async () => {
-  const { projectStore, server } = testServer();
+const validProject = {
+  name: "Automatización de recibos",
+  sourceText: "Aplicación para registrar gastos desde una fotografía.",
+  objective: "Guardar un gasto estructurado desde un recibo.",
+  status: "in_progress" as const,
+};
 
-  try {
-    const creation = await server.inject({
-      method: "POST",
-      url: "/architect/projects",
-      payload: { sourceText: "Competition information" },
-    });
-    const listing = await server.inject({
-      method: "GET",
-      url: "/architect/projects",
-    });
-    const lookup = await server.inject({
-      method: "GET",
-      url: `/architect/projects/${randomUUID()}`,
-    });
-
-    assert.equal(listing.statusCode, 401);
-    assert.equal(creation.statusCode, 401);
-    assert.equal(lookup.statusCode, 401);
-    assert.equal(projectStore.projects.length, 0);
-  } finally {
-    await server.close();
-  }
-});
-
-test("projects are listed newest first and only for the session user", async () => {
-  const { projectStore, server } = testServer();
-  const ownerCookie = sessionCookie(firstUser.id);
-  const otherCookie = sessionCookie(secondUser.id);
-  const olderOwnerProject: ArchitectProject = {
-    id: randomUUID(),
-    userId: firstUser.id,
-    projectType: "competition",
-    sourceText: "Older owner competition",
-    officialUrl: null,
-    analysisStatus: "pending",
-    structuredData: null,
-    createdAt: new Date("2026-01-01T10:00:00.000Z"),
-    updatedAt: new Date("2026-01-01T10:00:00.000Z"),
-  };
-  const otherUserProject: ArchitectProject = {
-    ...olderOwnerProject,
-    id: randomUUID(),
-    userId: secondUser.id,
-    sourceText: "Other user's competition",
-    createdAt: new Date("2026-03-01T10:00:00.000Z"),
-    updatedAt: new Date("2026-03-01T10:00:00.000Z"),
-  };
-  const newerOwnerProject: ArchitectProject = {
-    ...olderOwnerProject,
-    id: randomUUID(),
-    projectType: "project",
-    sourceText: "Newer owner project",
-    createdAt: new Date("2026-02-01T10:00:00.000Z"),
-    updatedAt: new Date("2026-02-01T10:00:00.000Z"),
-  };
-
-  projectStore.projects.push(
-    olderOwnerProject,
-    otherUserProject,
-    newerOwnerProject,
-  );
-
-  try {
-    const ownerListing = await server.inject({
-      method: "GET",
-      url: "/architect/projects",
-      headers: { cookie: ownerCookie },
-    });
-    const otherListing = await server.inject({
-      method: "GET",
-      url: "/architect/projects",
-      headers: { cookie: otherCookie },
-    });
-
-    assert.equal(ownerListing.statusCode, 200);
-    assert.deepEqual(
-      ownerListing
-        .json()
-        .projects.map((project: { id: string }) => project.id),
-      [newerOwnerProject.id, olderOwnerProject.id],
-    );
-    assert.equal(ownerListing.json().projects[0].projectType, "project");
-    assert.equal(ownerListing.json().projects[0].userId, undefined);
-    assert.deepEqual(
-      otherListing
-        .json()
-        .projects.map((project: { id: string }) => project.id),
-      [otherUserProject.id],
-    );
-  } finally {
-    await server.close();
-  }
-});
-
-test("competition input requires text and accepts only optional HTTP URLs", async () => {
+test("authentication is required for project and tool operations", async () => {
   const { server } = testServer();
-  const cookie = sessionCookie(firstUser.id);
+  const projectId = randomUUID();
+  const linkId = randomUUID();
 
   try {
-    const emptyText = await server.inject({
-      method: "POST",
-      url: "/architect/projects",
-      headers: { cookie },
-      payload: { sourceText: "   " },
-    });
-    const invalidUrl = await server.inject({
-      method: "POST",
-      url: "/architect/projects",
-      headers: { cookie },
-      payload: {
-        sourceText: "Competition information",
-        officialUrl: "ftp://example.com/competition",
-      },
-    });
-    const noUrl = await server.inject({
-      method: "POST",
-      url: "/architect/projects",
-      headers: { cookie },
-      payload: { sourceText: "Competition without a URL" },
-    });
-
-    assert.equal(emptyText.statusCode, 400);
-    assert.equal(emptyText.json().error, "SOURCE_TEXT_REQUIRED");
-    assert.equal(invalidUrl.statusCode, 400);
-    assert.equal(invalidUrl.json().error, "INVALID_OFFICIAL_URL");
-    assert.equal(noUrl.statusCode, 201);
-    assert.equal(noUrl.json().project.officialUrl, null);
+    const responses = await Promise.all([
+      server.inject({ method: "GET", url: "/architect/projects" }),
+      server.inject({ method: "POST", url: "/architect/projects", payload: validProject }),
+      server.inject({ method: "GET", url: `/architect/projects/${projectId}` }),
+      server.inject({ method: "PATCH", url: `/architect/projects/${projectId}`, payload: validProject }),
+      server.inject({ method: "POST", url: `/architect/projects/${projectId}/links`, payload: { name: "GitHub", url: "https://github.com/example/project" } }),
+      server.inject({ method: "DELETE", url: `/architect/projects/${projectId}/links/${linkId}` }),
+      server.inject({ method: "POST", url: "/architect/projects/improve-text", payload: { text: "hola" } }),
+    ]);
+    assert.ok(responses.every((response) => response.statusCode === 401));
   } finally {
     await server.close();
   }
 });
 
-test("a competition is created with the session user and pending values", async () => {
+test("a project is created for the session user with normalized fields", async () => {
   const { projectStore, server } = testServer();
-  const cookie = sessionCookie(firstUser.id);
 
   try {
     const response = await server.inject({
       method: "POST",
       url: "/architect/projects",
-      headers: { cookie },
+      headers: { cookie: sessionCookie(firstUser.id) },
       payload: {
-        sourceText: "  Build an accessible public-service prototype.  ",
-        officialUrl: "https://example.com/competition",
+        ...validProject,
+        name: `  ${validProject.name}  `,
         userId: secondUser.id,
       },
     });
 
     assert.equal(response.statusCode, 201);
-    assert.equal(projectStore.projects.length, 1);
     assert.equal(projectStore.projects[0]?.userId, firstUser.id);
-    assert.equal(projectStore.projects[0]?.projectType, "competition");
-    assert.equal(
-      projectStore.projects[0]?.sourceText,
-      "Build an accessible public-service prototype.",
-    );
-    assert.equal(
-      projectStore.projects[0]?.officialUrl,
-      "https://example.com/competition",
-    );
-    assert.equal(projectStore.projects[0]?.analysisStatus, "pending");
-    assert.equal(projectStore.projects[0]?.structuredData, null);
+    assert.equal(projectStore.projects[0]?.name, validProject.name);
+    assert.equal(response.json().project.status, "in_progress");
+    assert.equal(response.json().project.userId, undefined);
+    assert.deepEqual(response.json().project.links, []);
   } finally {
     await server.close();
   }
 });
 
-test("a competition can be reloaded only by its owning user", async () => {
-  const { server } = testServer();
-  const ownerCookie = sessionCookie(firstUser.id);
-  const otherCookie = sessionCookie(secondUser.id);
+test("projects list newest updates first, filters states, and isolates owners", async () => {
+  const { projectStore, server } = testServer();
+  projectStore.projects.push(
+    projectRecord(
+      { userId: firstUser.id, ...validProject, status: "idea" },
+      { updatedAt: new Date("2026-01-01T10:00:00.000Z") },
+    ),
+    projectRecord(
+      { userId: secondUser.id, ...validProject, status: "completed" },
+      { updatedAt: new Date("2026-04-01T10:00:00.000Z") },
+    ),
+    projectRecord(
+      { userId: firstUser.id, ...validProject, status: "completed" },
+      { updatedAt: new Date("2026-03-01T10:00:00.000Z") },
+    ),
+  );
 
   try {
+    const all = await server.inject({
+      method: "GET",
+      url: "/architect/projects",
+      headers: { cookie: sessionCookie(firstUser.id) },
+    });
+    const completed = await server.inject({
+      method: "GET",
+      url: "/architect/projects?status=completed",
+      headers: { cookie: sessionCookie(firstUser.id) },
+    });
+
+    assert.equal(all.statusCode, 200);
+    assert.deepEqual(
+      all.json().projects.map((project: { status: string }) => project.status),
+      ["completed", "idea"],
+    );
+    assert.equal(completed.json().projects.length, 1);
+    assert.equal(completed.json().projects[0].status, "completed");
+  } finally {
+    await server.close();
+  }
+});
+
+test("project detail and updates are available only to the owner", async () => {
+  const { projectStore, server } = testServer();
+  const project = projectRecord({ userId: firstUser.id, ...validProject });
+  projectStore.projects.push(project);
+
+  try {
+    const ownerDetail = await server.inject({
+      method: "GET",
+      url: `/architect/projects/${project.id}`,
+      headers: { cookie: sessionCookie(firstUser.id) },
+    });
+    const foreignDetail = await server.inject({
+      method: "GET",
+      url: `/architect/projects/${project.id}`,
+      headers: { cookie: sessionCookie(secondUser.id) },
+    });
+    const foreignUpdate = await server.inject({
+      method: "PATCH",
+      url: `/architect/projects/${project.id}`,
+      headers: { cookie: sessionCookie(secondUser.id) },
+      payload: { ...validProject, name: "Intrusión" },
+    });
+    const ownerUpdate = await server.inject({
+      method: "PATCH",
+      url: `/architect/projects/${project.id}`,
+      headers: { cookie: sessionCookie(firstUser.id) },
+      payload: { ...validProject, name: "Proyecto actualizado", status: "completed" },
+    });
+
+    assert.equal(ownerDetail.statusCode, 200);
+    assert.equal(foreignDetail.statusCode, 404);
+    assert.equal(foreignUpdate.statusCode, 404);
+    assert.equal(ownerUpdate.statusCode, 200);
+    assert.equal(ownerUpdate.json().project.name, "Proyecto actualizado");
+    assert.equal(ownerUpdate.json().project.status, "completed");
+  } finally {
+    await server.close();
+  }
+});
+
+test("tools can be created and deleted only through their owning project", async () => {
+  const { projectStore, server } = testServer();
+  const project = projectRecord({ userId: firstUser.id, ...validProject });
+  projectStore.projects.push(project);
+
+  try {
+    const foreignCreate = await server.inject({
+      method: "POST",
+      url: `/architect/projects/${project.id}/links`,
+      headers: { cookie: sessionCookie(secondUser.id) },
+      payload: { name: "GitHub", url: "https://github.com/example/project" },
+    });
     const creation = await server.inject({
       method: "POST",
-      url: "/architect/projects",
-      headers: { cookie: ownerCookie },
-      payload: { sourceText: "Reloadable competition" },
+      url: `/architect/projects/${project.id}/links`,
+      headers: { cookie: sessionCookie(firstUser.id) },
+      payload: { name: "GitHub", url: "https://github.com/example/project" },
     });
-    const projectId = creation.json().project.id as string;
+    const linkId = creation.json().link.id as string;
+    const foreignDelete = await server.inject({
+      method: "DELETE",
+      url: `/architect/projects/${project.id}/links/${linkId}`,
+      headers: { cookie: sessionCookie(secondUser.id) },
+    });
+    const ownerDelete = await server.inject({
+      method: "DELETE",
+      url: `/architect/projects/${project.id}/links/${linkId}`,
+      headers: { cookie: sessionCookie(firstUser.id) },
+    });
 
-    const ownerLookup = await server.inject({
-      method: "GET",
-      url: `/architect/projects/${projectId}`,
-      headers: { cookie: ownerCookie },
-    });
-    const otherLookup = await server.inject({
-      method: "GET",
-      url: `/architect/projects/${projectId}`,
-      headers: { cookie: otherCookie },
-    });
-
-    assert.equal(ownerLookup.statusCode, 200);
-    assert.equal(ownerLookup.json().project.id, projectId);
-    assert.equal(ownerLookup.json().project.sourceText, "Reloadable competition");
-    assert.equal(otherLookup.statusCode, 404);
+    assert.equal(foreignCreate.statusCode, 404);
+    assert.equal(creation.statusCode, 201);
+    assert.equal(creation.json().link.name, "GitHub");
+    assert.equal(foreignDelete.statusCode, 404);
+    assert.equal(ownerDelete.statusCode, 204);
+    assert.equal(projectStore.links.length, 0);
   } finally {
     await server.close();
   }
 });
 
-test("the API health route remains available", async () => {
-  const { server } = testServer();
+test("text improvement sends only the requested field text to the injected provider", async () => {
+  const improver = new StubTextImprover("Una versión mejorada.");
+  const { server } = testServer(new MemoryArchitectProjectStore(), improver);
 
   try {
-    const response = await server.inject({ method: "GET", url: "/health" });
+    const response = await server.inject({
+      method: "POST",
+      url: "/architect/projects/improve-text",
+      headers: { cookie: sessionCookie(firstUser.id) },
+      payload: { text: "  una idea repetida repetida  ", ignored: "no enviar" },
+    });
 
     assert.equal(response.statusCode, 200);
-    assert.deepEqual(response.json(), {
-      status: "ok",
-      service: "memoos-api",
-    });
+    assert.deepEqual(improver.inputs, ["una idea repetida repetida"]);
+    assert.deepEqual(response.json(), { improvedText: "Una versión mejorada." });
   } finally {
     await server.close();
   }
+});
+
+test("text improvement validates input and maps configuration and provider errors", async () => {
+  const cookie = sessionCookie(firstUser.id);
+  const missing = testServer(
+    new MemoryArchitectProjectStore(),
+    new StubTextImprover(new ProjectTextImproverError("not_configured")),
+  );
+  const provider = testServer(
+    new MemoryArchitectProjectStore(),
+    new StubTextImprover(new ProjectTextImproverError("provider_error")),
+  );
+
+  try {
+    const empty = await missing.server.inject({
+      method: "POST",
+      url: "/architect/projects/improve-text",
+      headers: { cookie },
+      payload: { text: "   " },
+    });
+    const invalidPayload = await missing.server.inject({
+      method: "POST",
+      url: "/architect/projects/improve-text",
+      headers: { cookie },
+      payload: { text: 42 },
+    });
+    const tooLong = await missing.server.inject({
+      method: "POST",
+      url: "/architect/projects/improve-text",
+      headers: { cookie },
+      payload: { text: "a".repeat(10_001) },
+    });
+    const notConfigured = await missing.server.inject({
+      method: "POST",
+      url: "/architect/projects/improve-text",
+      headers: { cookie },
+      payload: { text: "Texto" },
+    });
+    const unavailable = await provider.server.inject({
+      method: "POST",
+      url: "/architect/projects/improve-text",
+      headers: { cookie },
+      payload: { text: "Texto" },
+    });
+
+    assert.equal(empty.statusCode, 400);
+    assert.equal(invalidPayload.statusCode, 400);
+    assert.equal(invalidPayload.json().error, "PROJECT_TEXT_REQUIRED");
+    assert.equal(tooLong.statusCode, 400);
+    assert.equal(tooLong.json().error, "PROJECT_TEXT_TOO_LONG");
+    assert.equal(notConfigured.statusCode, 503);
+    assert.equal(notConfigured.json().error, "AI_NOT_CONFIGURED");
+    assert.equal(unavailable.statusCode, 502);
+    assert.equal(unavailable.json().error, "AI_UNAVAILABLE");
+  } finally {
+    await missing.server.close();
+    await provider.server.close();
+  }
+});
+
+test("legacy competitions remain readable without rewriting historical rows", async () => {
+  const { server } = testServer();
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/architect/projects",
+      headers: { cookie: sessionCookie(firstUser.id) },
+      payload: {
+        sourceText: "Concurso heredado\nMás información",
+        officialUrl: "https://example.com/competition",
+      },
+    });
+
+    assert.equal(response.statusCode, 201);
+    assert.equal(response.json().project.name, "Concurso heredado");
+    assert.equal(response.json().project.status, "idea");
+    assert.equal(response.json().project.officialUrl, "https://example.com/competition");
+  } finally {
+    await server.close();
+  }
+});
+
+test("pre-0018 rows have safe feed fields and normalized status filters", async () => {
+  const { projectStore, server } = testServer();
+  const historicalCompetition = projectRecord(
+    { userId: firstUser.id, ...validProject, status: "idea" },
+    {
+      projectType: "competition",
+      name: null,
+      sourceText: "Concurso histórico\nResumen conservado",
+      objective: null,
+      status: null,
+      officialUrl: "https://example.com/historical",
+      updatedAt: new Date("2026-03-01T10:00:00.000Z"),
+    },
+  );
+  const historicalCompleted = projectRecord(
+    { userId: firstUser.id, ...validProject, status: "idea" },
+    {
+      name: null,
+      sourceText: "Proyecto analizado",
+      objective: null,
+      status: null,
+      analysisStatus: "completed",
+      structuredData: { preserved: true },
+      updatedAt: new Date("2026-02-01T10:00:00.000Z"),
+    },
+  );
+  const historicalBlank = projectRecord(
+    { userId: firstUser.id, ...validProject, status: "idea" },
+    {
+      name: null,
+      sourceText: null,
+      objective: null,
+      status: null,
+      updatedAt: new Date("2026-01-01T10:00:00.000Z"),
+    },
+  );
+  projectStore.projects.push(
+    historicalCompetition,
+    historicalCompleted,
+    historicalBlank,
+  );
+  const cookie = sessionCookie(firstUser.id);
+
+  try {
+    const all = await server.inject({
+      method: "GET",
+      url: "/architect/projects",
+      headers: { cookie },
+    });
+    const ideas = await server.inject({
+      method: "GET",
+      url: "/architect/projects?status=idea",
+      headers: { cookie },
+    });
+    const completed = await server.inject({
+      method: "GET",
+      url: "/architect/projects?status=completed",
+      headers: { cookie },
+    });
+
+    assert.equal(all.statusCode, 200);
+    assert.deepEqual(
+      all.json().projects.map(
+        (project: {
+          name: string;
+          description: string;
+          objective: string;
+          status: string;
+        }) => ({
+          name: project.name,
+          description: project.description,
+          objective: project.objective,
+          status: project.status,
+        }),
+      ),
+      [
+        {
+          name: "Concurso histórico",
+          description: "Concurso histórico\nResumen conservado",
+          objective: "",
+          status: "idea",
+        },
+        {
+          name: "Proyecto analizado",
+          description: "Proyecto analizado",
+          objective: "",
+          status: "completed",
+        },
+        {
+          name: "Proyecto sin nombre",
+          description: "",
+          objective: "",
+          status: "idea",
+        },
+      ],
+    );
+    assert.deepEqual(
+      ideas.json().projects.map((project: { id: string }) => project.id),
+      [historicalCompetition.id, historicalBlank.id],
+    );
+    assert.deepEqual(
+      completed.json().projects.map((project: { id: string }) => project.id),
+      [historicalCompleted.id],
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("the Proyectos migration is additive and preserves historical columns", async () => {
+  const migration = await readFile(
+    new URL("../drizzle/0018_transform_architect_projects_to_projects.sql", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(migration, /ADD COLUMN "name" text/);
+  assert.match(migration, /CREATE TABLE "project_links"/);
+  assert.doesNotMatch(migration, /(?:^|;)\s*(?:DROP|DELETE|TRUNCATE)\b/im);
 });

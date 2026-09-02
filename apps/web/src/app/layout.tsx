@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "MemoOS",
-  description: "Hub personal para Project Architect y Journey.",
+  description: "Hub personal para Proyectos, Journey y aprendizaje.",
   applicationName: "MemoOS",
   appleWebApp: {
     capable: true,

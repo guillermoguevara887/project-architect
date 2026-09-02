@@ -1,5 +1,5 @@
-import { ProjectPendingScreen } from "@/components/project-pending-screen";
+import { redirect } from "next/navigation";
 
 export default function PendingProjectPage() {
-  return <ProjectPendingScreen />;
+  redirect("/projects/new");
 }

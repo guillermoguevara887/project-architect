@@ -251,6 +251,8 @@ export type ArchitectProjectType = "project" | "competition";
 
 export type ArchitectAnalysisStatus = "pending" | "completed" | "failed";
 
+export type ArchitectProjectStatus = "idea" | "in_progress" | "completed";
+
 export const architectProjects = pgTable(
   "architect_projects",
   {
@@ -266,6 +268,9 @@ export const architectProjects = pgTable(
       .default("pending")
       .notNull(),
     structuredData: jsonb("structured_data").$type<Record<string, unknown>>(),
+    name: text("name"),
+    objective: text("objective"),
+    status: text("status").$type<ArchitectProjectStatus>(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -289,6 +294,10 @@ export const architectProjects = pgTable(
     completedDataCheck: check(
       "architect_projects_completed_data_check",
       sql`${table.analysisStatus} <> 'completed' or ${table.structuredData} is not null`,
+    ),
+    statusCheck: check(
+      "architect_projects_status_check",
+      sql`${table.status} is null or ${table.status} in ('idea', 'in_progress', 'completed')`,
     ),
   }),
 );
@@ -415,6 +424,27 @@ export const exercises = pgTable(
     guideGenerationCountCheck: check(
       "exercises_guide_generation_count_check",
       sql`${table.guideGenerationCount} between 0 and 2`,
+    ),
+  }),
+);
+
+export const projectLinks = pgTable(
+  "project_links",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => architectProjects.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    url: text("url").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    projectCreatedAtIdx: index("project_links_project_created_at_idx").on(
+      table.projectId,
+      table.createdAt,
     ),
   }),
 );

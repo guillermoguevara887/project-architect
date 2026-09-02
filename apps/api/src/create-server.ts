@@ -9,6 +9,10 @@ import {
 } from "./architect-projects/repository.js";
 import { registerArchitectProjectRoutes } from "./architect-projects/routes.js";
 import {
+  projectTextImprover,
+  type ProjectTextImprover,
+} from "./architect-projects/text-improver.js";
+import {
   accountStore,
   type AccountStore,
 } from "./account/repository.js";
@@ -73,6 +77,7 @@ type ServerDependencies = {
   accountNow?: () => Date;
   passwordResetTokenGenerator?: () => string;
   architectProjectStore?: ArchitectProjectStore;
+  projectTextImprover?: ProjectTextImprover;
   journeyStore?: JourneyStore;
   exerciseStore?: ExerciseStore;
   exerciseTutor?: ExerciseTutor;
@@ -180,6 +185,7 @@ export function configureServer(
     server,
     dependencies.architectProjectStore ?? architectProjectStore,
     configuredAuthStore,
+    dependencies.projectTextImprover ?? projectTextImprover,
   );
   registerJourneyRoutes(
     server,

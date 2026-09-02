@@ -63,8 +63,8 @@ export function CompetitionFormScreen() {
   return (
     <main className="flow-shell">
       <section className="flow-card" aria-labelledby="competition-form-title">
-        <p className="brand">Project Architect</p>
-        <Link className="back-link" href="/projects/new">
+        <p className="brand">Proyectos</p>
+        <Link className="back-link" href="/projects">
           Volver
         </Link>
         <h1 id="competition-form-title">Información del concurso</h1>

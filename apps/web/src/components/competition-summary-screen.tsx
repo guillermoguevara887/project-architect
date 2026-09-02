@@ -95,7 +95,7 @@ export function CompetitionSummaryScreen({ projectId }: { projectId: string }) {
     return (
       <main className="flow-shell">
         <section className="flow-card">
-          <p className="brand">Project Architect</p>
+          <p className="brand">Proyectos</p>
           <p className="form-error" role="alert">
             {error}
           </p>
@@ -110,7 +110,7 @@ export function CompetitionSummaryScreen({ projectId }: { projectId: string }) {
   return (
     <main className="flow-shell">
       <article className="flow-card summary-card" aria-labelledby="summary-title">
-        <p className="brand">Project Architect</p>
+        <p className="brand">Proyectos</p>
         <Link className="back-link" href="/dashboard">
           Volver al Dashboard
         </Link>

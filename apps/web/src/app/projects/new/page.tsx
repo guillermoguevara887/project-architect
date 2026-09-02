@@ -1,5 +1,5 @@
-import { NewProjectScreen } from "@/components/new-project-screen";
+import { ProjectFormScreen } from "@/components/project-form-screen";
 
 export default function NewProjectPage() {
-  return <NewProjectScreen />;
+  return <ProjectFormScreen />;
 }

@@ -96,7 +96,7 @@ export function NewProjectScreen() {
   return (
     <main className="flow-shell">
       <section className="flow-card" aria-labelledby="new-project-title">
-        <p className="brand">Project Architect</p>
+        <p className="brand">Proyectos</p>
         <Link className="back-link" href="/dashboard">
           Volver al Dashboard
         </Link>
@@ -132,7 +132,7 @@ export function NewProjectScreen() {
 
           {projects?.length === 0 ? (
             <div className="empty-state architect-empty-state">
-              <p>Todavía no tienes proyectos en Project Architect.</p>
+              <p>Todavía no tienes proyectos.</p>
             </div>
           ) : null}
 

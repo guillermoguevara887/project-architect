@@ -1,8 +1,8 @@
 # MemoOS
 
 MemoOS es el hub personal que reúne módulos independientes bajo un Dashboard
-protegido. El workspace conserva Project Architect como módulo para proyectos
-generales e incorpora Journey como módulo dedicado al recorrido de ideas para
+protegido. El workspace conserva el módulo Proyectos sobre la arquitectura de
+Project Architect e incorpora Journey como módulo dedicado al recorrido de ideas para
 videos de YouTube.
 
 ## Aplicaciones
@@ -16,9 +16,9 @@ se conecta directamente a PostgreSQL.
 
 ## Módulos
 
-### Project Architect
+### Proyectos
 
-Project Architect se conserva como módulo independiente bajo las rutas
+Proyectos reutiliza Project Architect como módulo independiente bajo las rutas
 `/projects/*` y los endpoints `/architect/*`.
 
 ### Journey
@@ -64,12 +64,14 @@ RESEND_API_KEY=re_replace-with-a-resend-api-key
 PASSWORD_RESET_FROM_EMAIL=MemoOS <no-reply@example.com>
 OPENAI_API_KEY=replace-with-a-server-side-api-key
 OPENAI_LANGUAGE_MODEL=gpt-5.4-mini
+OPENAI_PROJECT_TEXT_MODEL=gpt-5.4-mini
 ```
 
 En Railway, la API también acepta la variable `PORT` proporcionada por la
-plataforma. `OPENAI_API_KEY` y `OPENAI_LANGUAGE_MODEL` pertenecen únicamente al
-entorno del backend; nunca deben exponerse mediante variables `NEXT_PUBLIC_*`.
-El modelo es configurable y usa `gpt-5.4-mini` por defecto.
+plataforma. `OPENAI_API_KEY`, `OPENAI_LANGUAGE_MODEL` y
+`OPENAI_PROJECT_TEXT_MODEL` pertenecen únicamente al entorno del backend; nunca
+deben exponerse mediante variables `NEXT_PUBLIC_*`. Los modelos son
+configurables y usan `gpt-5.4-mini` por defecto.
 
 La recuperación de contraseña usa Resend desde la API. `APP_URL` es el origen
 público del frontend incluido en el enlace, `PASSWORD_RESET_FROM_EMAIL` debe ser
@@ -117,7 +119,8 @@ histórico y todas las migraciones existentes.
 Migraciones de los incrementos actuales:
 
 - `0002_create_users.sql`: autenticación por username y password.
-- `0003_create_architect_projects.sql`: persistencia de Project Architect.
+- `0003_create_architect_projects.sql`: persistencia histórica de Project Architect.
+- `0018_transform_architect_projects_to_projects.sql`: campos de Proyectos y herramientas.
 - `0004_create_journey.sql`: ideas y entradas del diario de Journey.
 - `0005_create_languages.sql`: proyectos y lecciones del módulo Idiomas.
 - `0006_structure_language_lessons.sql`: estado y contenido JSON estructurado de

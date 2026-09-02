@@ -100,10 +100,10 @@ export function DashboardScreen() {
         <section className="modules-section" aria-labelledby="modules-title">
           <h2 id="modules-title">Módulos</h2>
           <div className="module-grid">
-            <Link className="module-card" href="/projects/new">
-              <span className="module-label">Proyectos generales</span>
-              <strong>Project Architect</strong>
-              <p>Define y organiza proyectos y concursos.</p>
+            <Link className="module-card" href="/projects">
+              <span className="module-label">Proyectos técnicos</span>
+              <strong>Proyectos</strong>
+              <p>Organiza cada proyecto y reúne sus herramientas.</p>
             </Link>
 
             <Link className="module-card" href="/journey">

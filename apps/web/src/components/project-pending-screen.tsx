@@ -17,7 +17,7 @@ export function ProjectPendingScreen() {
   return (
     <main className="flow-shell">
       <section className="flow-card" aria-labelledby="pending-project-title">
-        <p className="brand">Project Architect</p>
+        <p className="brand">Proyectos</p>
         <h1 id="pending-project-title">Proyecto</h1>
         <p className="flow-message">Flujo de proyecto pendiente.</p>
         <Link className="primary-link" href="/projects/new">

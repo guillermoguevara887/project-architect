@@ -1739,7 +1739,10 @@ test("lesson split relationship migration preserves roots and enforces A/B child
   const partBId = "77000000-0000-4000-8000-000000000007";
 
   try {
-    assert.equal(migrationIndex, migrations.length - 1);
+    assert.equal(
+      migrations[migrationIndex + 1]?.id,
+      "0018_transform_architect_projects_to_projects.sql",
+    );
     assert.deepEqual(
       await migratePending(database, before),
       before.map(({ id }) => id),
@@ -2397,5 +2400,204 @@ test("very simplification repository claims children and preserves Base, previou
     if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
     else process.env.DATABASE_URL = previousDatabaseUrl;
     await migrationDatabase.close();
+  }
+});
+
+test("Proyectos migration preserves historical projects and enforces link direction", async () => {
+  const isolatedUrl = await createIsolatedDatabase("proyectos_migration");
+  const database = createPostgresMigrationDatabase(isolatedUrl);
+  const migrations = await loadMigrationFiles(migrationDirectory);
+  const migrationId = "0018_transform_architect_projects_to_projects.sql";
+  const migrationIndex = migrations.findIndex(({ id }) => id === migrationId);
+  const before = migrations.slice(0, migrationIndex);
+  const through = migrations.slice(0, migrationIndex + 1);
+  const userId = "80000000-0000-4000-8000-000000000001";
+  const historicalProjectId = "80000000-0000-4000-8000-000000000002";
+
+  try {
+    assert.equal(migrationIndex, migrations.length - 1);
+    assert.deepEqual(
+      await migratePending(database, before),
+      before.map(({ id }) => id),
+    );
+
+    await withSql(isolatedUrl, async (sql) => {
+      await sql`
+        INSERT INTO users (id, username, password_hash)
+        VALUES (${userId}, 'historical-project-user', 'not-a-real-hash')
+      `;
+      await sql`
+        INSERT INTO architect_projects (
+          id, user_id, project_type, source_text, official_url,
+          analysis_status, structured_data
+        ) VALUES (
+          ${historicalProjectId}, ${userId}, 'competition',
+          'Concurso histórico', 'https://example.com/competition',
+          'pending', null
+        )
+      `;
+    });
+
+    assert.deepEqual(await migratePending(database, through), [migrationId]);
+
+    const state = await withSql(isolatedUrl, async (sql) => {
+      const columns = await sql<
+        Array<{ columnName: string; dataType: string; isNullable: string }>
+      >`
+        SELECT column_name AS "columnName", data_type AS "dataType",
+               is_nullable AS "isNullable"
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'architect_projects'
+          AND column_name IN ('name', 'objective', 'status')
+        ORDER BY column_name
+      `;
+      const [historical] = await sql<
+        Array<{
+          name: string | null;
+          objective: string | null;
+          status: string | null;
+          sourceText: string | null;
+          officialUrl: string | null;
+          analysisStatus: string;
+        }>
+      >`
+        SELECT name, objective, status, source_text AS "sourceText",
+               official_url AS "officialUrl",
+               analysis_status AS "analysisStatus"
+        FROM architect_projects
+        WHERE id = ${historicalProjectId}
+      `;
+      const [tableState] = await sql<Array<{ exists: boolean }>>`
+        SELECT to_regclass('public.project_links') IS NOT NULL AS exists
+      `;
+      const [foreignKey] = await sql<
+        Array<{
+          foreignTable: string;
+          deleteRule: string;
+        }>
+      >`
+        SELECT ccu.table_name AS "foreignTable",
+               rc.delete_rule AS "deleteRule"
+        FROM information_schema.table_constraints AS tc
+        JOIN information_schema.referential_constraints AS rc
+          ON rc.constraint_schema = tc.constraint_schema
+         AND rc.constraint_name = tc.constraint_name
+        JOIN information_schema.constraint_column_usage AS ccu
+          ON ccu.constraint_schema = tc.constraint_schema
+         AND ccu.constraint_name = tc.constraint_name
+        WHERE tc.table_schema = 'public'
+          AND tc.table_name = 'project_links'
+          AND tc.constraint_type = 'FOREIGN KEY'
+      `;
+      const indexes = await sql<Array<{ indexName: string }>>`
+        SELECT indexname AS "indexName"
+        FROM pg_indexes
+        WHERE schemaname = 'public'
+          AND tablename = 'project_links'
+        ORDER BY indexname
+      `;
+
+      await assert.rejects(
+        sql`
+          UPDATE architect_projects
+          SET status = 'working'
+          WHERE id = ${historicalProjectId}
+        `,
+        /architect_projects_status_check/i,
+      );
+      await assert.rejects(
+        sql`
+          INSERT INTO project_links (project_id, name, url)
+          VALUES (
+            '80000000-0000-4000-8000-000000000099',
+            'Huérfano',
+            'https://example.com/orphan'
+          )
+        `,
+        /project_links_project_id_fkey/i,
+      );
+
+      const [firstLink] = await sql<
+        Array<{ id: string; createdAt: Date }>
+      >`
+        INSERT INTO project_links (project_id, name, url)
+        VALUES (
+          ${historicalProjectId},
+          'GitHub',
+          'https://github.com/example/project'
+        )
+        RETURNING id, created_at AS "createdAt"
+      `;
+      await sql`DELETE FROM project_links WHERE id = ${firstLink!.id}`;
+      const [projectAfterLinkDelete] = await sql<Array<{ count: number }>>`
+        SELECT count(*)::integer AS count
+        FROM architect_projects
+        WHERE id = ${historicalProjectId}
+      `;
+
+      const [cascadeLink] = await sql<Array<{ id: string }>>`
+        INSERT INTO project_links (project_id, name, url)
+        VALUES (
+          ${historicalProjectId},
+          'Notion',
+          'https://notion.so/example'
+        )
+        RETURNING id
+      `;
+      await sql`DELETE FROM architect_projects WHERE id = ${historicalProjectId}`;
+      const [linkAfterProjectDelete] = await sql<Array<{ count: number }>>`
+        SELECT count(*)::integer AS count
+        FROM project_links
+        WHERE id = ${cascadeLink!.id}
+      `;
+
+      return {
+        columns,
+        historical,
+        tableExists: tableState?.exists,
+        foreignKey,
+        indexes,
+        firstLink,
+        projectCountAfterLinkDelete: projectAfterLinkDelete?.count,
+        linkCountAfterProjectDelete: linkAfterProjectDelete?.count,
+      };
+    });
+
+    assert.deepEqual(Array.from(state.columns), [
+      { columnName: "name", dataType: "text", isNullable: "YES" },
+      { columnName: "objective", dataType: "text", isNullable: "YES" },
+      { columnName: "status", dataType: "text", isNullable: "YES" },
+    ]);
+    assert.deepEqual(state.historical, {
+      name: null,
+      objective: null,
+      status: null,
+      sourceText: "Concurso histórico",
+      officialUrl: "https://example.com/competition",
+      analysisStatus: "pending",
+    });
+    assert.equal(state.tableExists, true);
+    assert.deepEqual(state.foreignKey, {
+      foreignTable: "architect_projects",
+      deleteRule: "CASCADE",
+    });
+    assert.deepEqual(
+      Array.from(state.indexes, ({ indexName }) => indexName),
+      ["project_links_pkey", "project_links_project_created_at_idx"],
+    );
+    assert.match(
+      state.firstLink!.id,
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    );
+    assert.ok(state.firstLink!.createdAt instanceof Date);
+    assert.equal(state.projectCountAfterLinkDelete, 1);
+    assert.equal(state.linkCountAfterProjectDelete, 0);
+
+    const report = await getMigrationStatus(database, through);
+    assert.equal(report.historyMode, "current");
+    assert.ok(report.migrations.every(({ state: status }) => status === "applied"));
+  } finally {
+    await database.close();
   }
 });
