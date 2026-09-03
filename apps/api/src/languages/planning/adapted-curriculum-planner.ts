@@ -26,24 +26,20 @@ import {
   validateLanguageDecisionRegistry,
   type LanguageDecisionRegistry,
 } from "../decisions/language-decision-registry.js";
-import {
-  validateLessonSpecForGeneration,
-} from "../generation/generated-lesson.js";
+import { validateLessonSpecForGeneration } from "../generation/generated-lesson.js";
 import {
   lessonSpecSchema,
   validateLessonSpec,
   type LessonSpec,
 } from "../lessons/lesson-spec.js";
 import type { TrustedPlanningBundlePayload } from "../orchestration/repository.js";
+import type { LanguageProfile } from "../profile/language-profile.js";
+import { validateLanguageProfile } from "../profile/language-profile.js";
 import {
   lessonRouteSchema,
   validateLessonRoute,
   type LessonRoute,
 } from "../routing/lesson-route.js";
-import {
-  validateLanguageProfile,
-  type LanguageProfile,
-} from "../profile/language-profile.js";
 
 export type AdaptedCurriculumPlannerInput = {
   curriculum: CurriculumUnitSpec;
@@ -54,14 +50,12 @@ export type AdaptedCurriculumPlannerInput = {
 };
 
 export type PlanningStage = "adapted_unit" | "lesson_route" | "lesson_spec";
-
 export type PlanningStageRecord = {
   stage: PlanningStage;
   artifactRef: string;
   attempts: number;
   validationHistory: CandidateValidationAttempt[];
 };
-
 export type AdaptedCurriculumPlannerResult = {
   bundle: TrustedPlanningBundlePayload;
   stageHistory: PlanningStageRecord[];
@@ -71,9 +65,7 @@ type ParsedPlannerResponse = {
   status?: string;
   output_parsed?: unknown;
   output_text?: string;
-  output?: unknown;
 };
-
 type PlannerRequester = (request: {
   stage: PlanningStage;
   model: string;
@@ -85,95 +77,74 @@ type PlannerRequester = (request: {
 
 const BASE_AUTHORITY = `
 Eres un planificador interno del compilador pedagógico de MemoOS.
-Trabajas solamente con contratos ya validados que aparecen en la entrada.
-No investigues Internet y no uses conocimiento lingüístico externo o memoria implícita.
-No elimines competencias, no inventes hechos lingüísticos y no proyectes categorías de otra lengua.
-Los IDs y versiones upstream son autoridad; conserva trazabilidad exacta.
-El output es sólo un CANDIDATO: status debe ser review y todos los audits deben quedar not_run.
-Nunca marques un artefacto canonical ni un audit pass; MemoOS hará eso después de validarlo.
+Trabajas solamente con contratos ya validados incluidos en la entrada.
+No investigues Internet ni uses conocimiento lingüístico externo o memoria implícita.
+No elimines competencias, no inventes hechos y no proyectes categorías de otra lengua.
+Conserva IDs, versiones y trazabilidad upstream.
+El output es sólo un CANDIDATO: status=review y todos los audits=not_run.
+Nunca marques canonical ni pass; MemoOS lo hará sólo después de validar.
 Devuelve exclusivamente JSON válido, sin Markdown.
 `.trim();
 
 const ADAPTED_UNIT_INSTRUCTIONS = `${BASE_AUTHORITY}
-
-Construye un AdaptedUnitSpec candidato a partir de CurriculumUnitSpec + LanguageProfile + Registry + AdaptationPlan READY.
-Cada capability curricular debe quedar representada y cada paso requerido debe conservarse, fusionarse o transformarse explícitamente.
-Toda realización específica de la lengua debe citar decisiones validated del Registry.
-recognitionRange debe contener productiveCore; deferredScope nunca puede ser productivo.
-La complejidad lingüística puede cambiar scaffolding/granularidad, nunca borrar la misión curricular.`;
-
+Construye un AdaptedUnitSpec desde CurriculumUnitSpec + LanguageProfile + Registry + AdaptationPlan READY.
+Representa cada capability y cada paso curricular requerido. Toda realización específica debe citar decisiones validated.
+recognitionRange contiene productiveCore; deferredScope nunca es productivo. La complejidad cambia scaffolding, no el currículo.`;
 const ROUTE_INSTRUCTIONS = `${BASE_AUTHORITY}
-
-Construye un LessonRoute candidato desde el AdaptedUnitSpec ya validado.
-Distribuye sólo capabilities, realizations, patterns y pasos autorizados upstream.
-Cada adapted step debe aparecer en al menos un nodo no opcional.
-Respeta dependencias, reciclaje, carga y assessment; el nodo terminal no introduce nueva estructura central.`;
-
+Construye un LessonRoute desde el AdaptedUnitSpec validado. Usa sólo contenido autorizado upstream.
+Cada adapted step debe aparecer en un nodo no opcional. Respeta dependencias, reciclaje, carga y assessment.`;
 const LESSON_INSTRUCTIONS = `${BASE_AUTHORITY}
-
-Construye UN LessonSpec candidato para el route node indicado.
-Debe cubrir exactamente las capabilities, realizations y production targets del nodo.
-No introduzcas patterns o realizations ausentes del AdaptedUnitSpec.
-Sólo puedes reciclar LessonSpecs anteriores incluidos en la entrada; nunca el actual ni futuros.
-Mantén como máximo un nuevo patrón central productivo y respeta el supportLevel del nodo.
-Si el nodo recoge evidencia, incluye assessment evidence; si tiene productionTargets, incluye práctica productiva requerida.
-Usa targetLanguage desde LanguageProfile y explanationLanguage exactamente como se proporciona.`;
+Construye UN LessonSpec para TARGET_NODE. Cubre exactamente sus capabilities, realizations y productionTargets.
+Sólo recicla PREVIOUS_LESSON_SPECS. Mantén el supportLevel y como máximo un patrón central productivo nuevo.
+Si hay productionTargets incluye práctica requerida; si hay assessment incluye evidence. Usa los idiomas indicados.`;
 
 function parseProviderCandidate(response: ParsedPlannerResponse) {
   if (response.status && response.status !== "completed") {
     throw new StructuredCandidateBoundaryError("incomplete_response");
   }
   if (response.output_parsed != null) return response.output_parsed;
-  const outputText = response.output_text?.trim();
-  if (!outputText) throw new StructuredCandidateBoundaryError("empty_response");
+  const text = response.output_text?.trim();
+  if (!text) throw new StructuredCandidateBoundaryError("empty_response");
   try {
-    return JSON.parse(outputText) as unknown;
+    return JSON.parse(text) as unknown;
   } catch {
-    return outputText;
+    return text;
   }
 }
 
 function sameSet(left: string[], right: string[]) {
   return [...new Set(left)].sort().join("|") === [...new Set(right)].sort().join("|");
 }
-
 function append(target: ValidationIssue[], prefix: string, result: ValidationResult) {
-  target.push(
-    ...result.issues.map((issue) => ({
-      ...issue,
-      path: issue.path ? `${prefix}.${issue.path}` : prefix,
-    })),
-  );
+  target.push(...result.issues.map((issue) => ({
+    ...issue,
+    path: issue.path ? `${prefix}.${issue.path}` : prefix,
+  })));
 }
-
 function auditsAreNotRun(value: Record<string, { status: string }>) {
   return Object.values(value).every((audit) => audit.status === "not_run");
 }
-
 function passAudits<T extends Record<string, { status: string; findings: string[] }>>(value: T): T {
-  return Object.fromEntries(
-    Object.keys(value).map((key) => [key, { status: "pass", findings: [] }]),
-  ) as T;
+  return Object.fromEntries(Object.keys(value).map((key) => [key, { status: "pass", findings: [] }])) as T;
+}
+function rejectIssues(issues: ValidationIssue[]) {
+  throw new StructuredCandidateBoundaryError("invalid_candidate", [
+    { attempt: 0, outcome: "invalid_candidate", issues },
+  ]);
 }
 
-function inputValidation(input: AdaptedCurriculumPlannerInput) {
+function validateInput(input: AdaptedCurriculumPlannerInput) {
   const issues: ValidationIssue[] = [];
   append(issues, "curriculum", validateCurriculumUnitSpec(input.curriculum));
   append(issues, "languageProfile", validateLanguageProfile(input.languageProfile));
-  append(
-    issues,
-    "registry",
-    validateLanguageDecisionRegistry(input.registry, { languageProfile: input.languageProfile }),
-  );
-  append(
-    issues,
-    "adaptationPlan",
-    validateAdaptationPlan(input.adaptationPlan, {
-      curriculum: input.curriculum,
-      languageProfile: input.languageProfile,
-      registry: input.registry,
-    }),
-  );
+  append(issues, "registry", validateLanguageDecisionRegistry(input.registry, {
+    languageProfile: input.languageProfile,
+  }));
+  append(issues, "adaptationPlan", validateAdaptationPlan(input.adaptationPlan, {
+    curriculum: input.curriculum,
+    languageProfile: input.languageProfile,
+    registry: input.registry,
+  }));
 
   if (
     input.adaptationPlan.status !== "ready" ||
@@ -181,149 +152,115 @@ function inputValidation(input: AdaptedCurriculumPlannerInput) {
     input.adaptationPlan.gapAnalysis.length > 0 ||
     !input.adaptationPlan.outputs.routeReady
   ) {
-    issues.push(
-      validationIssue(
-        "PLANNER_UPSTREAM_NOT_READY",
-        "adaptationPlan",
-        "M10 requires a gap-free, audited AdaptationPlan with readiness=ready and routeReady=true.",
-      ),
-    );
+    issues.push(validationIssue(
+      "PLANNER_UPSTREAM_NOT_READY",
+      "adaptationPlan",
+      "M10 requires a gap-free audited AdaptationPlan with readiness=ready and routeReady=true.",
+    ));
+  }
+  if (!input.explanationLanguage.trim()) {
+    issues.push(validationIssue(
+      "EXPLANATION_LANGUAGE_REQUIRED",
+      "explanationLanguage",
+      "Planner requires an explicit explanation language.",
+    ));
   }
 
-  if (input.explanationLanguage.trim().length === 0) {
-    issues.push(
-      validationIssue(
-        "EXPLANATION_LANGUAGE_REQUIRED",
-        "explanationLanguage",
-        "Planner requires an explicit explanation language.",
-      ),
-    );
-  }
-
-  const decisions = new Map(
-    input.registry.decisions.map((decision) => [
-      languageDecisionRefKey({
-        id: decision.identity.decisionId,
-        version: decision.identity.decisionVersion,
-      }),
-      decision,
-    ] as const),
-  );
+  const decisions = new Map(input.registry.decisions.map((decision) => [
+    languageDecisionRefKey({ id: decision.identity.decisionId, version: decision.identity.decisionVersion }),
+    decision,
+  ] as const));
   input.adaptationPlan.requirementResolution.forEach((resolution, index) => {
     if (resolution.resolutionMode === "not_applicable") return;
     if (!resolution.decisionRef) {
-      issues.push(
-        validationIssue(
-          "READY_REQUIREMENT_WITHOUT_DECISION",
-          `adaptationPlan.requirementResolution.${index}`,
-          `Ready requirement ${resolution.requirementRef} must be pinned to a validated decision.`,
-        ),
-      );
+      issues.push(validationIssue(
+        "READY_REQUIREMENT_WITHOUT_DECISION",
+        `adaptationPlan.requirementResolution.${index}`,
+        `Ready requirement ${resolution.requirementRef} is not pinned to a decision.`,
+      ));
       return;
     }
     const decision = decisions.get(languageDecisionRefKey(resolution.decisionRef));
     if (!decision || decision.identity.status !== "validated") {
-      issues.push(
-        validationIssue(
-          "PLANNER_DECISION_NOT_VALIDATED",
-          `adaptationPlan.requirementResolution.${index}.decisionRef`,
-          `M10 cannot plan from an unvalidated decision ${languageDecisionRefKey(resolution.decisionRef)}.`,
-        ),
-      );
+      issues.push(validationIssue(
+        "PLANNER_DECISION_NOT_VALIDATED",
+        `adaptationPlan.requirementResolution.${index}.decisionRef`,
+        `M10 cannot plan from unvalidated decision ${languageDecisionRefKey(resolution.decisionRef)}.`,
+      ));
     }
   });
-
   return validationResult(issues);
 }
 
 function validateAdaptedCandidate(candidate: AdaptedUnitSpec, input: AdaptedCurriculumPlannerInput) {
   const issues: ValidationIssue[] = [];
-  append(
-    issues,
-    "candidate",
-    validateAdaptedUnitSpec(candidate, {
-      curriculum: input.curriculum,
-      languageProfile: input.languageProfile,
-      registry: input.registry,
-      adaptationPlan: input.adaptationPlan,
-    }),
-  );
+  append(issues, "candidate", validateAdaptedUnitSpec(candidate, {
+    curriculum: input.curriculum,
+    languageProfile: input.languageProfile,
+    registry: input.registry,
+    adaptationPlan: input.adaptationPlan,
+  }));
   if (candidate.status !== "review") {
     issues.push(validationIssue("AI_PLANNER_ARTIFACT_NOT_REVIEW", "status", "Planner candidates must remain review-only."));
   }
   if (!auditsAreNotRun(candidate.validation)) {
-    issues.push(validationIssue("AI_PLANNER_SELF_APPROVED_AUDIT", "validation", "Planner candidates cannot mark audits pass or fail."));
+    issues.push(validationIssue("AI_PLANNER_SELF_APPROVED_AUDIT", "validation", "Planner candidates cannot approve their own audits."));
+  }
+  if (!sameSet(
+    candidate.capabilityRealizations.map((entry) => entry.capabilityRef),
+    input.curriculum.competencies.map((entry) => entry.competencyId),
+  )) {
+    issues.push(validationIssue(
+      "ADAPTED_CAPABILITY_SET_MISMATCH",
+      "capabilityRealizations",
+      "AdaptedUnitSpec must represent the complete curriculum competency set.",
+    ));
   }
 
-  const capabilityRefs = candidate.capabilityRealizations.map((entry) => entry.capabilityRef);
-  const expectedCapabilities = input.curriculum.competencies.map((entry) => entry.competencyId);
-  if (!sameSet(capabilityRefs, expectedCapabilities)) {
-    issues.push(
-      validationIssue(
-        "ADAPTED_CAPABILITY_SET_MISMATCH",
-        "capabilityRealizations",
-        "AdaptedUnitSpec must represent the complete curriculum competency set.",
-      ),
-    );
-  }
-
-  const coveredSourceSteps = new Set(
-    candidate.adaptedLearningRoute.flatMap((step) => step.sourceStepRefs),
-  );
-  for (const step of input.curriculum.learningRoute.steps.filter((entry) => entry.required)) {
-    if (!coveredSourceSteps.has(step.stepId)) {
-      issues.push(
-        validationIssue(
-          "REQUIRED_CURRICULUM_STEP_DROPPED",
-          "adaptedLearningRoute",
-          `Required source step ${step.stepId} disappeared during adaptation.`,
-          { relatedRefs: [step.stepId] },
-        ),
-      );
+  const coveredSteps = new Set(candidate.adaptedLearningRoute.flatMap((step) => step.sourceStepRefs));
+  input.curriculum.learningRoute.steps.filter((step) => step.required).forEach((step) => {
+    if (!coveredSteps.has(step.stepId)) {
+      issues.push(validationIssue(
+        "REQUIRED_CURRICULUM_STEP_DROPPED",
+        "adaptedLearningRoute",
+        `Required source step ${step.stepId} disappeared during adaptation.`,
+        { relatedRefs: [step.stepId] },
+      ));
     }
-  }
+  });
 
-  const decisionByKey = new Map(
-    input.registry.decisions.map((decision) => [
-      languageDecisionRefKey({ id: decision.identity.decisionId, version: decision.identity.decisionVersion }),
-      decision,
-    ] as const),
-  );
+  const decisions = new Map(input.registry.decisions.map((decision) => [
+    languageDecisionRefKey({ id: decision.identity.decisionId, version: decision.identity.decisionVersion }),
+    decision,
+  ] as const));
   candidate.languageRealizations.forEach((realization, index) => {
     realization.decisionRefs.forEach((ref, refIndex) => {
-      const decision = decisionByKey.get(languageDecisionRefKey(ref));
+      const decision = decisions.get(languageDecisionRefKey(ref));
       if (!decision || decision.identity.status !== "validated") {
-        issues.push(
-          validationIssue(
-            "ADAPTED_REALIZATION_USES_UNVALIDATED_DECISION",
-            `languageRealizations.${index}.decisionRefs.${refIndex}`,
-            `Realization uses decision ${languageDecisionRefKey(ref)} that is not validated.`,
-          ),
-        );
+        issues.push(validationIssue(
+          "ADAPTED_REALIZATION_USES_UNVALIDATED_DECISION",
+          `languageRealizations.${index}.decisionRefs.${refIndex}`,
+          `Realization uses decision ${languageDecisionRefKey(ref)} that is not validated.`,
+        ));
       }
     });
   });
-
   return validationResult(issues);
 }
 
-function sealAdaptedUnit(candidate: AdaptedUnitSpec, input: AdaptedCurriculumPlannerInput) {
+function sealAdapted(candidate: AdaptedUnitSpec, input: AdaptedCurriculumPlannerInput) {
   const sealed: AdaptedUnitSpec = {
     ...structuredClone(candidate),
     status: "canonical",
     validation: passAudits(candidate.validation),
   };
-  const validation = validateAdaptedUnitSpec(sealed, {
+  const result = validateAdaptedUnitSpec(sealed, {
     curriculum: input.curriculum,
     languageProfile: input.languageProfile,
     registry: input.registry,
     adaptationPlan: input.adaptationPlan,
   });
-  if (!validation.valid) {
-    throw new StructuredCandidateBoundaryError("invalid_candidate", [
-      { attempt: 0, outcome: "invalid_candidate", issues: validation.issues },
-    ]);
-  }
+  if (!result.valid) rejectIssues(result.issues);
   return sealed;
 }
 
@@ -334,23 +271,21 @@ function validateRouteCandidate(candidate: LessonRoute, adaptedUnit: AdaptedUnit
     issues.push(validationIssue("AI_PLANNER_ARTIFACT_NOT_REVIEW", "status", "Planner candidates must remain review-only."));
   }
   if (!auditsAreNotRun(candidate.validation)) {
-    issues.push(validationIssue("AI_PLANNER_SELF_APPROVED_AUDIT", "validation", "Planner candidates cannot mark audits pass or fail."));
+    issues.push(validationIssue("AI_PLANNER_SELF_APPROVED_AUDIT", "validation", "Planner candidates cannot approve their own audits."));
   }
-  const nonOptionalStepRefs = new Set(
+  const requiredStepRefs = new Set(
     candidate.nodes.filter((node) => !node.optional).flatMap((node) => node.sourceAdaptedStepRefs),
   );
-  for (const step of adaptedUnit.adaptedLearningRoute) {
-    if (!nonOptionalStepRefs.has(step.adaptedStepId)) {
-      issues.push(
-        validationIssue(
-          "ADAPTED_STEP_WITHOUT_REQUIRED_ROUTE_NODE",
-          "nodes",
-          `Adapted step ${step.adaptedStepId} must appear in a non-optional route node.`,
-          { relatedRefs: [step.adaptedStepId] },
-        ),
-      );
+  adaptedUnit.adaptedLearningRoute.forEach((step) => {
+    if (!requiredStepRefs.has(step.adaptedStepId)) {
+      issues.push(validationIssue(
+        "ADAPTED_STEP_WITHOUT_REQUIRED_ROUTE_NODE",
+        "nodes",
+        `Adapted step ${step.adaptedStepId} must appear in a non-optional route node.`,
+        { relatedRefs: [step.adaptedStepId] },
+      ));
     }
-  }
+  });
   return validationResult(issues);
 }
 
@@ -360,12 +295,8 @@ function sealRoute(candidate: LessonRoute, adaptedUnit: AdaptedUnitSpec) {
     status: "canonical",
     validation: passAudits(candidate.validation),
   };
-  const validation = validateLessonRoute(sealed, { adaptedUnit });
-  if (!validation.valid) {
-    throw new StructuredCandidateBoundaryError("invalid_candidate", [
-      { attempt: 0, outcome: "invalid_candidate", issues: validation.issues },
-    ]);
-  }
+  const result = validateLessonRoute(sealed, { adaptedUnit });
+  if (!result.valid) rejectIssues(result.issues);
   return sealed;
 }
 
@@ -382,8 +313,9 @@ function validateLessonCandidate(
     issues.push(validationIssue("AI_PLANNER_ARTIFACT_NOT_REVIEW", "status", "Planner candidates must remain review-only."));
   }
   if (!auditsAreNotRun(candidate.validation)) {
-    issues.push(validationIssue("AI_PLANNER_SELF_APPROVED_AUDIT", "validation", "Planner candidates cannot mark audits pass or fail."));
+    issues.push(validationIssue("AI_PLANNER_SELF_APPROVED_AUDIT", "validation", "Planner candidates cannot approve their own audits."));
   }
+
   const node = route.nodes.find((entry) => entry.nodeId === routeNodeRef);
   if (!node || candidate.identity.routeNodeRef !== routeNodeRef) {
     issues.push(validationIssue("LESSON_PLANNER_NODE_MISMATCH", "identity.routeNodeRef", "Lesson candidate does not target the requested route node."));
@@ -393,16 +325,19 @@ function validateLessonCandidate(
     issues.push(validationIssue("LESSON_ORDER_MISMATCH", "identity.lessonOrderHint", "Lesson order must match route node orderHint."));
   }
   if (!sameSet(candidate.curriculumBinding.capabilityRefs, node.capabilityRefs)) {
-    issues.push(validationIssue("LESSON_NODE_CAPABILITY_COVERAGE_MISMATCH", "curriculumBinding.capabilityRefs", "Lesson must cover the route node capability set exactly."));
+    issues.push(validationIssue("LESSON_NODE_CAPABILITY_COVERAGE_MISMATCH", "curriculumBinding.capabilityRefs", "Lesson must cover the node capability set exactly."));
   }
   if (!sameSet(candidate.curriculumBinding.realizationRefs, node.realizationRefs)) {
-    issues.push(validationIssue("LESSON_NODE_REALIZATION_COVERAGE_MISMATCH", "curriculumBinding.realizationRefs", "Lesson must cover the route node realization set exactly."));
+    issues.push(validationIssue("LESSON_NODE_REALIZATION_COVERAGE_MISMATCH", "curriculumBinding.realizationRefs", "Lesson must cover the node realization set exactly."));
   }
-  if (!sameSet(candidate.productiveTargets.productionTargetRefs, node.productionTargets.map((target) => target.productionTargetId))) {
-    issues.push(validationIssue("LESSON_NODE_PRODUCTION_TARGET_MISMATCH", "productiveTargets.productionTargetRefs", "Lesson productionTargetRefs must exactly match the route node."));
+  if (!sameSet(
+    candidate.productiveTargets.productionTargetRefs,
+    node.productionTargets.map((target) => target.productionTargetId),
+  )) {
+    issues.push(validationIssue("LESSON_NODE_PRODUCTION_TARGET_MISMATCH", "productiveTargets.productionTargetRefs", "Lesson production targets must exactly match the route node."));
   }
   if (node.productionTargets.length > 0 && !candidate.practicePlan.some((practice) => practice.required)) {
-    issues.push(validationIssue("PRODUCTIVE_NODE_WITHOUT_REQUIRED_PRACTICE", "practicePlan", "A node with production targets needs required practice."));
+    issues.push(validationIssue("PRODUCTIVE_NODE_WITHOUT_REQUIRED_PRACTICE", "practicePlan", "A productive route node needs required practice."));
   }
   if (node.assessmentRole !== "none" && candidate.assessmentPlan.evidenceItems.length === 0) {
     issues.push(validationIssue("ASSESSMENT_NODE_WITHOUT_EVIDENCE", "assessmentPlan.evidenceItems", "An assessment-bearing node needs evidence items."));
@@ -420,13 +355,11 @@ function validateLessonCandidate(
   const previousIds = new Set(previousLessons.map((lesson) => lesson.identity.lessonSpecId));
   candidate.languageInventory.recycledLexicon.forEach((item, index) => {
     if (!previousIds.has(item.sourceLessonRef)) {
-      issues.push(
-        validationIssue(
-          "INVALID_RECYCLING_SOURCE_LESSON",
-          `languageInventory.recycledLexicon.${index}.sourceLessonRef`,
-          `Recycled lexicon may reference only previously planned lessons; ${item.sourceLessonRef} is not available.`,
-        ),
-      );
+      issues.push(validationIssue(
+        "INVALID_RECYCLING_SOURCE_LESSON",
+        `languageInventory.recycledLexicon.${index}.sourceLessonRef`,
+        `Recycled lexicon may reference only earlier planned lessons; ${item.sourceLessonRef} is unavailable.`,
+      ));
     }
   });
   return validationResult(issues);
@@ -438,14 +371,11 @@ function sealLesson(candidate: LessonSpec, route: LessonRoute, adaptedUnit: Adap
     status: "canonical",
     validation: passAudits(candidate.validation),
   };
-  const validation = validateLessonSpecForGeneration(sealed);
-  const contextual = validateLessonSpec(sealed, { route, adaptedUnit });
-  const issues = [...validation.issues, ...contextual.issues];
-  if (issues.some((issue) => issue.severity === "error")) {
-    throw new StructuredCandidateBoundaryError("invalid_candidate", [
-      { attempt: 0, outcome: "invalid_candidate", issues },
-    ]);
-  }
+  const issues = [
+    ...validateLessonSpec(sealed, { route, adaptedUnit }).issues,
+    ...validateLessonSpecForGeneration(sealed).issues,
+  ];
+  if (issues.some((issue) => issue.severity === "error")) rejectIssues(issues);
   return sealed;
 }
 
@@ -453,9 +383,7 @@ function buildInput(parts: Array<[string, unknown]>, previousIssues: ValidationI
   const feedback = compactValidationFeedback(previousIssues);
   return [
     ...parts.flatMap(([label, value]) => [`${label}:`, JSON.stringify(value)]),
-    feedback.length > 0
-      ? `ERRORES DEL INTENTO ANTERIOR:\n${feedback.join("\n")}`
-      : "",
+    feedback.length > 0 ? `ERRORES DEL INTENTO ANTERIOR:\n${feedback.join("\n")}` : "",
   ].filter(Boolean).join("\n");
 }
 
@@ -471,14 +399,14 @@ export class OpenAIAdaptedCurriculumPlanner implements AdaptedCurriculumPlanner 
   ) {}
 
   async plan(input: AdaptedCurriculumPlannerInput): Promise<AdaptedCurriculumPlannerResult> {
-    const initial = inputValidation(input);
+    const initial = validateInput(input);
     if (!initial.valid) {
       throw new StructuredCandidateBoundaryError("invalid_input", [
         { attempt: 0, outcome: "invalid_candidate", issues: initial.issues },
       ]);
     }
 
-    const stageHistory: PlanningStageRecord[] = [];
+    const history: PlanningStageRecord[] = [];
     const adaptedCandidate = await runStructuredCandidateBoundary({
       schema: adaptedUnitSpecSchema,
       maxAttempts: this.maxAttempts,
@@ -494,13 +422,13 @@ export class OpenAIAdaptedCurriculumPlanner implements AdaptedCurriculumPlanner 
         ], previousIssues),
       ),
     });
-    stageHistory.push({
+    history.push({
       stage: "adapted_unit",
       artifactRef: adaptedCandidate.value.identity.adaptedUnitId,
       attempts: adaptedCandidate.attempts,
       validationHistory: adaptedCandidate.validationHistory,
     });
-    const adaptedUnit = sealAdaptedUnit(adaptedCandidate.value, input);
+    const adaptedUnit = sealAdapted(adaptedCandidate.value, input);
 
     const routeCandidate = await runStructuredCandidateBoundary({
       schema: lessonRouteSchema,
@@ -512,7 +440,7 @@ export class OpenAIAdaptedCurriculumPlanner implements AdaptedCurriculumPlanner 
         buildInput([["ADAPTED_UNIT", adaptedUnit]], previousIssues),
       ),
     });
-    stageHistory.push({
+    history.push({
       stage: "lesson_route",
       artifactRef: routeCandidate.value.identity.routeId,
       attempts: routeCandidate.attempts,
@@ -521,12 +449,18 @@ export class OpenAIAdaptedCurriculumPlanner implements AdaptedCurriculumPlanner 
     const route = sealRoute(routeCandidate.value, adaptedUnit);
 
     const lessons: LessonSpec[] = [];
-    for (const node of [...route.nodes].sort((left, right) => left.orderHint - right.orderHint)) {
+    const nodes = [...route.nodes].sort((left, right) => left.orderHint - right.orderHint);
+    for (const node of nodes) {
       const lessonCandidate = await runStructuredCandidateBoundary({
         schema: lessonSpecSchema,
         maxAttempts: this.maxAttempts,
-        semanticValidator: (candidate) =>
-          validateLessonCandidate(candidate, route, adaptedUnit, node.nodeId, lessons),
+        semanticValidator: (candidate) => validateLessonCandidate(
+          candidate,
+          route,
+          adaptedUnit,
+          node.nodeId,
+          lessons,
+        ),
         generate: ({ previousIssues }) => this.generate(
           "lesson_spec",
           LESSON_INSTRUCTIONS,
@@ -540,7 +474,7 @@ export class OpenAIAdaptedCurriculumPlanner implements AdaptedCurriculumPlanner 
           ], previousIssues),
         ),
       });
-      stageHistory.push({
+      history.push({
         stage: "lesson_spec",
         artifactRef: lessonCandidate.value.identity.lessonSpecId,
         attempts: lessonCandidate.attempts,
@@ -568,13 +502,7 @@ export class OpenAIAdaptedCurriculumPlanner implements AdaptedCurriculumPlanner 
       })),
     );
     if (!runtime.valid || generationIssues.some((issue) => issue.severity === "error")) {
-      throw new StructuredCandidateBoundaryError("invalid_candidate", [
-        {
-          attempt: 0,
-          outcome: "invalid_candidate",
-          issues: [...runtime.issues, ...generationIssues],
-        },
-      ]);
+      rejectIssues([...runtime.issues, ...generationIssues]);
     }
 
     return {
@@ -587,14 +515,13 @@ export class OpenAIAdaptedCurriculumPlanner implements AdaptedCurriculumPlanner 
         route,
         lessonSpecs: lessons,
       },
-      stageHistory,
+      stageHistory: history,
     };
   }
 
   private async generate(stage: PlanningStage, instructions: string, input: string) {
     try {
-      const response = await this.request(stage, instructions, input);
-      return parseProviderCandidate(response);
+      return parseProviderCandidate(await this.request(stage, instructions, input));
     } catch (error) {
       if (error instanceof StructuredCandidateBoundaryError) throw error;
       throw new StructuredCandidateBoundaryError("provider_error");
@@ -608,21 +535,18 @@ export class OpenAIAdaptedCurriculumPlanner implements AdaptedCurriculumPlanner 
       process.env.OPENAI_LANGUAGE_MODEL;
     if (!model) throw new StructuredCandidateBoundaryError("not_configured");
 
-    const request = {
-      stage,
+    const providerRequest = {
       model,
       instructions,
       input,
       store: false as const,
       text: { format: { type: "json_object" as const } },
     };
-    if (this.requester) return this.requester(request);
+    if (this.requester) return this.requester({ stage, ...providerRequest });
 
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) throw new StructuredCandidateBoundaryError("not_configured");
-    const client = new OpenAI({ apiKey });
-    const { stage: _stage, ...providerRequest } = request;
-    return client.responses.create(providerRequest);
+    return new OpenAI({ apiKey }).responses.create(providerRequest);
   }
 }
 
