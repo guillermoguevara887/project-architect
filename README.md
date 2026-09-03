@@ -65,13 +65,27 @@ PASSWORD_RESET_FROM_EMAIL=MemoOS <no-reply@example.com>
 OPENAI_API_KEY=replace-with-a-server-side-api-key
 OPENAI_LANGUAGE_MODEL=gpt-5.4-mini
 OPENAI_PROJECT_TEXT_MODEL=gpt-5.4-mini
+OPENAI_LANGUAGE_CURRICULUM_MODEL=gpt-5.4-mini
+OPENAI_LANGUAGE_DECISION_MODEL=gpt-5.4-mini
+R2_BUCKET_NAME=replace-with-r2-bucket
+R2_ENDPOINT=https://replace-with-account-id.r2.cloudflarestorage.com
+R2_ACCESS_KEY_ID=replace-with-r2-access-key-id
+R2_SECRET_ACCESS_KEY=replace-with-r2-secret-access-key
+R2_REGION=auto
 ```
 
+El compilador lingüístico permite overrides por etapa mediante
+`OPENAI_LANGUAGE_DOCUMENT_TEXT_MODEL`, `OPENAI_LANGUAGE_PROFILE_RESEARCH_MODEL`,
+`OPENAI_LANGUAGE_PLANNING_MODEL` y `OPENAI_LANGUAGE_GENERATION_MODEL`.
+Si se omiten, la extracción PDF usa `OPENAI_LANGUAGE_CURRICULUM_MODEL`, la
+investigación de Profile usa `OPENAI_LANGUAGE_DECISION_MODEL`, y planificación
+y generación final usan `OPENAI_LANGUAGE_MODEL`.
+
 En Railway, la API también acepta la variable `PORT` proporcionada por la
-plataforma. `OPENAI_API_KEY`, `OPENAI_LANGUAGE_MODEL` y
-`OPENAI_PROJECT_TEXT_MODEL` pertenecen únicamente al entorno del backend; nunca
-deben exponerse mediante variables `NEXT_PUBLIC_*`. Los modelos son
-configurables y usan `gpt-5.4-mini` por defecto.
+plataforma. Todas las variables `OPENAI_*` y `R2_*` pertenecen únicamente al
+entorno del backend y nunca deben exponerse mediante variables `NEXT_PUBLIC_*`.
+Los modelos son configurables; los valores mostrados en `.env.example` son una
+configuración de referencia y pueden sustituirse sin cambiar código.
 
 La recuperación de contraseña usa Resend desde la API. `APP_URL` es el origen
 público del frontend incluido en el enlace, `PASSWORD_RESET_FROM_EMAIL` debe ser
@@ -127,6 +141,20 @@ Migraciones de los incrementos actuales:
   las lecciones de Idiomas.
 - `0014_add_account_recovery.sql`: correo único opcional y tokens de
   recuperación de contraseña de un solo uso.
+- `0019_create_language_curriculum_documents.sql`: documentos maestros,
+  versiones inmutables, compilaciones y `CurriculumUnitSpec` persistidos.
+- `0020_create_language_generated_lessons.sql`: runs de generación y lecciones
+  finales aceptadas.
+- `0021_create_language_curriculum_orchestration.sql`: planning bundles
+  confiables y runs de orquestación.
+- `0022_create_language_knowledge_registry.sql`: snapshots versionados de
+  `LanguageProfile`, `LanguageDecisionRegistry` y proposals de decisiones.
+- `0023_create_language_adaptation_resolution_runs.sql`: historial append-only
+  de resolución de gaps de adaptación.
+- `0024_create_language_profile_research_runs.sql`: investigación y evidencia
+  para enriquecer perfiles lingüísticos.
+- `0025_create_language_curriculum_unit_reviews.sql`: revisión humana y
+  promoción de candidatos curriculares antes de la adaptación.
 
 Las migraciones no se ejecutan automáticamente. Antes de aplicarlas contra
 Railway hay que revisar el SQL y autorizar explícitamente la operación. Journey
