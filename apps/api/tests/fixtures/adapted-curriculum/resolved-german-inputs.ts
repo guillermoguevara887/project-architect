@@ -63,7 +63,7 @@ function makeDecision(input: {
     resolution: {
       resolutionSummary: `Use a bounded high-frequency German A1 realization for ${input.domain}.`,
       selectedMechanisms: [],
-      recognitionRange: input.recognition,
+      recognitionRange: [...new Set([...input.recognition, ...input.productive])],
       productiveRange: input.productive,
       alternatives: [],
       deferredScope: input.deferred ?? [],
