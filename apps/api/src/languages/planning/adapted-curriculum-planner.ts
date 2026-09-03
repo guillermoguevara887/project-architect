@@ -125,10 +125,12 @@ function auditsAreNotRun(value: Record<string, { status: string }>) {
   return Object.values(value).every((audit) => audit.status === "not_run");
 }
 function passAudits<T extends Record<string, { status: string; findings: string[] }>>(value: T): T {
-  return Object.fromEntries(Object.keys(value).map((key) => [key, { status: "pass", findings: [] }])) as T;
+  return Object.fromEntries(
+    Object.keys(value).map((key) => [key, { status: "pass", findings: [] }]),
+  ) as unknown as T;
 }
 function rejectIssues(issues: ValidationIssue[]) {
-  throw new StructuredCandidateBoundaryError("invalid_candidate", [
+  throw new StructuredCandidateBoundaryError("retry_exhausted", [
     { attempt: 0, outcome: "invalid_candidate", issues },
   ]);
 }
