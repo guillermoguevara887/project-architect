@@ -124,6 +124,9 @@ export class CurriculumDocumentService {
     if (reservation.kind === "version_conflict") {
       throw new CurriculumDocumentServiceError("version_conflict");
     }
+    if (!("version" in reservation)) {
+      throw new CurriculumDocumentServiceError("version_conflict");
+    }
 
     let version = reservation.version;
     if (version.storageStatus !== "ready") {
@@ -158,6 +161,9 @@ export class CurriculumDocumentService {
       if (extraction.kind === "not_found") {
         throw new CurriculumDocumentServiceError("not_found");
       }
+      if (!("version" in extraction)) {
+        throw new CurriculumDocumentServiceError("text_conflict");
+      }
       version = extraction.version;
     }
 
@@ -187,6 +193,9 @@ export class CurriculumDocumentService {
       throw new CurriculumDocumentServiceError("storage_not_ready");
     }
     if (result.kind === "text_conflict") {
+      throw new CurriculumDocumentServiceError("text_conflict");
+    }
+    if (!("version" in result)) {
       throw new CurriculumDocumentServiceError("text_conflict");
     }
     return result.version;
@@ -237,6 +246,9 @@ export class CurriculumDocumentService {
       throw new CurriculumDocumentServiceError("not_found");
     }
     if (started.kind === "not_extractable") {
+      throw new CurriculumDocumentServiceError("not_extractable");
+    }
+    if (!("run" in started)) {
       throw new CurriculumDocumentServiceError("not_extractable");
     }
 
