@@ -29,10 +29,10 @@ export type CandidateGenerator = (
 
 export type CandidateSemanticValidator<T> = (candidate: T) => ValidationResult;
 
-export type StructuredCandidateBoundaryOptions<T> = {
-  schema: z.ZodType<T>;
+export type StructuredCandidateBoundaryOptions<TSchema extends z.ZodTypeAny> = {
+  schema: TSchema;
   generate: CandidateGenerator;
-  semanticValidator?: CandidateSemanticValidator<T>;
+  semanticValidator?: CandidateSemanticValidator<z.output<TSchema>>;
   maxAttempts?: number;
 };
 
@@ -55,11 +55,11 @@ export class StructuredCandidateBoundaryError extends Error {
   }
 }
 
-function validateCandidate<T>(
+function validateCandidate<TSchema extends z.ZodTypeAny>(
   candidate: unknown,
-  schema: z.ZodType<T>,
-  semanticValidator?: CandidateSemanticValidator<T>,
-): { parsed?: T; result: ValidationResult } {
+  schema: TSchema,
+  semanticValidator?: CandidateSemanticValidator<z.output<TSchema>>,
+): { parsed?: z.output<TSchema>; result: ValidationResult } {
   const parsed = schema.safeParse(candidate);
   if (!parsed.success) {
     return {
@@ -81,9 +81,11 @@ function validateCandidate<T>(
   };
 }
 
-export async function runStructuredCandidateBoundary<T>(
-  options: StructuredCandidateBoundaryOptions<T>,
-): Promise<ValidatedCandidate<T>> {
+export async function runStructuredCandidateBoundary<
+  TSchema extends z.ZodTypeAny,
+>(
+  options: StructuredCandidateBoundaryOptions<TSchema>,
+): Promise<ValidatedCandidate<z.output<TSchema>>> {
   const maxAttempts = options.maxAttempts ?? 2;
   if (!Number.isInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 3) {
     throw new RangeError("maxAttempts must be an integer between 1 and 3");
