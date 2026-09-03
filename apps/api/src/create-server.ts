@@ -78,6 +78,11 @@ import {
   type CurriculumDocumentService,
 } from "./languages/documents/service.js";
 import { registerCurriculumDocumentRoutes } from "./languages/documents/routes.js";
+import {
+  productionLessonGenerationService,
+  type ProductionLessonGenerationService,
+} from "./languages/generation/service.js";
+import { registerProductionLessonGenerationRoutes } from "./languages/generation/routes.js";
 
 type ServerDependencies = {
   authStore?: AuthStore;
@@ -102,6 +107,7 @@ type ServerDependencies = {
   elevenLabsLanguageAudioProvider?: LanguageAudioProvider;
   languageAudioStorage?: LanguageAudioStorage;
   curriculumDocumentService?: CurriculumDocumentService;
+  productionLessonGenerationService?: ProductionLessonGenerationService;
 };
 
 function databaseFailureReason(error: unknown) {
@@ -224,6 +230,12 @@ export function configureServer(
   registerCurriculumDocumentRoutes(server, {
     authStore: configuredAuthStore,
     service: dependencies.curriculumDocumentService ?? curriculumDocumentService,
+  });
+  registerProductionLessonGenerationRoutes(server, {
+    authStore: configuredAuthStore,
+    service:
+      dependencies.productionLessonGenerationService ??
+      productionLessonGenerationService,
   });
   registerLanguageAudioRoutes(server, {
     authStore: configuredAuthStore,
