@@ -73,6 +73,11 @@ import {
 import { registerLanguageAudioRoutes } from "./languages/audio-routes.js";
 import { languageStore, type LanguageStore } from "./languages/repository.js";
 import { registerLanguageRoutes } from "./languages/routes.js";
+import {
+  curriculumDocumentService,
+  type CurriculumDocumentService,
+} from "./languages/documents/service.js";
+import { registerCurriculumDocumentRoutes } from "./languages/documents/routes.js";
 
 type ServerDependencies = {
   authStore?: AuthStore;
@@ -96,6 +101,7 @@ type ServerDependencies = {
   languageAudioProvider?: LanguageAudioProvider;
   elevenLabsLanguageAudioProvider?: LanguageAudioProvider;
   languageAudioStorage?: LanguageAudioStorage;
+  curriculumDocumentService?: CurriculumDocumentService;
 };
 
 function databaseFailureReason(error: unknown) {
@@ -215,6 +221,10 @@ export function configureServer(
       freeLanguageLessonTitleGenerator,
     dependencies.assimilLanguageLessonProcessor ?? assimilLanguageLessonProcessor,
   );
+  registerCurriculumDocumentRoutes(server, {
+    authStore: configuredAuthStore,
+    service: dependencies.curriculumDocumentService ?? curriculumDocumentService,
+  });
   registerLanguageAudioRoutes(server, {
     authStore: configuredAuthStore,
     languageStore: dependencies.languageStore ?? languageStore,
