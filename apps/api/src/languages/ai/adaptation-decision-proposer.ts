@@ -21,7 +21,6 @@ import {
   type ValidationResult,
 } from "../curriculum/validation.js";
 import {
-  languageDecisionRefKey,
   languageDecisionSchema,
   validateLanguageDecisionRegistry,
   type LanguageDecision,
