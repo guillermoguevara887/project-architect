@@ -1,12 +1,11 @@
 import { createHash } from "node:crypto";
 import {
   OpenAIAdaptationDecisionProposer,
-  StructuredCandidateBoundaryError,
   type AdaptationDecisionCandidate,
   type AdaptationDecisionProposer,
 } from "../ai/adaptation-decision-proposer.js";
+import { StructuredCandidateBoundaryError } from "../ai/structured-candidate-boundary.js";
 import type { AdaptationPlan } from "../adaptation/adaptation-plan.js";
-import type { CurriculumUnitSpec } from "../curriculum/curriculum-unit-spec.js";
 import {
   languageKnowledgeService,
   type LanguageKnowledgeService,
@@ -381,5 +380,3 @@ export class AdaptationResolutionService {
 }
 
 export const adaptationResolutionService = new AdaptationResolutionService();
-
-export type { CurriculumUnitSpec };
