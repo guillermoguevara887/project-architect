@@ -79,6 +79,11 @@ import {
 } from "./languages/documents/service.js";
 import { registerCurriculumDocumentRoutes } from "./languages/documents/routes.js";
 import {
+  realCurriculumDocumentWorkflow,
+  type RealCurriculumDocumentWorkflow,
+} from "./languages/documents/real-document-workflow.js";
+import { registerRealCurriculumDocumentWorkflowRoutes } from "./languages/documents/real-document-workflow-routes.js";
+import {
   productionLessonGenerationService,
   type ProductionLessonGenerationService,
 } from "./languages/generation/service.js";
@@ -117,6 +122,7 @@ type ServerDependencies = {
   elevenLabsLanguageAudioProvider?: LanguageAudioProvider;
   languageAudioStorage?: LanguageAudioStorage;
   curriculumDocumentService?: CurriculumDocumentService;
+  realCurriculumDocumentWorkflow?: RealCurriculumDocumentWorkflow;
   productionLessonGenerationService?: ProductionLessonGenerationService;
   curriculumOrchestrationService?: CurriculumOrchestrationService;
   languageKnowledgeService?: LanguageKnowledgeService;
@@ -242,6 +248,12 @@ export function configureServer(
   registerCurriculumDocumentRoutes(server, {
     authStore: configuredAuthStore,
     service: dependencies.curriculumDocumentService ?? curriculumDocumentService,
+  });
+  registerRealCurriculumDocumentWorkflowRoutes(server, {
+    authStore: configuredAuthStore,
+    workflow:
+      dependencies.realCurriculumDocumentWorkflow ??
+      realCurriculumDocumentWorkflow,
   });
   registerProductionLessonGenerationRoutes(server, {
     authStore: configuredAuthStore,
