@@ -2,6 +2,7 @@ CREATE TABLE language_profile_research_runs (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   adaptation_resolution_run_id uuid NOT NULL REFERENCES language_adaptation_resolution_runs(id),
+  resumed_resolution_run_id uuid REFERENCES language_adaptation_resolution_runs(id),
   base_profile_record_id uuid NOT NULL REFERENCES language_knowledge_profiles(id),
   enriched_profile_record_id uuid REFERENCES language_knowledge_profiles(id),
   stage text NOT NULL,
