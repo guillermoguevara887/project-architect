@@ -1,5 +1,5 @@
 import {
-  compileAdaptationPlan,
+  compileInitialAdaptationPlan,
   type AdaptationPlan,
 } from "../../../src/languages/adaptation/adaptation-plan.js";
 import type {
@@ -254,7 +254,7 @@ export const germanM5DecisionRegistryFixture: LanguageDecisionRegistry = {
 };
 
 export function buildReadyGermanAdaptationPlanFixture(): AdaptationPlan {
-  const compilation = compileAdaptationPlan({
+  const compilation = compileInitialAdaptationPlan({
     curriculum: a1U01CurriculumFixture,
     languageProfile: germanLanguageProfileFixture,
     registry: germanM5DecisionRegistryFixture,
