@@ -9,6 +9,7 @@ export type ProfileResearchRunRecord = {
   id: string;
   userId: string;
   adaptationResolutionRunId: string;
+  resumedResolutionRunId: string | null;
   baseProfileRecordId: string;
   enrichedProfileRecordId: string | null;
   stage: ProfileResearchRunStage;
@@ -31,6 +32,7 @@ type DbRun = {
   id: string;
   user_id: string;
   adaptation_resolution_run_id: string;
+  resumed_resolution_run_id: string | null;
   base_profile_record_id: string;
   enriched_profile_record_id: string | null;
   stage: ProfileResearchRunStage;
@@ -53,6 +55,7 @@ function mapRun(row: DbRun): ProfileResearchRunRecord {
     id: row.id,
     userId: row.user_id,
     adaptationResolutionRunId: row.adaptation_resolution_run_id,
+    resumedResolutionRunId: row.resumed_resolution_run_id,
     baseProfileRecordId: row.base_profile_record_id,
     enrichedProfileRecordId: row.enriched_profile_record_id,
     stage: row.stage,
@@ -73,6 +76,7 @@ export const profileResearchStore: ProfileResearchStore = {
       INSERT INTO language_profile_research_runs (
         user_id,
         adaptation_resolution_run_id,
+        resumed_resolution_run_id,
         base_profile_record_id,
         enriched_profile_record_id,
         stage,
@@ -87,6 +91,7 @@ export const profileResearchStore: ProfileResearchStore = {
       SELECT
         ${input.userId},
         resolution.id,
+        resumed.id,
         base_profile.id,
         enriched_profile.id,
         ${input.stage},
@@ -104,12 +109,20 @@ export const profileResearchStore: ProfileResearchStore = {
       LEFT JOIN language_knowledge_profiles enriched_profile
         ON enriched_profile.id = ${input.enrichedProfileRecordId}
         AND enriched_profile.user_id = ${input.userId}
+      LEFT JOIN language_adaptation_resolution_runs resumed
+        ON resumed.id = ${input.resumedResolutionRunId}
+        AND resumed.user_id = ${input.userId}
+        AND resumed.curriculum_unit_record_id = resolution.curriculum_unit_record_id
       WHERE resolution.id = ${input.adaptationResolutionRunId}
         AND resolution.user_id = ${input.userId}
         AND resolution.profile_record_id = base_profile.id
         AND (
           ${input.enrichedProfileRecordId}::uuid IS NULL
           OR enriched_profile.id IS NOT NULL
+        )
+        AND (
+          ${input.resumedResolutionRunId}::uuid IS NULL
+          OR resumed.id IS NOT NULL
         )
       RETURNING *
     `));
