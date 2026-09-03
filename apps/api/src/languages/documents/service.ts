@@ -274,22 +274,28 @@ export class CurriculumDocumentService {
       if (!units) throw new CurriculumDocumentServiceError("compiler_failed");
       return { run, units };
     } catch (error) {
-      if (error instanceof CurriculumDocumentServiceError) throw error;
-
       const code =
         error instanceof StructuredCandidateBoundaryError
           ? error.code
-          : "unexpected_compiler_error";
+          : error instanceof CurriculumDocumentServiceError
+            ? error.detail ?? error.code
+            : "unexpected_compiler_error";
       const validationHistory =
-        error instanceof StructuredCandidateBoundaryError
+        error instanceof StructuredCandidateBoundaryError ||
+        error instanceof CurriculumDocumentServiceError
           ? error.validationHistory
           : [];
+
       await this.store.failCompilation({
         userId,
         runId: started.run.id,
         errorCode: code,
         validationHistory,
       });
+
+      if (error instanceof CurriculumDocumentServiceError) {
+        throw error;
+      }
       throw new CurriculumDocumentServiceError(
         "compiler_failed",
         code,
