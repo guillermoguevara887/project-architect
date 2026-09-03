@@ -60,8 +60,8 @@ const capabilityRealizationSchema = z
       "not_applicable",
     ]),
     inputExpectation: requiredTextSchema,
-    outputExpectation: requiredTextSchema,
-    masteryExpectation: requiredTextSchema,
+    outputExpectation: z.string(),
+    masteryExpectation: z.string(),
     realizationRefs: idListSchema,
     supportPolicy: supportPolicySchema,
     tolerance: z
@@ -421,12 +421,49 @@ export function validateAdaptedUnitSpec(
         );
       }
     });
-    if (capability.status === "deferred" && capability.outputExpectation.length > 0) {
+
+    const productiveState =
+      capability.status === "fully_realized" || capability.status === "partially_realized";
+    if (productiveState && capability.outputExpectation.trim().length === 0) {
+      issues.push(
+        validationIssue(
+          "CAPABILITY_OUTPUT_EXPECTATION_REQUIRED",
+          `capabilityRealizations.${index}.outputExpectation`,
+          `${capability.status} capabilities require a productive output expectation.`,
+          { relatedRefs: [capability.capabilityRef] },
+        ),
+      );
+    }
+    if (productiveState && capability.masteryExpectation.trim().length === 0) {
+      issues.push(
+        validationIssue(
+          "CAPABILITY_MASTERY_EXPECTATION_REQUIRED",
+          `capabilityRealizations.${index}.masteryExpectation`,
+          `${capability.status} capabilities require a mastery expectation.`,
+          { relatedRefs: [capability.capabilityRef] },
+        ),
+      );
+    }
+    if (capability.status === "deferred" && capability.outputExpectation.trim().length > 0) {
       issues.push(
         validationIssue(
           "DEFERRED_CAPABILITY_HAS_OUTPUT_EXPECTATION",
           `capabilityRealizations.${index}.outputExpectation`,
           "Deferred capabilities cannot carry a productive output expectation.",
+          { relatedRefs: [capability.capabilityRef] },
+        ),
+      );
+    }
+    if (
+      capability.status === "not_applicable" &&
+      capability.outputExpectation.trim().length > 0
+    ) {
+      issues.push(
+        validationIssue(
+          "NOT_APPLICABLE_CAPABILITY_HAS_OUTPUT_EXPECTATION",
+          `capabilityRealizations.${index}.outputExpectation`,
+          "Not-applicable capabilities cannot carry a productive output expectation.",
+          { relatedRefs: [capability.capabilityRef] },
         ),
       );
     }
