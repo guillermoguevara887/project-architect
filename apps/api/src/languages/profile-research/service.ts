@@ -179,10 +179,28 @@ export class ProfileResearchService {
       );
     }
 
-    const profileRecord = await this.knowledge.registerProfile(
-      input.userId,
-      enrichedProfile,
-    );
+    let profileRecord;
+    try {
+      profileRecord = await this.knowledge.registerProfile(input.userId, enrichedProfile);
+    } catch (error) {
+      const record = await this.persistRun({
+        userId: input.userId,
+        resolutionRunId: resolutionRun.id,
+        baseProfileRecordId: context.profileRecordId,
+        researchTaskRefs,
+        stage: "failed",
+        candidate: research.value,
+        observedUrls: research.observedUrls,
+        providerModel: research.providerModel,
+        validationHistory: research.validationHistory,
+        detail: `profile_persistence_failed:${errorDetail(error)}`,
+      });
+      throw new ProfileResearchServiceError(
+        "profile_persistence_failed",
+        errorDetail(error),
+        record.id,
+      );
+    }
     if (!profileRecord) {
       const record = await this.persistRun({
         userId: input.userId,
@@ -194,11 +212,11 @@ export class ProfileResearchService {
         observedUrls: research.observedUrls,
         providerModel: research.providerModel,
         validationHistory: research.validationHistory,
-        detail: "profile_persistence_failed",
+        detail: "profile_persistence_failed:no_record",
       });
       throw new ProfileResearchServiceError(
         "profile_persistence_failed",
-        undefined,
+        "no_record",
         record.id,
       );
     }
@@ -283,8 +301,6 @@ export class ProfileResearchService {
       detail: input.detail,
     };
     const record = await this.store.createRun({
-      id: undefined as never,
-      createdAt: undefined as never,
       userId: input.userId,
       adaptationResolutionRunId: input.resolutionRunId,
       resumedResolutionRunId: input.resumedResolutionRunId ?? null,
