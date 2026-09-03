@@ -102,7 +102,7 @@ export class AdaptationResolutionService {
     }
     if (previous.stage === "ready_for_planning") return previous;
 
-    let profileRecordId = input.profileRecordId ?? previous.profileRecordId;
+    const profileRecordId = input.profileRecordId ?? previous.profileRecordId;
     let registryRecordId = input.registryRecordId ?? previous.registryRecordId;
 
     if (previous.stage === "awaiting_decision_review") {
