@@ -84,6 +84,11 @@ import {
 } from "./languages/documents/real-document-workflow.js";
 import { registerRealCurriculumDocumentWorkflowRoutes } from "./languages/documents/real-document-workflow-routes.js";
 import {
+  curriculumUnitReviewService,
+  type CurriculumUnitReviewService,
+} from "./languages/documents/unit-review.js";
+import { registerCurriculumUnitReviewRoutes } from "./languages/documents/unit-review-routes.js";
+import {
   productionLessonGenerationService,
   type ProductionLessonGenerationService,
 } from "./languages/generation/service.js";
@@ -133,6 +138,7 @@ type ServerDependencies = {
   languageAudioStorage?: LanguageAudioStorage;
   curriculumDocumentService?: CurriculumDocumentService;
   realCurriculumDocumentWorkflow?: RealCurriculumDocumentWorkflow;
+  curriculumUnitReviewService?: CurriculumUnitReviewService;
   productionLessonGenerationService?: ProductionLessonGenerationService;
   curriculumOrchestrationService?: CurriculumOrchestrationService;
   languageKnowledgeService?: LanguageKnowledgeService;
@@ -266,6 +272,10 @@ export function configureServer(
     workflow:
       dependencies.realCurriculumDocumentWorkflow ??
       realCurriculumDocumentWorkflow,
+  });
+  registerCurriculumUnitReviewRoutes(server, {
+    authStore: configuredAuthStore,
+    service: dependencies.curriculumUnitReviewService ?? curriculumUnitReviewService,
   });
   registerProductionLessonGenerationRoutes(server, {
     authStore: configuredAuthStore,
