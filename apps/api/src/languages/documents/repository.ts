@@ -89,16 +89,22 @@ export type ReserveCurriculumDocumentVersionInput = {
 };
 
 export type ReserveCurriculumDocumentVersionResult =
-  | ({ kind: "reserved" | "existing" } & CurriculumDocumentWithVersion)
-  | { kind: "identity_conflict" | "version_conflict" };
+  | ({ kind: "reserved" } & CurriculumDocumentWithVersion)
+  | ({ kind: "existing" } & CurriculumDocumentWithVersion)
+  | { kind: "identity_conflict" }
+  | { kind: "version_conflict" };
 
 export type AttachExtractedTextResult =
-  | { kind: "updated" | "existing"; version: CurriculumDocumentVersionRecord }
-  | { kind: "not_found" | "text_conflict" | "storage_not_ready" };
+  | { kind: "updated"; version: CurriculumDocumentVersionRecord }
+  | { kind: "existing"; version: CurriculumDocumentVersionRecord }
+  | { kind: "not_found" }
+  | { kind: "text_conflict" }
+  | { kind: "storage_not_ready" };
 
 export type BeginCompilationResult =
   | { kind: "started"; run: CurriculumCompilationRunRecord }
-  | { kind: "not_found" | "not_extractable" };
+  | { kind: "not_found" }
+  | { kind: "not_extractable" };
 
 export interface CurriculumDocumentStore {
   listDocuments(userId: string): Promise<CurriculumDocumentRecord[]>;
@@ -162,14 +168,6 @@ async function findVersion(documentRecordId: string, documentVersion: string, ex
   const result = rows<DbVersion>(await executor.execute(sql`SELECT * FROM language_curriculum_document_versions WHERE document_record_id=${documentRecordId} AND document_version=${documentVersion} LIMIT 1`));
   return result[0] ? mapVersion(result[0]) : null;
 }
-async function findVersionById(versionId: string) {
-  const result = rows<DbVersion>(await getDb().execute(sql`SELECT * FROM language_curriculum_document_versions WHERE id=${versionId} LIMIT 1`));
-  return result[0] ? mapVersion(result[0]) : null;
-}
-async function findRun(runId: string) {
-  const result = rows<DbRun>(await getDb().execute(sql`SELECT * FROM language_curriculum_compilation_runs WHERE id=${runId} LIMIT 1`));
-  return result[0] ? mapRun(result[0]) : null;
-}
 
 export const curriculumDocumentStore: CurriculumDocumentStore = {
   async listDocuments(userId) {
@@ -212,13 +210,13 @@ export const curriculumDocumentStore: CurriculumDocumentStore = {
   },
 
   async markStorageReady(versionId) {
-    await getDb().execute(sql`UPDATE language_curriculum_document_versions SET storage_status='ready', updated_at=now() WHERE id=${versionId}`);
-    return findVersionById(versionId);
+    const updated = rows<DbVersion>(await getDb().execute(sql`UPDATE language_curriculum_document_versions SET storage_status='ready', updated_at=now() WHERE id=${versionId} RETURNING *`));
+    return updated[0] ? mapVersion(updated[0]) : null;
   },
 
   async markStorageFailed(versionId) {
-    await getDb().execute(sql`UPDATE language_curriculum_document_versions SET storage_status='failed', updated_at=now() WHERE id=${versionId}`);
-    return findVersionById(versionId);
+    const updated = rows<DbVersion>(await getDb().execute(sql`UPDATE language_curriculum_document_versions SET storage_status='failed', updated_at=now() WHERE id=${versionId} RETURNING *`));
+    return updated[0] ? mapVersion(updated[0]) : null;
   },
 
   async attachExtractedText(input) {
@@ -226,9 +224,12 @@ export const curriculumDocumentStore: CurriculumDocumentStore = {
     if (!owned) return { kind: "not_found" };
     if (owned.version.storageStatus !== "ready") return { kind: "storage_not_ready" };
     if (owned.version.extractionStatus === "ready") return owned.version.extractedTextSha256 === input.extractedTextSha256 ? { kind: "existing", version: owned.version } : { kind: "text_conflict" };
-    await getDb().execute(sql`UPDATE language_curriculum_document_versions SET extracted_text=${input.extractedText}, extracted_text_sha256=${input.extractedTextSha256}, extraction_status='ready', extraction_method=${input.extractionMethod}, updated_at=now() WHERE id=${owned.version.id} AND extraction_status<>'ready'`);
-    const version = await findVersionById(owned.version.id);
-    return version?.extractedTextSha256 === input.extractedTextSha256 ? { kind: "updated", version } : { kind: "text_conflict" };
+
+    const updated = rows<DbVersion>(await getDb().execute(sql`UPDATE language_curriculum_document_versions SET extracted_text=${input.extractedText}, extracted_text_sha256=${input.extractedTextSha256}, extraction_status='ready', extraction_method=${input.extractionMethod}, updated_at=now() WHERE id=${owned.version.id} AND extraction_status<>'ready' RETURNING *`));
+    if (updated[0]) return { kind: "updated", version: mapVersion(updated[0]) };
+
+    const current = await this.findVersionForUser(input.userId, input.documentId, input.documentVersion);
+    return current?.version.extractedTextSha256 === input.extractedTextSha256 ? { kind: "existing", version: current.version } : { kind: "text_conflict" };
   },
 
   async beginCompilation(input) {
@@ -243,20 +244,21 @@ export const curriculumDocumentStore: CurriculumDocumentStore = {
   async completeCompilation(input) {
     const owned = await this.findCompilationForUser(input.userId, input.runId);
     if (!owned || owned.status !== "running") return null;
+
     return getDb().transaction(async (tx) => {
       for (const unit of input.candidate.value.units) {
         await tx.execute(sql`INSERT INTO language_curriculum_units (compilation_run_id, unit_id, spec_version, unit_order, status, spec) VALUES (${input.runId}, ${unit.identity.unitId}, ${unit.specVersion}, ${unit.identity.unitOrder}, ${unit.status}, ${JSON.stringify(unit)}::jsonb)`);
       }
-      await tx.execute(sql`UPDATE language_curriculum_compilation_runs SET status='ready', attempts=${input.candidate.attempts}, validation_history=${JSON.stringify(input.candidate.validationHistory)}::jsonb, completed_at=now() WHERE id=${input.runId} AND status='running'`);
-      return findRun(input.runId);
+      const updated = rows<DbRun>(await tx.execute(sql`UPDATE language_curriculum_compilation_runs SET status='ready', attempts=${input.candidate.attempts}, validation_history=${JSON.stringify(input.candidate.validationHistory)}::jsonb, completed_at=now() WHERE id=${input.runId} AND status='running' RETURNING *`));
+      return updated[0] ? mapRun(updated[0]) : null;
     });
   },
 
   async failCompilation(input) {
     const owned = await this.findCompilationForUser(input.userId, input.runId);
     if (!owned || owned.status !== "running") return null;
-    await getDb().execute(sql`UPDATE language_curriculum_compilation_runs SET status='failed', validation_history=${JSON.stringify(input.validationHistory)}::jsonb, error_code=${input.errorCode}, completed_at=now() WHERE id=${input.runId} AND status='running'`);
-    return findRun(input.runId);
+    const updated = rows<DbRun>(await getDb().execute(sql`UPDATE language_curriculum_compilation_runs SET status='failed', validation_history=${JSON.stringify(input.validationHistory)}::jsonb, error_code=${input.errorCode}, completed_at=now() WHERE id=${input.runId} AND status='running' RETURNING *`));
+    return updated[0] ? mapRun(updated[0]) : null;
   },
 
   async findCompilationForUser(userId, runId) {
