@@ -1,5 +1,4 @@
 import OpenAI from "openai";
-import { zodTextFormat } from "openai/helpers/zod";
 import { z } from "zod";
 import {
   validateAdaptationPlan,
@@ -68,7 +67,8 @@ Reglas de autoridad:
 - Puedes resolver varios requirements de la misma researchTask con una sola
   decisión sólo si realmente comparten el mismo problema y alcance.
 - La IA nunca puede declarar una decisión validated.
-- Devuelve sólo la estructura solicitada, sin Markdown ni comentarios externos.
+- Devuelve sólo un objeto JSON válido con la estructura solicitada, sin Markdown ni
+  comentarios externos. La validación canónica será realizada por MemoOS después.
 `.trim();
 
 const proposalSchema = z
@@ -580,7 +580,12 @@ export interface AdaptationDecisionProposer {
 type ParsedDecisionResponse = {
   status?: string;
   output_parsed?: unknown;
+  output_text?: string;
   output?: unknown;
+};
+
+type JsonObjectTextFormat = {
+  type: "json_object";
 };
 
 type DecisionResponseRequester = (request: {
@@ -589,7 +594,7 @@ type DecisionResponseRequester = (request: {
   input: string;
   store: false;
   text: {
-    format: ReturnType<typeof zodTextFormat>;
+    format: JsonObjectTextFormat;
   };
 }) => Promise<ParsedDecisionResponse>;
 
@@ -615,12 +620,23 @@ function parseProviderCandidate(response: ParsedDecisionResponse) {
   if (response.status && response.status !== "completed") {
     throw new StructuredCandidateBoundaryError("incomplete_response");
   }
-  if (response.output_parsed == null) {
-    throw new StructuredCandidateBoundaryError(
-      responseContainsRefusal(response.output) ? "refusal" : "empty_response",
-    );
+
+  if (response.output_parsed != null) return response.output_parsed;
+
+  if (responseContainsRefusal(response.output)) {
+    throw new StructuredCandidateBoundaryError("refusal");
   }
-  return response.output_parsed;
+
+  const outputText = response.output_text?.trim();
+  if (!outputText) {
+    throw new StructuredCandidateBoundaryError("empty_response");
+  }
+
+  try {
+    return JSON.parse(outputText) as unknown;
+  } catch {
+    return outputText;
+  }
 }
 
 function buildDecisionInput(
@@ -713,10 +729,7 @@ export class OpenAIAdaptationDecisionProposer
       input: buildDecisionInput(input, previousIssues),
       store: false as const,
       text: {
-        format: zodTextFormat(
-          adaptationDecisionCandidateSchema,
-          "adaptation_decision_candidate",
-        ),
+        format: { type: "json_object" as const },
       },
     };
 
@@ -728,6 +741,6 @@ export class OpenAIAdaptationDecisionProposer
     }
 
     const client = new OpenAI({ apiKey });
-    return client.responses.parse(request);
+    return client.responses.create(request);
   }
 }
