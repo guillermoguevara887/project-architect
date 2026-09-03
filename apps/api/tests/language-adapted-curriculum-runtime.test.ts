@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  compileAdaptationPlan,
+  compileInitialAdaptationPlan,
   validateAdaptationPlan,
 } from "../src/languages/adaptation/adaptation-plan.js";
 import {
@@ -94,7 +94,7 @@ test("M5 golden runtime validates end to end from adapted unit to a concrete Les
 });
 
 test("AdaptedUnitSpec refuses an initial M4 plan that still has unresolved gaps", () => {
-  const compilation = compileAdaptationPlan({
+  const compilation = compileInitialAdaptationPlan({
     curriculum: a1U01CurriculumFixture,
     languageProfile: germanLanguageProfileFixture,
     registry: germanDecisionRegistryFixture,
