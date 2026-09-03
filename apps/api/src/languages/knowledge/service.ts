@@ -1,7 +1,15 @@
 import { createHash } from "node:crypto";
-import type { AdaptationDecisionCandidate } from "../ai/adaptation-decision-proposer.js";
+import {
+  validateAdaptationDecisionCandidate,
+  type AdaptationDecisionCandidate,
+} from "../ai/adaptation-decision-proposer.js";
+import type { AdaptationPlan } from "../adaptation/adaptation-plan.js";
+import type { CurriculumUnitSpec } from "../curriculum/curriculum-unit-spec.js";
 import { languageDecisionRefKey } from "../decisions/language-decision-registry.js";
-import { validateLanguageDecisionRegistry, type LanguageDecisionRegistry } from "../decisions/language-decision-registry.js";
+import {
+  validateLanguageDecisionRegistry,
+  type LanguageDecisionRegistry,
+} from "../decisions/language-decision-registry.js";
 import { validateLanguageProfile, type LanguageProfile } from "../profile/language-profile.js";
 import {
   languageKnowledgeStore,
@@ -79,7 +87,8 @@ export class LanguageKnowledgeService {
     userId: string;
     profileRecordId: string;
     baseRegistryRecordId: string;
-    adaptationPlanRef: { id: string; version: string };
+    curriculum: CurriculumUnitSpec;
+    adaptationPlan: AdaptationPlan;
     candidate: AdaptationDecisionCandidate;
   }): Promise<DecisionProposalRecord[]> {
     const [profile, registry] = await Promise.all([
@@ -91,18 +100,24 @@ export class LanguageKnowledgeService {
     if (registry.profileRecordId !== profile.id) {
       throw new LanguageKnowledgeServiceError("knowledge_context_mismatch", "registry_profile_binding_mismatch");
     }
-    if (
-      candidate.registryRef.id !== registry.registry.identity.registryId ||
-      candidate.registryRef.version !== registry.registry.version ||
-      candidate.adaptationPlanRef.id !== input.adaptationPlanRef.id ||
-      candidate.adaptationPlanRef.version !== input.adaptationPlanRef.version
-    ) {
-      throw new LanguageKnowledgeServiceError("invalid_decision_candidate", "candidate_source_binding_mismatch");
+
+    const candidateValidation = validateAdaptationDecisionCandidate(input.candidate, {
+      curriculum: input.curriculum,
+      languageProfile: profile.profile,
+      registry: registry.registry,
+      adaptationPlan: input.adaptationPlan,
+      researchTaskRef: input.candidate.researchTaskRef,
+    });
+    if (!candidateValidation.valid) {
+      throw new LanguageKnowledgeServiceError(
+        "invalid_decision_candidate",
+        issueSummary(candidateValidation.issues),
+      );
     }
-    if (candidate.disposition === "needs_upstream_research") return [];
+    if (input.candidate.disposition === "needs_upstream_research") return [];
 
     const records: DecisionProposalRecord[] = [];
-    for (const proposal of candidate.proposals) {
+    for (const proposal of input.candidate.proposals) {
       const validation = validateDecisionProposalForReview(proposal, registry.registry, profile.profile);
       if (!validation.valid) {
         throw new LanguageKnowledgeServiceError("invalid_decision_candidate", issueSummary(validation.issues));
@@ -111,8 +126,11 @@ export class LanguageKnowledgeService {
         userId: input.userId,
         profileRecordId: profile.id,
         baseRegistryRecordId: registry.id,
-        adaptationPlanRef: input.adaptationPlanRef,
-        researchTaskRef: candidate.researchTaskRef,
+        adaptationPlanRef: {
+          id: input.adaptationPlan.identity.adaptationPlanId,
+          version: input.adaptationPlan.version,
+        },
+        researchTaskRef: input.candidate.researchTaskRef,
         proposal,
         proposalSha256: sha(proposal),
       });
