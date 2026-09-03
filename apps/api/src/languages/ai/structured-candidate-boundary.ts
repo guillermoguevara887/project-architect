@@ -37,6 +37,7 @@ export type StructuredCandidateBoundaryOptions<T> = {
 };
 
 export type StructuredCandidateBoundaryErrorCode =
+  | "invalid_input"
   | "not_configured"
   | "provider_error"
   | "refusal"
