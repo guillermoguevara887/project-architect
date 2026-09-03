@@ -103,6 +103,11 @@ import {
   type AdaptationResolutionService,
 } from "./languages/resolution/service.js";
 import { registerAdaptationResolutionRoutes } from "./languages/resolution/routes.js";
+import {
+  profileResearchService,
+  type ProfileResearchService,
+} from "./languages/profile-research/service.js";
+import { registerProfileResearchRoutes } from "./languages/profile-research/routes.js";
 
 type ServerDependencies = {
   authStore?: AuthStore;
@@ -132,6 +137,7 @@ type ServerDependencies = {
   curriculumOrchestrationService?: CurriculumOrchestrationService;
   languageKnowledgeService?: LanguageKnowledgeService;
   adaptationResolutionService?: AdaptationResolutionService;
+  profileResearchService?: ProfileResearchService;
 };
 
 function databaseFailureReason(error: unknown) {
@@ -282,6 +288,10 @@ export function configureServer(
     service:
       dependencies.adaptationResolutionService ??
       adaptationResolutionService,
+  });
+  registerProfileResearchRoutes(server, {
+    authStore: configuredAuthStore,
+    service: dependencies.profileResearchService ?? profileResearchService,
   });
   registerLanguageAudioRoutes(server, {
     authStore: configuredAuthStore,
