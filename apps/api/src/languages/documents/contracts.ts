@@ -5,6 +5,11 @@ import {
   semanticVersionSchema,
 } from "../curriculum/primitives.js";
 
+const preservedTextSchema = z
+  .string()
+  .min(1)
+  .refine((value) => value.trim().length > 0, "Text cannot be blank");
+
 export const curriculumDocumentSourceFormatSchema = z.enum([
   "pdf_extracted_text",
   "docx_extracted_text",
@@ -66,7 +71,7 @@ export const ingestCurriculumDocumentSchema = z
     originalFilename: requiredTextSchema.max(255),
     mediaType: requiredTextSchema.max(160),
     fileBase64: base64Schema,
-    extractedText: requiredTextSchema.optional(),
+    extractedText: preservedTextSchema.optional(),
     extractionMethod: requiredTextSchema.max(120).optional(),
   })
   .strict();
@@ -77,7 +82,7 @@ export type IngestCurriculumDocumentInput = z.infer<
 
 export const attachCurriculumExtractedTextSchema = z
   .object({
-    extractedText: requiredTextSchema,
+    extractedText: preservedTextSchema,
     extractionMethod: requiredTextSchema.max(120),
   })
   .strict();
