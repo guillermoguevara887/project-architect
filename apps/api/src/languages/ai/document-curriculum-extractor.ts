@@ -1,5 +1,4 @@
 import OpenAI from "openai";
-import { zodTextFormat } from "openai/helpers/zod";
 import { z } from "zod";
 import {
   curriculumUnitSpecSchema,
@@ -53,7 +52,8 @@ Reglas obligatorias:
   unidad canonical.
 - Incluye los quality gates blocking de curriculum_fidelity y
   linguistic_projection requeridos por CurriculumUnitSpec.
-- Devuelve sólo la estructura solicitada, sin Markdown ni comentarios externos.
+- Devuelve sólo un objeto JSON válido con la estructura solicitada, sin Markdown ni
+  comentarios externos. La validación canónica será realizada por MemoOS después.
 `.trim();
 
 const unitCountHintSchema = z
@@ -292,7 +292,12 @@ export interface CurriculumDocumentExtractor {
 type ParsedCurriculumResponse = {
   status?: string;
   output_parsed?: unknown;
+  output_text?: string;
   output?: unknown;
+};
+
+type JsonObjectTextFormat = {
+  type: "json_object";
 };
 
 type CurriculumResponseRequester = (request: {
@@ -301,7 +306,7 @@ type CurriculumResponseRequester = (request: {
   input: string;
   store: false;
   text: {
-    format: ReturnType<typeof zodTextFormat>;
+    format: JsonObjectTextFormat;
   };
 }) => Promise<ParsedCurriculumResponse>;
 
@@ -329,13 +334,24 @@ function parseProviderCandidate(response: ParsedCurriculumResponse) {
     throw new StructuredCandidateBoundaryError("incomplete_response");
   }
 
-  if (response.output_parsed == null) {
-    throw new StructuredCandidateBoundaryError(
-      responseContainsRefusal(response.output) ? "refusal" : "empty_response",
-    );
+  if (response.output_parsed != null) return response.output_parsed;
+
+  if (responseContainsRefusal(response.output)) {
+    throw new StructuredCandidateBoundaryError("refusal");
   }
 
-  return response.output_parsed;
+  const outputText = response.output_text?.trim();
+  if (!outputText) {
+    throw new StructuredCandidateBoundaryError("empty_response");
+  }
+
+  try {
+    return JSON.parse(outputText) as unknown;
+  } catch {
+    // Let the canonical Zod/domain boundary classify malformed provider content as
+    // an invalid candidate so it can participate in the same bounded retry loop.
+    return outputText;
+  }
 }
 
 function buildDocumentInput(
@@ -413,10 +429,7 @@ export class OpenAICurriculumDocumentExtractor
       input: buildDocumentInput(input, previousIssues),
       store: false as const,
       text: {
-        format: zodTextFormat(
-          curriculumDocumentCandidateSchema,
-          "curriculum_document_candidate",
-        ),
+        format: { type: "json_object" as const },
       },
     };
 
@@ -428,6 +441,6 @@ export class OpenAICurriculumDocumentExtractor
     }
 
     const client = new OpenAI({ apiKey });
-    return client.responses.parse(request);
+    return client.responses.create(request);
   }
 }
