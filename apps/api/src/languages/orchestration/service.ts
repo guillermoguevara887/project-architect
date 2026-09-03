@@ -113,7 +113,6 @@ export class CurriculumOrchestrationService {
     }
 
     try {
-      let current = run;
       for (const lesson of lessons) {
         const generated = await this.lessonGeneration.generate(userId, lesson);
         const appended = await this.store.appendGenerationRun({
@@ -129,7 +128,6 @@ export class CurriculumOrchestrationService {
             run.id,
           );
         }
-        current = appended;
       }
 
       const completed = await this.store.completeRun(userId, run.id);
