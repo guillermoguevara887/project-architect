@@ -88,6 +88,11 @@ import {
   type CurriculumOrchestrationService,
 } from "./languages/orchestration/service.js";
 import { registerCurriculumOrchestrationRoutes } from "./languages/orchestration/routes.js";
+import {
+  languageKnowledgeService,
+  type LanguageKnowledgeService,
+} from "./languages/knowledge/service.js";
+import { registerLanguageKnowledgeRoutes } from "./languages/knowledge/routes.js";
 
 type ServerDependencies = {
   authStore?: AuthStore;
@@ -114,6 +119,7 @@ type ServerDependencies = {
   curriculumDocumentService?: CurriculumDocumentService;
   productionLessonGenerationService?: ProductionLessonGenerationService;
   curriculumOrchestrationService?: CurriculumOrchestrationService;
+  languageKnowledgeService?: LanguageKnowledgeService;
 };
 
 function databaseFailureReason(error: unknown) {
@@ -248,6 +254,10 @@ export function configureServer(
     service:
       dependencies.curriculumOrchestrationService ??
       curriculumOrchestrationService,
+  });
+  registerLanguageKnowledgeRoutes(server, {
+    authStore: configuredAuthStore,
+    service: dependencies.languageKnowledgeService ?? languageKnowledgeService,
   });
   registerLanguageAudioRoutes(server, {
     authStore: configuredAuthStore,
