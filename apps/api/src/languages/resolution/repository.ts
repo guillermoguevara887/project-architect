@@ -122,12 +122,17 @@ export const adaptationResolutionStore: AdaptationResolutionStore = {
     const result = rows<DbContext>(await getDb().execute(sql`
       SELECT
         unit.id AS curriculum_unit_record_id,
-        unit.spec AS curriculum,
+        review.promoted_spec AS curriculum,
         profile.id AS profile_record_id,
         profile.profile AS language_profile,
         registry.id AS registry_record_id,
         registry.registry AS registry
       FROM language_curriculum_units unit
+      JOIN language_curriculum_unit_reviews review
+        ON review.source_unit_record_id = unit.id
+        AND review.user_id = ${input.userId}
+        AND review.action = 'accepted'
+        AND review.promoted_spec IS NOT NULL
       JOIN language_curriculum_compilation_runs compilation
         ON compilation.id = unit.compilation_run_id
       JOIN language_curriculum_document_versions version
@@ -178,6 +183,12 @@ export const adaptationResolutionStore: AdaptationResolutionStore = {
         ${input.detail ?? null},
         ${input.contentSha256}
       FROM language_curriculum_units unit
+      JOIN language_curriculum_unit_reviews review
+        ON review.source_unit_record_id = unit.id
+        AND review.user_id = ${input.userId}
+        AND review.action = 'accepted'
+        AND review.promoted_spec IS NOT NULL
+        AND review.promoted_spec = ${JSON.stringify(input.context.curriculum)}::jsonb
       JOIN language_curriculum_compilation_runs compilation
         ON compilation.id = unit.compilation_run_id
       JOIN language_curriculum_document_versions version
