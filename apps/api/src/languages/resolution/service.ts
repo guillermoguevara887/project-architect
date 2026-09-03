@@ -13,6 +13,7 @@ import {
 import {
   compileVersionedAdaptationPlan,
   finalizeResolvedAdaptationPlan,
+  hasPromotableProfileEvidenceForTask,
   selectAdaptationResolutionAction,
 } from "./adaptation-resolution-runtime.js";
 import {
@@ -238,6 +239,25 @@ export class AdaptationResolutionService {
         adaptationPlan: plan,
         blockedResearchTaskRefs: action.researchTaskRefs,
         detail: "language_profile_update_required",
+      });
+    }
+
+    if (
+      !hasPromotableProfileEvidenceForTask({
+        curriculum: context.curriculum,
+        languageProfile: context.languageProfile,
+        plan,
+        researchTaskRef: action.researchTaskRef,
+      })
+    ) {
+      return this.persistRun({
+        userId,
+        context,
+        previousRunId,
+        stage: "awaiting_profile_research",
+        adaptationPlan: plan,
+        blockedResearchTaskRefs: [action.researchTaskRef],
+        detail: "profile_claim_evidence_required_before_registry_reasoning",
       });
     }
 
