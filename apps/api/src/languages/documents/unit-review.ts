@@ -148,7 +148,7 @@ export type CurriculumUnitReviewServiceErrorCode =
 
 export class CurriculumUnitReviewServiceError extends Error {
   constructor(readonly code: CurriculumUnitReviewServiceErrorCode, readonly detail?: string) {
-    super(detail ?? code);
+    super(detail ? `${code}: ${detail}` : code);
     this.name = "CurriculumUnitReviewServiceError";
   }
 }
