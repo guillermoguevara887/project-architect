@@ -37,6 +37,19 @@ export type AdaptationResolutionAction =
       stage: "ready_for_planning";
     };
 
+const PROFILE_SECTION_BY_DOMAIN = {
+  "writing.beginner_system": "writingSystem",
+  "phonology.initial_intelligibility": "phonology",
+  "sociolinguistics.initial_register": "sociolinguisticSystem",
+  "participant.basic_reference": "participantReference",
+  "nominal.beginner_package": "nominalSystem",
+  "predication.identity_state": "predicationSystem",
+  "age.basic_expression": "semanticSystems",
+  "possession.basic": "semanticSystems",
+  "action.basic_pattern": "verbalSystem",
+  "localization.first_contact": "sociolinguisticSystem",
+} as const satisfies Record<string, keyof LanguageProfile>;
+
 function decisionByRef(
   registry: LanguageDecisionRegistry,
   ref: LanguageDecisionRef,
@@ -55,6 +68,68 @@ function uniqueDecisionRefs(refs: LanguageDecisionRef[]) {
   const map = new Map<string, LanguageDecisionRef>();
   for (const ref of refs) map.set(languageDecisionRefKey(ref), ref);
   return [...map.values()];
+}
+
+function collectFeatureIds(value: unknown, target = new Set<string>()) {
+  if (Array.isArray(value)) {
+    for (const entry of value) collectFeatureIds(entry, target);
+    return target;
+  }
+  if (!value || typeof value !== "object") return target;
+  const record = value as Record<string, unknown>;
+  if (typeof record.featureId === "string") target.add(record.featureId);
+  for (const entry of Object.values(record)) collectFeatureIds(entry, target);
+  return target;
+}
+
+/**
+ * M11 promotion requires actual LanguageProfile claims, not merely reviewed
+ * section coverage. Before paying for registry reasoning, M13 checks that each
+ * linked gap has at least one cross-checked/human-reviewed, non-low-confidence
+ * claim inside the Profile section responsible for that requirement.
+ */
+export function hasPromotableProfileEvidenceForTask(input: {
+  curriculum: CurriculumUnitSpec;
+  languageProfile: LanguageProfile;
+  plan: AdaptationPlan;
+  researchTaskRef: string;
+}) {
+  const task = input.plan.researchPlan.find(
+    (entry) => entry.researchTaskId === input.researchTaskRef,
+  );
+  if (!task) return false;
+  const gapById = new Map(input.plan.gapAnalysis.map((gap) => [gap.gapId, gap] as const));
+  const requirementById = new Map(
+    input.curriculum.adaptationRequirements.map((requirement) => [
+      requirement.requirementId,
+      requirement,
+    ] as const),
+  );
+  const eligibleClaimFeatureRefs = new Set(
+    input.languageProfile.evidenceRegistry.claims
+      .filter(
+        (claim) =>
+          claim.confidence !== "low" &&
+          (claim.reviewStatus === "cross_checked" ||
+            claim.reviewStatus === "human_reviewed"),
+      )
+      .map((claim) => claim.featureRef),
+  );
+
+  for (const gapRef of task.gapRefs) {
+    const gap = gapById.get(gapRef);
+    const requirement = gap ? requirementById.get(gap.requirementRef) : undefined;
+    if (!requirement) return false;
+    const section = PROFILE_SECTION_BY_DOMAIN[
+      requirement.domain as keyof typeof PROFILE_SECTION_BY_DOMAIN
+    ];
+    if (!section) return false;
+    const sectionFeatureIds = collectFeatureIds(input.languageProfile[section]);
+    if (![...sectionFeatureIds].some((featureId) => eligibleClaimFeatureRefs.has(featureId))) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function requirementDecisionRefs(
