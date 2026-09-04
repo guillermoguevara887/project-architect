@@ -1,0 +1,126 @@
+Marco maestro neutro A1 - Unidad 1
+
+MEMOOS IDIOMAS | MARCO MAESTRO A1
+MEMOOS IDIOMAS | CURRÍCULO BASE A1
+Marco maestro neutro
+Unidad 1: primer contacto, identidad y supervivencia comunicativa
+Reconstruido a partir del bloque A1_1011-1018 | Versión 1.0 | Septiembre de 2026
+
+Este documento no traduce ocho lecciones de alemán. Extrae su intención pedagógica, reordena las dependencias y define un núcleo adaptable a cualquier idioma meta.
+
+1. Propósito y alcance
+Este marco especifica qué debe aprender una persona principiante durante su primera unidad funcional y cómo puede MemoOS convertir ese contenido en lecciones reales para un idioma determinado.
+Resultado de la unidad: La persona puede iniciar y cerrar una interacción breve, presentarse, pedir datos básicos, expresar cómo se siente, indicar dificultades de comprensión, manejar números iniciales y producir una presentación personal corta.
+El marco conserva funciones comunicativas y dependencias pedagógicas, no palabras ni reglas alemanas.
+Cada idioma recibe una realización propia: sistema de escritura, pronunciación, cortesía, orden de palabras, marcación nominal y formas verbales.
+El generador puede condensar o expandir el bloque sin alterar los resultados finales de la unidad.
+Los ejemplos finales deben sonar naturales en el idioma meta y pertenecer a situaciones plausibles para una persona adulta.
+Nivel de entrada: Principiante absoluto. No se presupone vocabulario previo. Si el idioma usa un sistema de escritura nuevo, MemoOS puede insertar una microfase de reconocimiento antes de exigir lectura autónoma.
+Nivel de salida: A1 inicial. La persona controla intercambios memorizados y parcialmente variables, con apoyo visual o repetición cuando sea necesario.
+No pretende: Completar todo A1, enseñar una gramática descriptiva exhaustiva ni replicar la secuencia editorial de los PDFs originales.
+
+2. Arquitectura pedagógica neutra
+Núcleo universal: intenciones como saludar, presentarse, preguntar, reparar la comunicación y describir datos básicos. Debe conservarse en todos los idiomas.
+Adaptador lingüístico: forma real de expresar persona, número, identidad, posesión, cortesía, determinación, escritura y pronunciación. Debe decidirse usando la gramática y el uso auténtico del idioma meta.
+Realización didáctica: diálogos, microtextos, ejercicios, ejemplos culturales, audio y tareas de producción. Debe generarse al nivel del estudiante, reciclando lo ya aprendido.
+Regla de neutralidad: Si una característica del alemán no existe o no es central en el idioma meta, no se reemplaza mecánicamente. Se elimina, se transforma o se sustituye por una dificultad equivalente y útil.
+
+3. Reconstrucción del material fuente
+A1_1011V_DE — Primer contacto: saludos, despedidas, sí/no, agradecimiento, nombre, procedencia, estado personal y preguntas básicas. Se eliminan expresiones regionales alemanas y se adapta el grado de formalidad.
+A1_1012X_DE — Números y contexto social: números hasta 20, edad, saludo según momento o situación y repaso acumulativo. Las fórmulas temporales se usan sólo si son naturales en el idioma meta.
+A1_1013G_DE — Sistema de referencia: referirse a uno mismo y a otras personas, singular/plural, trato formal e informal, sustitución de nombres. Género gramatical, pronombres y artículos se enseñan sólo según el sistema real del idioma.
+A1_1014R_DE — Lectura integrada: microhistoria graduada, comprensión global y específica, corrección, reconstrucción y personalización. Se reemplazan Berlín, profesiones y estructuras alemanas por un contexto coherente con el idioma meta.
+A1_1015V_DE — Supervivencia en el aprendizaje: no comprender, pedir repetición o mayor volumen, preguntar cómo se dice o escribe, admitir que no se sabe. Se priorizan fórmulas frecuentes y socialmente adecuadas.
+A1_1016X_DE — Escritura y deletreo: reconocer signos, nombrarlos, deletrear datos y relacionar sonido con escritura. Alfabeto, silabario, caracteres, transliteración y uso de artículos se adaptan o separan según el idioma.
+A1_1017G_DE — Predicación y posesión: identidad, estado, edad, profesión, posesiones, familia y verbos frecuentes. No se presupone que exista un equivalente directo de ser/estar o tener, ni conjugación por persona.
+A1_1018S_DE — Integración oral: conversación simple, presentación personal, repaso de números y foco de pronunciación. El contraste alemán ei/ie se sustituye por un contraste de alto valor en el idioma meta.
+
+4. Resultados competenciales de la unidad
+Iniciar y cerrar un encuentro breve con una fórmula adecuada al contexto.
+Dar y solicitar nombre, procedencia o residencia y edad, cuando resulte culturalmente apropiado.
+Preguntar cómo está otra persona y responder con al menos tres estados básicos.
+Comprender y producir los números iniciales necesarios para edad, cantidades simples y juegos de reconocimiento.
+Señalar que comprende o no comprende y pedir repetición, aclaración, deletreo o habla más clara.
+Reconocer cómo el idioma meta representa participantes, grupos, identidad, estado y posesión.
+Leer o escuchar una microhistoria compuesta mayoritariamente por material ya conocido.
+Realizar una presentación personal de 45 a 90 segundos con apoyo mínimo.
+Léxico funcional: saludos, despedidas, cortesía, países o lugares, estados personales, números, relaciones cercanas, ocupaciones básicas, objetos frecuentes y acciones de aprendizaje.
+Estrategias: inferir por contexto, solicitar ayuda, repetir, autocorregirse, reutilizar patrones y registrar palabras difíciles.
+Pronunciación y escritura: un contraste fonológico de alto rendimiento y las convenciones mínimas necesarias para reconocer, escribir o identificar nombres y palabras clave.
+
+5. Opciones de granularidad
+Compacta: 10 lecciones para idioma cercano, alfabeto familiar y sesiones más largas.
+Recomendada: 13 lecciones para ruta general de MemoOS para principiantes adultos; mantiene una carga central por lección y reserva la integración para el final.
+Expandida: 15-16 lecciones para sistema de escritura nuevo, morfología densa o necesidad de práctica adicional.
+Decisión para esta unidad: ruta recomendada de 13 lecciones. MemoOS puede condensarla o expandirla sin eliminar resultados competenciales.
+
+6. Ruta recomendada de 13 lecciones
+L1 Abrir y cerrar un encuentro: saludos, despedidas, sí/no, agradecimiento; elegir fórmulas según contexto.
+L2 Nombre y procedencia: preguntar y responder nombre, origen o residencia sin imponer un verbo equivalente.
+L3 Cómo estás y reciprocidad: estado positivo, neutro y negativo; preguntar, responder y devolver la pregunta.
+L4 Números 0-10 y cantidades mínimas: conteo, cantidad y producción inteligible.
+L5 Números 11-20 y edad: estructura auténtica de edad; algunos idiomas usan tener, cópula, clasificador, contador o ausencia de verbo.
+L6 Contexto, cortesía y distancia social: tratamiento, título, honorífico, partícula, forma verbal o elección léxica según el idioma.
+L7 Ayúdame a comprender: entiendo/no entiendo, repetición, claridad, cómo se dice y qué significa.
+L8 Sistema de escritura, nombres y deletreo: alfabeto, signos, caracteres, segmentación o estrategia auténtica equivalente.
+L9 Hablar de participantes y grupos: primera, segunda y tercera referencia; singular/plural cuando exista; nombres, sustitución o elisión.
+L10 Nombres, cantidad y determinación: género o clase nominal, artículo, clasificador, contador, plural, forma citativa o ausencia de marcación sólo cuando corresponda.
+L11 Identidad, estado y descripción básica: cópula, varias cópulas, omisión, partículas, concordancia o cambio de orden según el idioma; no trasladar sein/ser/estar.
+L12 Posesión, relaciones y acciones frecuentes: posesión mediante verbo, existencia, construcción locativa o marcador posesivo; flexión sólo en la cantidad funcional necesaria.
+L13 Microhistoria y misión final: integración de saludos, nombre, origen/residencia, edad opcional, estado, relación o posesión, acciones, reparación y cierre; al menos 85 % de material ya trabajado.
+
+7. Contrato del adaptador lingüístico
+Escritura: ¿qué sistema usa?, ¿el estudiante ya lo conoce?, ¿se necesita transliteración temporal? Salida: ruta normal, microfase previa o lección ampliada.
+Pronunciación: ¿qué contraste impide más la comprensión en este bloque? Salida: un foco concreto, ejemplos mínimos y audio contrastivo.
+Cortesía: ¿cómo se marca distancia social? Salida: pronombre, título, honorífico, partícula, forma verbal o elección léxica.
+Referencia: ¿los participantes se expresan, se omiten o se clasifican? Salida: repertorio funcional sin tabla artificial.
+Nombres: ¿hay género, clase, artículo, clasificador, contador o plural obligatorio? Salida: paquete de aprendizaje que acompaña a cada sustantivo.
+Identidad/estado: ¿existe cópula?, ¿se omite?, ¿hay formas distintas según función? Salida: patrones separados por significado, no por traducción.
+Edad: ¿qué construcción se usa realmente? Salida: patrón auténtico con números y pregunta adecuada.
+Posesión: ¿se expresa con tener, existir, estar en, genitivo u otra construcción? Salida: una estructura productiva de alta frecuencia.
+Verbos: ¿hay flexión por persona, aspecto, partículas o ausencia de conjugación? Salida: sólo las alternancias necesarias para los resultados de unidad.
+Cultura: ¿qué nombres, lugares, situaciones y preguntas son naturales? Salida: contextos locales plausibles y no estereotipados.
+
+8. Reglas para generar cada lección en MemoOS
+Comenzar por una misión comunicativa y terminar con evidencia observable.
+Introducir un máximo de una carga estructural central por lección; el resto debe ser reciclaje.
+Mantener entre 70 % y 85 % de contenido conocido en textos de integración; subir gradualmente hacia 85 % o más al final.
+Presentar palabras dentro de frases o escenas y conservar el paquete gramatical mínimo que el idioma exige.
+Usar ejemplos nativos y frecuentes. No traducir patrones palabra por palabra desde alemán, español o inglés.
+Distinguir reconocimiento, producción guiada y producción libre.
+Incluir audio cuando pronunciación, tonos, reducción o entonación cambien la interpretación.
+Reciclar nombres, números, estados y estrategias de reparación en lecciones posteriores.
+Evitar que las explicaciones metalingüísticas superen la cantidad de lengua que el estudiante practica.
+Permitir datos ficticios cuando edad, lugar de origen o información familiar resulten sensibles.
+Esqueleto mínimo: objetivo funcional; entrada comprensible; palabras; frases; patrón; comprensión; producción; evidencia de dominio.
+
+9. Evaluación final de la unidad
+Apertura 1 punto; identidad 1; preguntas 2; respuestas 1; números 1; reparación 1; referencia 1; cierre 1.
+Criterio de avance: 7 de 9 puntos, sin cero en apertura, reparación y cierre. Los errores gramaticales se aceptan si no impiden completar la misión.
+Tarea oral: conocer a una persona nueva; saludar, intercambiar datos, preguntar cómo está, aclarar una palabra o dato, mencionar una relación o actividad y despedirse.
+Tarea de comprensión: leer o escuchar una microhistoria y reconstruir quiénes son los personajes, de dónde son, cómo están y qué hacen o tienen.
+Tarea de escritura: completar un perfil breve y registrar un nombre o palabra clave usando la convención escrita trabajada.
+
+10. Control de calidad y antisesgo
+¿La versión enseña la función comunicativa prevista o sólo traduce ejemplos alemanes?
+¿Cada estructura existe y es frecuente en el idioma meta?
+¿Se evitó imponer género, artículos, pronombres, cópula, conjugación o alfabeto donde no corresponden?
+¿La cortesía refleja relaciones reales y no una oposición simplificada formal/informal?
+¿Los nombres, lugares e imágenes son culturalmente plausibles y variados?
+¿La pronunciación elegida tiene valor funcional para principiantes?
+¿Los textos integrados reciclan material conocido y evitan saltos de nivel?
+¿La evaluación exige comunicación y ofrece reparación, no perfección gramatical?
+¿La lección puede dividirse o fusionarse sin perder su resultado observable?
+
+11. Trazabilidad y cobertura
+1011 → lecciones 1-3, 6: saludos, despedidas, nombre, procedencia, estado y respuestas básicas.
+1012 → lecciones 4-6: números, edad, saludos contextuales y práctica acumulativa.
+1013 → lecciones 6, 9-11: referencia personal, pluralidad, trato social y marcación nominal adaptativa.
+1014 → lección 13: microhistoria graduada, comprensión, corrección, reconstrucción y personalización.
+1015 → lección 7: frases de reparación, petición de ayuda y autonomía del aprendiz.
+1016 → lecciones 8, 10: sistema gráfico, deletreo y determinación nominal adaptativa.
+1017 → lecciones 11-12: identidad, estado, posesión y acciones de alta frecuencia.
+1018 → lección 13: conversación integrada, repaso numérico y foco fonológico adaptable.
+
+Conclusión pedagógica: Este bloque fuente produce una primera unidad sólida de 13 lecciones recomendadas. La unidad ya no depende del alemán: queda definida por capacidades, decisiones de adaptación y evidencias que pueden realizarse de forma auténtica en cualquier idioma.
+Material fuente analizado: A1_1011V_DE.pdf, A1_1012X_DE.pdf, A1_1013G_DE.pdf, A1_1014R_DE.pdf, A1_1015V_DE.pdf, A1_1016X_DE.pdf, A1_1017G_DE.pdf y A1_1018S_DE.pdf.

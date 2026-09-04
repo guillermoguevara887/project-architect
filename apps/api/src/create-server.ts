@@ -73,6 +73,46 @@ import {
 import { registerLanguageAudioRoutes } from "./languages/audio-routes.js";
 import { languageStore, type LanguageStore } from "./languages/repository.js";
 import { registerLanguageRoutes } from "./languages/routes.js";
+import {
+  curriculumDocumentService,
+  type CurriculumDocumentService,
+} from "./languages/documents/service.js";
+import { registerCurriculumDocumentRoutes } from "./languages/documents/routes.js";
+import {
+  realCurriculumDocumentWorkflow,
+  type RealCurriculumDocumentWorkflow,
+} from "./languages/documents/real-document-workflow.js";
+import { registerRealCurriculumDocumentWorkflowRoutes } from "./languages/documents/real-document-workflow-routes.js";
+import {
+  curriculumUnitReviewService,
+  type CurriculumUnitReviewService,
+} from "./languages/documents/unit-review.js";
+import { registerCurriculumUnitReviewRoutes } from "./languages/documents/unit-review-routes.js";
+import {
+  productionLessonGenerationService,
+  type ProductionLessonGenerationService,
+} from "./languages/generation/service.js";
+import { registerProductionLessonGenerationRoutes } from "./languages/generation/routes.js";
+import {
+  curriculumOrchestrationService,
+  type CurriculumOrchestrationService,
+} from "./languages/orchestration/service.js";
+import { registerCurriculumOrchestrationRoutes } from "./languages/orchestration/routes.js";
+import {
+  languageKnowledgeService,
+  type LanguageKnowledgeService,
+} from "./languages/knowledge/service.js";
+import { registerLanguageKnowledgeRoutes } from "./languages/knowledge/routes.js";
+import {
+  adaptationResolutionService,
+  type AdaptationResolutionService,
+} from "./languages/resolution/service.js";
+import { registerAdaptationResolutionRoutes } from "./languages/resolution/routes.js";
+import {
+  profileResearchService,
+  type ProfileResearchService,
+} from "./languages/profile-research/service.js";
+import { registerProfileResearchRoutes } from "./languages/profile-research/routes.js";
 
 type ServerDependencies = {
   authStore?: AuthStore;
@@ -96,6 +136,14 @@ type ServerDependencies = {
   languageAudioProvider?: LanguageAudioProvider;
   elevenLabsLanguageAudioProvider?: LanguageAudioProvider;
   languageAudioStorage?: LanguageAudioStorage;
+  curriculumDocumentService?: CurriculumDocumentService;
+  realCurriculumDocumentWorkflow?: RealCurriculumDocumentWorkflow;
+  curriculumUnitReviewService?: CurriculumUnitReviewService;
+  productionLessonGenerationService?: ProductionLessonGenerationService;
+  curriculumOrchestrationService?: CurriculumOrchestrationService;
+  languageKnowledgeService?: LanguageKnowledgeService;
+  adaptationResolutionService?: AdaptationResolutionService;
+  profileResearchService?: ProfileResearchService;
 };
 
 function databaseFailureReason(error: unknown) {
@@ -215,6 +263,46 @@ export function configureServer(
       freeLanguageLessonTitleGenerator,
     dependencies.assimilLanguageLessonProcessor ?? assimilLanguageLessonProcessor,
   );
+  registerCurriculumDocumentRoutes(server, {
+    authStore: configuredAuthStore,
+    service: dependencies.curriculumDocumentService ?? curriculumDocumentService,
+  });
+  registerRealCurriculumDocumentWorkflowRoutes(server, {
+    authStore: configuredAuthStore,
+    workflow:
+      dependencies.realCurriculumDocumentWorkflow ??
+      realCurriculumDocumentWorkflow,
+  });
+  registerCurriculumUnitReviewRoutes(server, {
+    authStore: configuredAuthStore,
+    service: dependencies.curriculumUnitReviewService ?? curriculumUnitReviewService,
+  });
+  registerProductionLessonGenerationRoutes(server, {
+    authStore: configuredAuthStore,
+    service:
+      dependencies.productionLessonGenerationService ??
+      productionLessonGenerationService,
+  });
+  registerCurriculumOrchestrationRoutes(server, {
+    authStore: configuredAuthStore,
+    service:
+      dependencies.curriculumOrchestrationService ??
+      curriculumOrchestrationService,
+  });
+  registerLanguageKnowledgeRoutes(server, {
+    authStore: configuredAuthStore,
+    service: dependencies.languageKnowledgeService ?? languageKnowledgeService,
+  });
+  registerAdaptationResolutionRoutes(server, {
+    authStore: configuredAuthStore,
+    service:
+      dependencies.adaptationResolutionService ??
+      adaptationResolutionService,
+  });
+  registerProfileResearchRoutes(server, {
+    authStore: configuredAuthStore,
+    service: dependencies.profileResearchService ?? profileResearchService,
+  });
   registerLanguageAudioRoutes(server, {
     authStore: configuredAuthStore,
     languageStore: dependencies.languageStore ?? languageStore,
