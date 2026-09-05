@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import OpenAI from "openai";
+import { zodTextFormat } from "openai/helpers/zod";
 import { z } from "zod";
 import {
   OpenAICurriculumDocumentExtractor,
@@ -9,6 +10,12 @@ import {
   type CurriculumDocumentCandidate,
   type MasterDocumentCurriculumInput,
 } from "../src/languages/ai/document-curriculum-extractor.js";
+import {
+  curriculumDocumentGenerationSchema,
+  curriculumDocumentGenerationTextFormat,
+  normalizeCurriculumDocumentGenerationCandidate,
+  type CurriculumDocumentGenerationCandidate,
+} from "../src/languages/ai/document-curriculum-generation-schema.js";
 import {
   runStructuredCandidateBoundary,
   StructuredCandidateBoundaryError,
@@ -48,6 +55,85 @@ function validDocumentCandidate(): CurriculumDocumentCandidate {
     levelId: ingestionInput.levelId,
     units: [unit],
   };
+}
+
+function providerDocumentCandidate(): CurriculumDocumentGenerationCandidate {
+  const candidate = structuredClone(
+    validDocumentCandidate(),
+  ) as unknown as CurriculumDocumentGenerationCandidate;
+
+  for (const unit of candidate.units) {
+    for (const competency of unit.competencies) {
+      competency.privacyPolicy ??= null;
+    }
+
+    for (const collection of [
+      unit.curriculumCore.communicativeFunctions,
+      unit.curriculumCore.semanticConcepts,
+      unit.curriculumCore.lexicalDomains,
+      unit.curriculumCore.quantitativeDomains,
+      unit.curriculumCore.discourseFunctions,
+    ]) {
+      for (const item of collection) item.description ??= null;
+    }
+
+    for (const artifact of unit.curriculumCore.targetArtifacts) {
+      artifact.scalePolicy.min ??= null;
+      artifact.scalePolicy.target ??= null;
+      artifact.scalePolicy.max ??= null;
+      artifact.scalePolicy.equivalenceAllowed ??= null;
+    }
+
+    unit.generationPolicy.structuralLoadPolicy.notes ??= null;
+    unit.generationPolicy.authenticityPolicy.notes ??= null;
+    unit.generationPolicy.localizationPolicy.notes ??= null;
+    unit.assessmentContract.masteryRule.minimumScore ??= null;
+
+    for (const evidence of unit.assessmentContract.evidenceSpecs) {
+      evidence.artifactRef ??= null;
+      evidence.scale ??= null;
+      if (evidence.scale) {
+        evidence.scale.min ??= null;
+        evidence.scale.target ??= null;
+        evidence.scale.max ??= null;
+        evidence.scale.equivalenceAllowed ??= null;
+      }
+    }
+
+    for (const source of unit.provenance.sources) source.title ??= null;
+    for (const mapping of unit.provenance.mappings) {
+      mapping.exclusionReason ??= null;
+    }
+    unit.provenance.transformationNotes ??= null;
+  }
+
+  return curriculumDocumentGenerationSchema.parse(candidate);
+}
+
+type JsonSchemaNode = {
+  type?: unknown;
+  properties?: Record<string, JsonSchemaNode>;
+  required?: string[];
+  additionalProperties?: unknown;
+  items?: JsonSchemaNode | JsonSchemaNode[];
+  [key: string]: unknown;
+};
+
+function visitJsonSchema(
+  value: unknown,
+  visitor: (node: JsonSchemaNode) => void,
+) {
+  if (Array.isArray(value)) {
+    for (const child of value) visitJsonSchema(child, visitor);
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+
+  const node = value as JsonSchemaNode;
+  visitor(node);
+  for (const child of Object.values(node)) {
+    visitJsonSchema(child, visitor);
+  }
 }
 
 test("M6 generic boundary accepts a structurally and semantically valid candidate", async () => {
@@ -126,6 +212,157 @@ test("M6 document candidate validates a real CurriculumUnitSpec through the M1 s
   assert.equal(result.valid, true, JSON.stringify(result.issues, null, 2));
 });
 
+test("M12 provider generation schema builds an OpenAI strict json_schema format", () => {
+  const format = zodTextFormat(
+    curriculumDocumentGenerationSchema,
+    "curriculum_document_candidate",
+  );
+  const schema = format.schema as JsonSchemaNode;
+
+  assert.equal(format.type, "json_schema");
+  assert.equal(format.strict, true);
+  assert.deepEqual(schema.required, [
+    "documentRef",
+    "curriculumId",
+    "levelId",
+    "units",
+  ]);
+
+  const units = schema.properties?.units;
+  assert.ok(units && !Array.isArray(units.items));
+  assert.deepEqual(units.items?.required, [
+    "identity",
+    "scope",
+    "competencies",
+    "curriculumCore",
+    "adaptationRequirements",
+    "learningRoute",
+    "granularityPolicy",
+    "generationPolicy",
+    "assessmentContract",
+    "qualityGates",
+    "provenance",
+    "specVersion",
+    "status",
+  ]);
+
+  let objectSchemaCount = 0;
+  visitJsonSchema(schema, (node) => {
+    assert.equal("default" in node, false);
+    assert.equal("allOf" in node, false);
+    assert.equal("not" in node, false);
+    if ("items" in node) assert.equal(Array.isArray(node.items), false);
+    if (node.type === "object") {
+      objectSchemaCount += 1;
+      assert.equal(node.additionalProperties, false);
+      assert.deepEqual(
+        [...(node.required ?? [])].sort(),
+        Object.keys(node.properties ?? {}).sort(),
+      );
+    }
+  });
+  assert.ok(objectSchemaCount > 1);
+});
+
+test("M12 provider nulls normalize to canonical optionals before canonical validation", () => {
+  const providerCandidate = providerDocumentCandidate();
+  const unit = providerCandidate.units[0]!;
+  const artifact = unit.curriculumCore.targetArtifacts[0]!;
+  const evidence = unit.assessmentContract.evidenceSpecs[0]!;
+  const source = unit.provenance.sources[0]!;
+  const mapping = unit.provenance.mappings[0]!;
+  const unitId = unit.identity.unitId;
+
+  unit.competencies[0]!.privacyPolicy = null;
+  unit.curriculumCore.semanticConcepts[0]!.description = null;
+  artifact.scalePolicy.min = null;
+  artifact.scalePolicy.equivalenceAllowed = null;
+  unit.generationPolicy.structuralLoadPolicy.notes = null;
+  evidence.artifactRef = null;
+  evidence.scale = null;
+  source.title = null;
+  mapping.exclusionReason = null;
+  unit.provenance.transformationNotes = null;
+
+  const normalized = normalizeCurriculumDocumentGenerationCandidate(
+    providerCandidate,
+  );
+  const structural = curriculumDocumentCandidateSchema.safeParse(normalized);
+  assert.equal(
+    structural.success,
+    true,
+    structural.success ? undefined : structural.error.message,
+  );
+  if (!structural.success) return;
+
+  const canonical = structural.data;
+  const canonicalUnit = canonical.units[0]!;
+  assert.equal(canonicalUnit.identity.unitId, unitId);
+  assert.equal(canonicalUnit.competencies[0]!.privacyPolicy, undefined);
+  assert.equal(
+    canonicalUnit.curriculumCore.semanticConcepts[0]!.description,
+    undefined,
+  );
+  assert.equal(
+    canonicalUnit.curriculumCore.targetArtifacts[0]!.scalePolicy.min,
+    undefined,
+  );
+  assert.equal(
+    canonicalUnit.curriculumCore.targetArtifacts[0]!.scalePolicy
+      .equivalenceAllowed,
+    true,
+  );
+  assert.equal(
+    canonicalUnit.generationPolicy.structuralLoadPolicy.notes,
+    undefined,
+  );
+  assert.equal(
+    canonicalUnit.assessmentContract.evidenceSpecs[0]!.artifactRef,
+    undefined,
+  );
+  assert.equal(
+    canonicalUnit.assessmentContract.evidenceSpecs[0]!.scale,
+    undefined,
+  );
+  assert.equal(canonicalUnit.provenance.sources[0]!.title, undefined);
+  assert.equal(
+    canonicalUnit.provenance.mappings[0]!.exclusionReason,
+    undefined,
+  );
+  assert.equal(canonicalUnit.provenance.transformationNotes, undefined);
+  assert.equal(unit.competencies[0]!.privacyPolicy, null);
+
+  const semantic = validateCurriculumDocumentCandidate(
+    canonical,
+    ingestionInput,
+  );
+  assert.equal(semantic.valid, true, JSON.stringify(semantic.issues, null, 2));
+});
+
+test("OpenAI curriculum boundary normalizes Structured Outputs output_text before canonical validation", async () => {
+  const providerCandidate = providerDocumentCandidate();
+  providerCandidate.units[0]!.competencies[0]!.privacyPolicy = null;
+  providerCandidate.units[0]!.provenance.transformationNotes = null;
+
+  const extractor = new OpenAICurriculumDocumentExtractor(
+    async () => ({
+      status: "completed",
+      output_text: JSON.stringify(providerCandidate),
+    }),
+    "curriculum-test-model",
+  );
+
+  const result = await extractor.extract(ingestionInput);
+
+  assert.equal(result.attempts, 1);
+  assert.equal(result.validationHistory[0]?.outcome, "accepted");
+  assert.equal(result.value.units[0]!.competencies[0]!.privacyPolicy, undefined);
+  assert.equal(
+    result.value.units[0]!.provenance.transformationNotes,
+    undefined,
+  );
+});
+
 test("M6 document candidate cannot let AI canonize curriculum output", () => {
   const candidate = validDocumentCandidate();
   candidate.units[0]!.status = "canonical";
@@ -160,7 +397,7 @@ test("OpenAI curriculum boundary sends private structured requests and repairs s
     async (request) => {
       requests.push({ model: request.model, input: request.input, store: request.store });
       attempt += 1;
-      const candidate = validDocumentCandidate();
+      const candidate = providerDocumentCandidate();
       if (attempt === 1) candidate.units[0]!.status = "canonical";
       return {
         status: "completed",
@@ -181,7 +418,7 @@ test("OpenAI curriculum boundary sends private structured requests and repairs s
   assert.equal(result.value.units[0]?.status, "review");
 });
 
-test("OpenAI curriculum input makes JSON mode explicit before untrusted source data", async () => {
+test("OpenAI curriculum input keeps its JSON instruction before untrusted source data", async () => {
   const input = {
     ...ingestionInput,
     sourceText:
@@ -192,7 +429,7 @@ test("OpenAI curriculum input makes JSON mode explicit before untrusted source d
     instructions: string;
     input: string;
     store: false;
-    text: { format: { type: "json_object" } };
+    text: { format: typeof curriculumDocumentGenerationTextFormat };
   }> = [];
   const extractor = new OpenAICurriculumDocumentExtractor(
     async (request) => {
@@ -243,7 +480,10 @@ test("OpenAI curriculum input makes JSON mode explicit before untrusted source d
   ]);
   assert.equal(request.model, "curriculum-test-model");
   assert.equal(request.store, false);
-  assert.deepEqual(request.text, { format: { type: "json_object" } });
+  assert.equal(request.text.format, curriculumDocumentGenerationTextFormat);
+  assert.equal(request.text.format.type, "json_schema");
+  assert.equal(request.text.format.name, "curriculum_document_candidate");
+  assert.equal(request.text.format.strict, true);
 });
 
 test("OpenAI curriculum boundary treats refusal as a terminal provider outcome", async () => {

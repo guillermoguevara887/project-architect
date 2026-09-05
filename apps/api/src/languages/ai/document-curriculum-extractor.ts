@@ -17,6 +17,10 @@ import {
   type ValidationResult,
 } from "../curriculum/validation.js";
 import {
+  curriculumDocumentGenerationTextFormat,
+  normalizeCurriculumDocumentGenerationCandidate,
+} from "./document-curriculum-generation-schema.js";
+import {
   compactValidationFeedback,
   runStructuredCandidateBoundary,
   StructuredCandidateBoundaryError,
@@ -297,17 +301,13 @@ type ParsedCurriculumResponse = {
   output?: unknown;
 };
 
-type JsonObjectTextFormat = {
-  type: "json_object";
-};
-
 type CurriculumResponseRequester = (request: {
   model: string;
   instructions: string;
   input: string;
   store: false;
   text: {
-    format: JsonObjectTextFormat;
+    format: typeof curriculumDocumentGenerationTextFormat;
   };
 }) => Promise<ParsedCurriculumResponse>;
 
@@ -375,7 +375,11 @@ function parseProviderCandidate(response: ParsedCurriculumResponse) {
     throw new StructuredCandidateBoundaryError("incomplete_response");
   }
 
-  if (response.output_parsed != null) return response.output_parsed;
+  if (response.output_parsed != null) {
+    return normalizeCurriculumDocumentGenerationCandidate(
+      response.output_parsed,
+    );
+  }
 
   if (responseContainsRefusal(response.output)) {
     throw new StructuredCandidateBoundaryError("refusal");
@@ -387,7 +391,9 @@ function parseProviderCandidate(response: ParsedCurriculumResponse) {
   }
 
   try {
-    return JSON.parse(outputText) as unknown;
+    return normalizeCurriculumDocumentGenerationCandidate(
+      JSON.parse(outputText) as unknown,
+    );
   } catch {
     // Let the canonical Zod/domain boundary classify malformed provider content as
     // an invalid candidate so it can participate in the same bounded retry loop.
@@ -475,7 +481,7 @@ export class OpenAICurriculumDocumentExtractor
       input: buildDocumentInput(input, previousIssues),
       store: false as const,
       text: {
-        format: { type: "json_object" as const },
+        format: curriculumDocumentGenerationTextFormat,
       },
     };
 
