@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import { getDb } from "../../db/client.js";
+import { dbTimestamp, type DbTimestamp } from "../../db/timestamps.js";
 import type { LanguageDecisionRegistry } from "../decisions/language-decision-registry.js";
 import type { LanguageProfile } from "../profile/language-profile.js";
 import type { DecisionProposal } from "./promotion.js";
@@ -118,7 +119,7 @@ type DbProfile = {
   status: string;
   profile: LanguageProfile;
   content_sha256: string;
-  created_at: Date;
+  created_at: DbTimestamp;
 };
 
 type DbRegistry = {
@@ -133,7 +134,7 @@ type DbRegistry = {
   status: string;
   registry: LanguageDecisionRegistry;
   content_sha256: string;
-  created_at: Date;
+  created_at: DbTimestamp;
 };
 
 type DbProposal = {
@@ -157,8 +158,8 @@ type DbProposal = {
   review_evidence_status: string | null;
   review_confidence: string | null;
   promoted_registry_record_id: string | null;
-  created_at: Date;
-  reviewed_at: Date | null;
+  created_at: DbTimestamp;
+  reviewed_at: DbTimestamp | null;
 };
 
 function rows<T>(value: unknown) {
@@ -171,7 +172,7 @@ function mapProfile(row: DbProfile): KnowledgeProfileRecord {
     userId: row.user_id,
     profile: row.profile,
     contentSha256: row.content_sha256,
-    createdAt: row.created_at,
+    createdAt: dbTimestamp(row.created_at),
   };
 }
 
@@ -182,7 +183,7 @@ function mapRegistry(row: DbRegistry): KnowledgeRegistryRecord {
     profileRecordId: row.profile_record_id,
     registry: row.registry,
     contentSha256: row.content_sha256,
-    createdAt: row.created_at,
+    createdAt: dbTimestamp(row.created_at),
   };
 }
 
@@ -216,8 +217,9 @@ function mapProposal(row: DbProposal): DecisionProposalRecord {
     reviewEvidenceStatus: row.review_evidence_status,
     reviewConfidence: row.review_confidence,
     promotedRegistryRecordId: row.promoted_registry_record_id,
-    createdAt: row.created_at,
-    reviewedAt: row.reviewed_at,
+    createdAt: dbTimestamp(row.created_at),
+    reviewedAt:
+      row.reviewed_at === null ? null : dbTimestamp(row.reviewed_at),
   };
 }
 

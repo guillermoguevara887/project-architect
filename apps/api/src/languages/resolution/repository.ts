@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import { getDb } from "../../db/client.js";
+import { dbTimestamp, type DbTimestamp } from "../../db/timestamps.js";
 import type { AdaptationPlan } from "../adaptation/adaptation-plan.js";
 import type { CurriculumUnitSpec } from "../curriculum/curriculum-unit-spec.js";
 import type { LanguageDecisionRegistry } from "../decisions/language-decision-registry.js";
@@ -80,7 +81,7 @@ type DbRun = {
   proposal_ids: string[];
   detail: string | null;
   content_sha256: string;
-  created_at: Date;
+  created_at: DbTimestamp;
 };
 
 function rows<T>(value: unknown) {
@@ -113,7 +114,7 @@ function mapRun(row: DbRun): AdaptationResolutionRunRecord {
     proposalIds: row.proposal_ids,
     detail: row.detail,
     contentSha256: row.content_sha256,
-    createdAt: row.created_at,
+    createdAt: dbTimestamp(row.created_at),
   };
 }
 

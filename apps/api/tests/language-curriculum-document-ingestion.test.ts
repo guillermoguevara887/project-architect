@@ -4,6 +4,7 @@ import test from "node:test";
 import type { AuthStore } from "../src/auth/repository.js";
 import { createSessionCookie } from "../src/auth/session.js";
 import { createServer } from "../src/create-server.js";
+import { dbTimestamp } from "../src/db/timestamps.js";
 import type {
   CurriculumDocumentExtractor,
   MasterDocumentCurriculumInput,
@@ -228,6 +229,56 @@ test("M7 routes require auth and never return storage keys or extracted source t
   });
   assert.equal(compiled.statusCode, 201);
   assert.equal(compiled.json().units[0].status, "review");
+
+  await server.close();
+});
+
+test("M7 routes serialize repository timestamps normalized from SQL strings", async () => {
+  const { store, service } = makeService();
+  const user = {
+    id: "11111111-1111-4111-8111-111111111111",
+    username: "memo",
+    passwordHash: "hash",
+    createdAt: new Date(),
+  };
+  store.documents.push({
+    id: "22222222-2222-4222-8222-222222222222",
+    userId: user.id,
+    documentId: "A1-MASTER-P01",
+    curriculumId: "memoos-core-language",
+    levelId: "A1",
+    createdAt: dbTimestamp("2026-09-05 00:43:56.837552+00"),
+    updatedAt: dbTimestamp("2026-09-05 00:44:56.837552+00"),
+  });
+  const authStore: AuthStore = {
+    async findById(userId) {
+      return userId === user.id ? user : null;
+    },
+    async findByUsername(username) {
+      return username === user.username ? user : null;
+    },
+  };
+  const server = createServer(
+    { logger: false },
+    { authStore, curriculumDocumentService: service },
+  );
+  const cookie = createSessionCookie(user.id).split(";", 1)[0];
+
+  const response = await server.inject({
+    method: "GET",
+    url: "/languages/curriculum-documents",
+    headers: { cookie: cookie ?? "" },
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.json().documents[0], {
+    id: "22222222-2222-4222-8222-222222222222",
+    documentId: "A1-MASTER-P01",
+    curriculumId: "memoos-core-language",
+    levelId: "A1",
+    createdAt: "2026-09-05T00:43:56.837Z",
+    updatedAt: "2026-09-05T00:44:56.837Z",
+  });
 
   await server.close();
 });

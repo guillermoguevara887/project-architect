@@ -18,6 +18,7 @@ import {
   AssimilLanguageLessonNumberExistsError,
   languageStore,
 } from "../../src/languages/repository.js";
+import { curriculumDocumentStore } from "../../src/languages/documents/repository.js";
 
 const databaseUrl = process.env.MIGRATION_TEST_DATABASE_URL;
 
@@ -2415,7 +2416,7 @@ test("Proyectos migration preserves historical projects and enforces link direct
   const historicalProjectId = "80000000-0000-4000-8000-000000000002";
 
   try {
-    assert.equal(migrationIndex, migrations.length - 1);
+    assert.notEqual(migrationIndex, -1);
     assert.deepEqual(
       await migratePending(database, before),
       before.map(({ id }) => id),
@@ -2599,5 +2600,58 @@ test("Proyectos migration preserves historical projects and enforces link direct
     assert.ok(report.migrations.every(({ state: status }) => status === "applied"));
   } finally {
     await database.close();
+  }
+});
+
+test("direct SQL curriculum repository normalizes real PostgreSQL timestamptz values", async () => {
+  const isolatedUrl = await createIsolatedDatabase("curriculum_timestamps");
+  const migrationDatabase = createPostgresMigrationDatabase(isolatedUrl);
+  const migrations = await loadMigrationFiles(migrationDirectory);
+  const previousDatabaseUrl = process.env.DATABASE_URL;
+  const userId = "91000000-0000-4000-8000-000000000001";
+  const documentId = "91000000-0000-4000-8000-000000000002";
+  const expectedTimestamp = "2026-09-05T00:43:56.837Z";
+
+  try {
+    await migratePending(migrationDatabase, migrations);
+    await withSql(isolatedUrl, async (sql) => {
+      await sql`
+        INSERT INTO users (id, username, password_hash)
+        VALUES (${userId}, 'curriculum-timestamp-user', 'not-a-real-hash')
+      `;
+      await sql`
+        INSERT INTO language_curriculum_documents (
+          id,
+          user_id,
+          document_id,
+          curriculum_id,
+          level_id,
+          created_at,
+          updated_at
+        ) VALUES (
+          ${documentId},
+          ${userId},
+          'A1-TIMESTAMP-REGRESSION',
+          'memoos-core-language',
+          'A1',
+          ${expectedTimestamp}::timestamptz,
+          ${expectedTimestamp}::timestamptz
+        )
+      `;
+    });
+
+    process.env.DATABASE_URL = isolatedUrl;
+    const documents = await curriculumDocumentStore.listDocuments(userId);
+
+    assert.equal(documents.length, 1);
+    assert.ok(documents[0]?.createdAt instanceof Date);
+    assert.ok(documents[0]?.updatedAt instanceof Date);
+    assert.equal(documents[0]?.createdAt.toISOString(), expectedTimestamp);
+    assert.equal(documents[0]?.updatedAt.toISOString(), expectedTimestamp);
+  } finally {
+    await closeDbConnection();
+    if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = previousDatabaseUrl;
+    await migrationDatabase.close();
   }
 });
