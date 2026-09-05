@@ -15,7 +15,11 @@ import {
   type Exercise,
   type ExerciseStore,
 } from "./repository.js";
-import { ExerciseTutorError, type ExerciseTutor } from "./tutor.js";
+import {
+  ExerciseTutorError,
+  exerciseTutorErrorLogContext,
+  type ExerciseTutor,
+} from "./tutor.js";
 
 function publicExercise(exercise: Exercise) {
   const structuredGuide = generatedExerciseGuideSchema.safeParse(
@@ -388,7 +392,10 @@ export function registerExerciseRoutes(
 
         return { exercise: publicExercise(result.exercise) };
       } catch (error) {
-        server.log.error({ error }, "Exercise guide generation failed.");
+        server.log.error(
+          exerciseTutorErrorLogContext(error),
+          "Exercise guide generation failed.",
+        );
 
         if (error instanceof ExerciseTutorError) {
           return reply.code(503).send({
@@ -447,7 +454,10 @@ export function registerExerciseRoutes(
 
         return { exercise: publicExercise(exercise) };
       } catch (error) {
-        server.log.error({ error }, "Exercise steps generation failed.");
+        server.log.error(
+          exerciseTutorErrorLogContext(error),
+          "Exercise steps generation failed.",
+        );
 
         if (error instanceof ExerciseTutorError) {
           return reply.code(503).send({

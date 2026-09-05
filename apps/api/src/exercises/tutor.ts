@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import type { APIError } from "openai";
 import { zodTextFormat } from "openai/helpers/zod";
 import {
   generatedExerciseGuideSchema,
@@ -7,7 +8,8 @@ import {
 } from "./contracts.js";
 import type { Exercise } from "./repository.js";
 
-const DEFAULT_EXERCISE_MODEL = "gpt-5.4-mini";
+const DEFAULT_EXERCISE_GUIDE_MODEL = "gpt-5.6-sol";
+const DEFAULT_EXERCISE_STEPS_MODEL = "gpt-5.4-mini";
 
 const GUIDE_INSTRUCTIONS = `
 Eres el tutor pedagógico del módulo Ejercicios de MemoOS.
@@ -71,8 +73,21 @@ export type ExerciseTutorErrorCode =
   | "empty_response"
   | "invalid_response";
 
+export type ExerciseTutorProviderMetadata = Readonly<{
+  name: string;
+  model: string;
+  status?: number;
+  code?: string;
+  type?: string;
+  requestId?: string;
+  message?: string;
+}>;
+
 export class ExerciseTutorError extends Error {
-  constructor(readonly code: ExerciseTutorErrorCode) {
+  constructor(
+    readonly code: ExerciseTutorErrorCode,
+    readonly providerMetadata?: ExerciseTutorProviderMetadata,
+  ) {
     super(`Exercise tutor failed: ${code}`);
     this.name = "ExerciseTutorError";
   }
@@ -93,6 +108,108 @@ type ExerciseTutorRequester = (request: {
     format: ReturnType<typeof zodTextFormat>;
   };
 }) => Promise<ParsedExerciseTutorResponse>;
+
+const sensitiveProviderValuePattern =
+  /(?:\bsk-[A-Za-z0-9_-]{8,}\b|\bBearer\s+\S+|postgres(?:ql)?:\/\/\S+|\b(?:DATABASE_URL|AUTHORIZATION|COOKIE)\b\s*[:=]\s*\S+)/giu;
+
+function safeProviderString(value: unknown, maxLength = 256) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim();
+  return normalized.length > 0 &&
+    normalized.length <= maxLength &&
+    normalized.search(sensitiveProviderValuePattern) === -1
+    ? normalized
+    : undefined;
+}
+
+function exerciseInputFragments(input: string) {
+  const jsonStart = input.indexOf("{");
+  if (jsonStart < 0) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(input.slice(jsonStart));
+    if (!parsed || typeof parsed !== "object") {
+      return [];
+    }
+
+    return Object.values(parsed).filter(
+      (value): value is string => typeof value === "string" && value.length >= 4,
+    );
+  } catch {
+    return [];
+  }
+}
+
+function sanitizedProviderMessage(error: APIError, requestInput: string) {
+  let message = error.message.replace(/\s+/gu, " ").trim();
+  const redactions = [
+    process.env.OPENAI_API_KEY,
+    requestInput,
+    ...exerciseInputFragments(requestInput),
+  ].filter((value): value is string => Boolean(value));
+
+  for (const value of redactions) {
+    message = message.replaceAll(value, "[redacted]");
+  }
+
+  message = message.replace(sensitiveProviderValuePattern, "[redacted]");
+  return safeProviderString(message, 512);
+}
+
+function safeProviderErrorMetadata(
+  error: unknown,
+  request: Parameters<ExerciseTutorRequester>[0],
+): ExerciseTutorProviderMetadata {
+  const model = safeProviderString(request.model, 128) ?? "unknown";
+
+  if (!(error instanceof OpenAI.APIError)) {
+    return {
+      name: error instanceof Error ? "Error" : "UnknownError",
+      model,
+    };
+  }
+
+  const name = safeProviderString(error.constructor.name) ?? "APIError";
+  const status =
+    typeof error.status === "number" && Number.isInteger(error.status)
+      ? error.status
+      : undefined;
+  const code = safeProviderString(error.code);
+  const type = safeProviderString(error.type);
+  const requestId = safeProviderString(error.requestID);
+  const message = sanitizedProviderMessage(error, request.input);
+
+  return {
+    name,
+    model,
+    ...(status === undefined ? {} : { status }),
+    ...(code === undefined ? {} : { code }),
+    ...(type === undefined ? {} : { type }),
+    ...(requestId === undefined ? {} : { requestId }),
+    ...(message === undefined ? {} : { message }),
+  };
+}
+
+export function exerciseTutorErrorLogContext(error: unknown) {
+  if (!(error instanceof ExerciseTutorError)) {
+    return { error };
+  }
+
+  return {
+    error: {
+      name: error.name,
+      code: error.code,
+    },
+    ...(error.providerMetadata
+      ? { provider: error.providerMetadata }
+      : {}),
+  };
+}
 
 function responseContainsRefusal(output: unknown) {
   if (!Array.isArray(output)) {
@@ -149,7 +266,8 @@ export class OpenAIExerciseTutor implements ExerciseTutor {
   async generateGuide(input: ExerciseTutorInput) {
     const response = await this.requestSafely({
       model:
-        process.env.OPENAI_EXERCISE_GUIDE_MODEL ?? DEFAULT_EXERCISE_MODEL,
+        process.env.OPENAI_EXERCISE_GUIDE_MODEL ??
+        DEFAULT_EXERCISE_GUIDE_MODEL,
       instructions: GUIDE_INSTRUCTIONS,
       input: exerciseContext(input),
       store: false,
@@ -176,7 +294,8 @@ export class OpenAIExerciseTutor implements ExerciseTutor {
   async generateSteps(input: ExerciseTutorInput) {
     const response = await this.requestSafely({
       model:
-        process.env.OPENAI_EXERCISE_STEPS_MODEL ?? DEFAULT_EXERCISE_MODEL,
+        process.env.OPENAI_EXERCISE_STEPS_MODEL ??
+        DEFAULT_EXERCISE_STEPS_MODEL,
       instructions: STEPS_INSTRUCTIONS,
       input: exerciseContext(input),
       store: false,
@@ -210,7 +329,10 @@ export class OpenAIExerciseTutor implements ExerciseTutor {
         throw error;
       }
 
-      throw new ExerciseTutorError("provider_error");
+      throw new ExerciseTutorError(
+        "provider_error",
+        safeProviderErrorMetadata(error, request),
+      );
     }
   }
 

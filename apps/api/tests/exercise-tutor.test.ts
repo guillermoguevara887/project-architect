@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import OpenAI from "openai";
 import { generatedExerciseGuideSchema } from "../src/exercises/contracts.js";
 import {
   ExerciseTutorError,
   OpenAIExerciseTutor,
+  exerciseTutorErrorLogContext,
 } from "../src/exercises/tutor.js";
 
 const exercise = {
@@ -126,6 +128,98 @@ test("exercise tutor uses separate configurable models and structured outputs", 
       delete process.env.OPENAI_EXERCISE_STEPS_MODEL;
     } else {
       process.env.OPENAI_EXERCISE_STEPS_MODEL = previousStepsModel;
+    }
+  }
+});
+
+test("guide defaults to Sol while steps preserve the existing default", async () => {
+  const previousGuideModel = process.env.OPENAI_EXERCISE_GUIDE_MODEL;
+  const previousStepsModel = process.env.OPENAI_EXERCISE_STEPS_MODEL;
+  delete process.env.OPENAI_EXERCISE_GUIDE_MODEL;
+  delete process.env.OPENAI_EXERCISE_STEPS_MODEL;
+  const requests: Array<{ model: string; store: false }> = [];
+  const tutor = new OpenAIExerciseTutor(async (request) => {
+    requests.push({ model: request.model, store: request.store });
+    return request.model === "gpt-5.6-sol"
+      ? { status: "completed", output_parsed: structuredGuide }
+      : {
+          status: "completed",
+          output_parsed: { steps: ["Identifica el tensor"] },
+        };
+  });
+
+  try {
+    assert.deepEqual(await tutor.generateGuide(exercise), structuredGuide);
+    assert.deepEqual(await tutor.generateSteps(exercise), [
+      "Identifica el tensor",
+    ]);
+    assert.deepEqual(requests, [
+      { model: "gpt-5.6-sol", store: false },
+      { model: "gpt-5.4-mini", store: false },
+    ]);
+  } finally {
+    if (previousGuideModel === undefined) {
+      delete process.env.OPENAI_EXERCISE_GUIDE_MODEL;
+    } else {
+      process.env.OPENAI_EXERCISE_GUIDE_MODEL = previousGuideModel;
+    }
+
+    if (previousStepsModel === undefined) {
+      delete process.env.OPENAI_EXERCISE_STEPS_MODEL;
+    } else {
+      process.env.OPENAI_EXERCISE_STEPS_MODEL = previousStepsModel;
+    }
+  }
+});
+
+test("provider failures retain only safe OpenAI diagnostics", async () => {
+  const previousApiKey = process.env.OPENAI_API_KEY;
+  process.env.OPENAI_API_KEY = "sk-test-secret-value";
+  const providerError = new OpenAI.APIError(
+    429,
+    {
+      code: "rate_limit_exceeded",
+      type: "rate_limit_error",
+      message:
+        `No disponible para ${exercise.title}: ${exercise.prompt} ` +
+        "sk-test-secret-value Authorization=Bearer-secret-value",
+    },
+    undefined,
+    new Headers({ "x-request-id": "req_safe_test_123" }),
+  );
+  const tutor = new OpenAIExerciseTutor(async () => {
+    throw providerError;
+  });
+
+  try {
+    await tutor.generateGuide(exercise);
+    assert.fail("Expected the exercise tutor to fail.");
+  } catch (error) {
+    assert.ok(error instanceof ExerciseTutorError);
+    assert.equal(error.code, "provider_error");
+    assert.deepEqual(error.providerMetadata, {
+      name: "APIError",
+      model: "gpt-5.6-sol",
+      status: 429,
+      code: "rate_limit_exceeded",
+      type: "rate_limit_error",
+      requestId: "req_safe_test_123",
+      message:
+        "429 No disponible para [redacted]: [redacted] [redacted] [redacted]",
+    });
+
+    const serializedLog = JSON.stringify(exerciseTutorErrorLogContext(error));
+    assert.match(serializedLog, /gpt-5\.6-sol/);
+    assert.match(serializedLog, /rate_limit_exceeded/);
+    assert.doesNotMatch(serializedLog, /sk-test-secret-value/);
+    assert.doesNotMatch(serializedLog, /Ignora las reglas/);
+    assert.doesNotMatch(serializedLog, /Modificar un tensor/);
+    assert.doesNotMatch(serializedLog, /Bearer-secret-value/);
+  } finally {
+    if (previousApiKey === undefined) {
+      delete process.env.OPENAI_API_KEY;
+    } else {
+      process.env.OPENAI_API_KEY = previousApiKey;
     }
   }
 });
