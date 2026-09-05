@@ -20,6 +20,7 @@ import {
   compactValidationFeedback,
   runStructuredCandidateBoundary,
   StructuredCandidateBoundaryError,
+  type SafeProviderErrorMetadata,
   type ValidatedCandidate,
 } from "./structured-candidate-boundary.js";
 
@@ -310,6 +311,46 @@ type CurriculumResponseRequester = (request: {
   };
 }) => Promise<ParsedCurriculumResponse>;
 
+const sensitiveProviderMetadataPattern =
+  /(?:\bsk-[A-Za-z0-9_-]{8,}\b|\bBearer\s+\S+|postgres(?:ql)?:\/\/|DATABASE_URL|AUTHORIZATION|COOKIE)/iu;
+
+function safeProviderString(value: unknown) {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim();
+  return normalized.length > 0 &&
+    normalized.length <= 256 &&
+    !sensitiveProviderMetadataPattern.test(normalized)
+    ? normalized
+    : undefined;
+}
+
+function safeProviderErrorMetadata(
+  error: unknown,
+): SafeProviderErrorMetadata {
+  if (!(error instanceof OpenAI.APIError)) {
+    return { name: error instanceof Error ? "Error" : "UnknownError" };
+  }
+
+  const name = safeProviderString(error.constructor.name) ?? "APIError";
+  const status =
+    typeof error.status === "number" && Number.isInteger(error.status)
+      ? error.status
+      : undefined;
+  const code = safeProviderString(error.code);
+  const type = safeProviderString(error.type);
+  const param = safeProviderString(error.param);
+  const requestId = safeProviderString(error.requestID);
+
+  return {
+    name,
+    ...(status === undefined ? {} : { status }),
+    ...(code === undefined ? {} : { code }),
+    ...(type === undefined ? {} : { type }),
+    ...(param === undefined ? {} : { param }),
+    ...(requestId === undefined ? {} : { requestId }),
+  };
+}
+
 function responseContainsRefusal(output: unknown) {
   if (!Array.isArray(output)) return false;
 
@@ -406,7 +447,11 @@ export class OpenAICurriculumDocumentExtractor
           return parseProviderCandidate(response);
         } catch (error) {
           if (error instanceof StructuredCandidateBoundaryError) throw error;
-          throw new StructuredCandidateBoundaryError("provider_error");
+          throw new StructuredCandidateBoundaryError(
+            "provider_error",
+            [],
+            safeProviderErrorMetadata(error),
+          );
         }
       },
     });

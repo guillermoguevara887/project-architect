@@ -12,6 +12,10 @@ import type {
   CurriculumDocumentExtractor,
   MasterDocumentCurriculumInput,
 } from "../src/languages/ai/document-curriculum-extractor.js";
+import {
+  StructuredCandidateBoundaryError,
+  type SafeProviderErrorMetadata,
+} from "../src/languages/ai/structured-candidate-boundary.js";
 import { CurriculumDocumentService } from "../src/languages/documents/service.js";
 import {
   RealCurriculumDocumentWorkflow,
@@ -293,6 +297,89 @@ test("M12 authenticated process route performs the real workflow without exposin
   assert.equal(body.units[0].status, "review");
   assert.equal("storageKey" in body.version, false);
   assert.equal("extractedText" in body.version, false);
+
+  await server.close();
+});
+
+test("M12 process exposes only safe provider metadata on compiler failure", async () => {
+  const providerMetadata = {
+    name: "RateLimitError",
+    status: 429,
+    code: "rate_limit_exceeded",
+    type: "requests",
+    param: "model",
+    requestId: "req_safe_test_123",
+  } satisfies SafeProviderErrorMetadata;
+  const store = new InMemoryCurriculumDocumentStore();
+  const storage = new MemoryStorage();
+  const sourceTextExtractor = new CapturingSourceTextExtractor();
+  const curriculumExtractor: CurriculumDocumentExtractor = {
+    async extract() {
+      throw new StructuredCandidateBoundaryError(
+        "provider_error",
+        [],
+        providerMetadata,
+      );
+    },
+  };
+  const service = new CurriculumDocumentService(
+    store,
+    storage,
+    curriculumExtractor,
+  );
+  const workflow = new RealCurriculumDocumentWorkflow(
+    service,
+    storage,
+    sourceTextExtractor,
+  );
+  const user = {
+    id: "11111111-1111-4111-8111-111111111111",
+    username: "memo",
+    passwordHash: "hash",
+    createdAt: new Date(),
+  };
+  const authStore: AuthStore = {
+    async findById(userId) {
+      return userId === user.id ? user : null;
+    },
+    async findByUsername(username) {
+      return username === user.username ? user : null;
+    },
+  };
+  await service.ingest(user.id, {
+    ...uploadWithoutText(),
+    extractedText:
+      "Texto curricular ya extraído que evita cualquier llamada de extracción.",
+    extractionMethod: "fixture_extraction",
+  });
+  const server = createServer(
+    { logger: false },
+    {
+      authStore,
+      curriculumDocumentService: service,
+      realCurriculumDocumentWorkflow: workflow,
+    },
+  );
+  const cookie = createSessionCookie(user.id).split(";", 1)[0];
+
+  const response = await server.inject({
+    method: "POST",
+    url: "/languages/curriculum-documents/A1-MASTER-P01/versions/1.0.0/process",
+    headers: { cookie: cookie ?? "" },
+  });
+
+  assert.equal(response.statusCode, 422);
+  assert.deepEqual(response.json(), {
+    error: "compiler_failed",
+    reason: "provider_error",
+    validationHistory: [],
+    providerMetadata,
+  });
+  assert.equal(sourceTextExtractor.calls, 0);
+  assert.equal(store.runs.length, 1);
+  assert.equal(store.runs[0]?.status, "failed");
+  assert.equal(store.runs[0]?.errorCode, "provider_error");
+  assert.equal(store.units.length, 0);
 
   await server.close();
 });
