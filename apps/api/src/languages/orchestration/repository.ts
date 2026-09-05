@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import { getDb } from "../../db/client.js";
+import { dbTimestamp, type DbTimestamp } from "../../db/timestamps.js";
 import type { AdaptationPlan } from "../adaptation/adaptation-plan.js";
 import type { AdaptedUnitSpec } from "../adapted/adapted-unit-spec.js";
 import type { CurriculumUnitSpec } from "../curriculum/curriculum-unit-spec.js";
@@ -97,7 +98,7 @@ type DbBundle = {
   lesson_route: LessonRoute;
   lesson_specs: LessonSpec[];
   content_sha256: string;
-  created_at: Date;
+  created_at: DbTimestamp;
 };
 
 type DbRun = {
@@ -108,8 +109,8 @@ type DbRun = {
   expected_lesson_count: number;
   generation_run_ids: string[];
   error_code: string | null;
-  started_at: Date;
-  completed_at: Date | null;
+  started_at: DbTimestamp;
+  completed_at: DbTimestamp | null;
 };
 
 function rows<T>(value: unknown) {
@@ -135,7 +136,7 @@ function mapBundle(row: DbBundle): PlanningBundleRecord {
       lessonSpecs: row.lesson_specs,
     },
     contentSha256: row.content_sha256,
-    createdAt: row.created_at,
+    createdAt: dbTimestamp(row.created_at),
   };
 }
 
@@ -148,8 +149,9 @@ function mapRun(row: DbRun): CurriculumOrchestrationRunRecord {
     expectedLessonCount: row.expected_lesson_count,
     generationRunIds: row.generation_run_ids,
     errorCode: row.error_code,
-    startedAt: row.started_at,
-    completedAt: row.completed_at,
+    startedAt: dbTimestamp(row.started_at),
+    completedAt:
+      row.completed_at === null ? null : dbTimestamp(row.completed_at),
   };
 }
 

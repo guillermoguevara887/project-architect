@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "../../db/client.js";
+import { dbTimestamp, type DbTimestamp } from "../../db/timestamps.js";
 import {
   validateCurriculumUnitSpec,
   type CurriculumUnitSpec,
@@ -52,7 +53,7 @@ type DbReview = {
   review_note: string;
   promoted_spec: CurriculumUnitSpec | null;
   promoted_spec_sha256: string | null;
-  reviewed_at: Date;
+  reviewed_at: DbTimestamp;
 };
 
 function rows<T>(value: unknown) {
@@ -68,7 +69,7 @@ function mapReview(row: DbReview): CurriculumUnitReviewRecord {
     reviewNote: row.review_note,
     promotedSpec: row.promoted_spec,
     promotedSpecSha256: row.promoted_spec_sha256,
-    reviewedAt: row.reviewed_at,
+    reviewedAt: dbTimestamp(row.reviewed_at),
   };
 }
 

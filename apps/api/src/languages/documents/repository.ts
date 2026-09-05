@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import { getDb } from "../../db/client.js";
+import { dbTimestamp, type DbTimestamp } from "../../db/timestamps.js";
 import type { CurriculumUnitSpec } from "../curriculum/curriculum-unit-spec.js";
 import type {
   CandidateValidationAttempt,
@@ -123,7 +124,7 @@ export interface CurriculumDocumentStore {
 
 type DbDocument = {
   id: string; user_id: string; document_id: string; curriculum_id: string;
-  level_id: string; created_at: Date; updated_at: Date;
+  level_id: string; created_at: DbTimestamp; updated_at: DbTimestamp;
 };
 type DbVersion = {
   id: string; document_record_id: string; document_version: string;
@@ -132,32 +133,32 @@ type DbVersion = {
   media_type: string; storage_key: string; content_sha256: string; byte_size: number;
   storage_status: CurriculumDocumentStorageStatus; extracted_text: string | null;
   extracted_text_sha256: string | null; extraction_status: CurriculumDocumentExtractionStatus;
-  extraction_method: string | null; created_at: Date; updated_at: Date;
+  extraction_method: string | null; created_at: DbTimestamp; updated_at: DbTimestamp;
 };
 type DbRun = {
   id: string; document_version_id: string; boundary_key: string;
   status: CurriculumCompilationStatus; attempts: number | null;
   validation_history: CandidateValidationAttempt[] | null; error_code: string | null;
-  started_at: Date; completed_at: Date | null;
+  started_at: DbTimestamp; completed_at: DbTimestamp | null;
 };
 type DbUnit = {
   id: string; compilation_run_id: string; unit_id: string; spec_version: string;
   unit_order: number; status: CurriculumUnitSpec["status"]; spec: CurriculumUnitSpec;
-  created_at: Date;
+  created_at: DbTimestamp;
 };
 
 function rows<T>(value: unknown) { return value as T[]; }
 function mapDocument(row: DbDocument): CurriculumDocumentRecord {
-  return { id: row.id, userId: row.user_id, documentId: row.document_id, curriculumId: row.curriculum_id, levelId: row.level_id, createdAt: row.created_at, updatedAt: row.updated_at };
+  return { id: row.id, userId: row.user_id, documentId: row.document_id, curriculumId: row.curriculum_id, levelId: row.level_id, createdAt: dbTimestamp(row.created_at), updatedAt: dbTimestamp(row.updated_at) };
 }
 function mapVersion(row: DbVersion): CurriculumDocumentVersionRecord {
-  return { id: row.id, documentRecordId: row.document_record_id, documentVersion: row.document_version, sourceTitle: row.source_title, sourceLanguageHint: row.source_language_hint, sourceFormat: row.source_format, originalFilename: row.original_filename, mediaType: row.media_type, storageKey: row.storage_key, contentSha256: row.content_sha256, byteSize: row.byte_size, storageStatus: row.storage_status, extractedText: row.extracted_text, extractedTextSha256: row.extracted_text_sha256, extractionStatus: row.extraction_status, extractionMethod: row.extraction_method, createdAt: row.created_at, updatedAt: row.updated_at };
+  return { id: row.id, documentRecordId: row.document_record_id, documentVersion: row.document_version, sourceTitle: row.source_title, sourceLanguageHint: row.source_language_hint, sourceFormat: row.source_format, originalFilename: row.original_filename, mediaType: row.media_type, storageKey: row.storage_key, contentSha256: row.content_sha256, byteSize: row.byte_size, storageStatus: row.storage_status, extractedText: row.extracted_text, extractedTextSha256: row.extracted_text_sha256, extractionStatus: row.extraction_status, extractionMethod: row.extraction_method, createdAt: dbTimestamp(row.created_at), updatedAt: dbTimestamp(row.updated_at) };
 }
 function mapRun(row: DbRun): CurriculumCompilationRunRecord {
-  return { id: row.id, documentVersionId: row.document_version_id, boundaryKey: row.boundary_key, status: row.status, attempts: row.attempts, validationHistory: row.validation_history, errorCode: row.error_code, startedAt: row.started_at, completedAt: row.completed_at };
+  return { id: row.id, documentVersionId: row.document_version_id, boundaryKey: row.boundary_key, status: row.status, attempts: row.attempts, validationHistory: row.validation_history, errorCode: row.error_code, startedAt: dbTimestamp(row.started_at), completedAt: row.completed_at === null ? null : dbTimestamp(row.completed_at) };
 }
 function mapUnit(row: DbUnit): CurriculumUnitRecord {
-  return { id: row.id, compilationRunId: row.compilation_run_id, unitId: row.unit_id, specVersion: row.spec_version, unitOrder: row.unit_order, status: row.status, spec: row.spec, createdAt: row.created_at };
+  return { id: row.id, compilationRunId: row.compilation_run_id, unitId: row.unit_id, specVersion: row.spec_version, unitOrder: row.unit_order, status: row.status, spec: row.spec, createdAt: dbTimestamp(row.created_at) };
 }
 
 async function findDocument(userId: string, documentId: string, executor = getDb()) {

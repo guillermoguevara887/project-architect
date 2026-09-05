@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import { getDb } from "../../db/client.js";
+import { dbTimestamp, type DbTimestamp } from "../../db/timestamps.js";
 import type { CandidateValidationAttempt } from "../ai/structured-candidate-boundary.js";
 import type { LanguageProfileResearchCandidate } from "./contracts.js";
 
@@ -43,7 +44,7 @@ type DbRun = {
   validation_history: CandidateValidationAttempt[];
   detail: string | null;
   content_sha256: string;
-  created_at: Date;
+  created_at: DbTimestamp;
 };
 
 function rows<T>(value: unknown) {
@@ -66,7 +67,7 @@ function mapRun(row: DbRun): ProfileResearchRunRecord {
     validationHistory: row.validation_history,
     detail: row.detail,
     contentSha256: row.content_sha256,
-    createdAt: row.created_at,
+    createdAt: dbTimestamp(row.created_at),
   };
 }
 

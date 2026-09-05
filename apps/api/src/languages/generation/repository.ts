@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import { getDb } from "../../db/client.js";
+import { dbTimestamp, type DbTimestamp } from "../../db/timestamps.js";
 import type {
   CandidateValidationAttempt,
   ValidatedCandidate,
@@ -94,8 +95,8 @@ type DbRun = {
   attempts: number | null;
   validation_history: CandidateValidationAttempt[] | null;
   error_code: string | null;
-  started_at: Date;
-  completed_at: Date | null;
+  started_at: DbTimestamp;
+  completed_at: DbTimestamp | null;
 };
 
 type DbLesson = {
@@ -103,7 +104,7 @@ type DbLesson = {
   generation_run_id: string;
   generated_lesson: GeneratedLesson;
   content_sha256: string;
-  created_at: Date;
+  created_at: DbTimestamp;
 };
 
 function rows<T>(value: unknown) {
@@ -130,8 +131,9 @@ function mapRun(row: DbRun): LessonGenerationRunRecord {
     attempts: row.attempts,
     validationHistory: row.validation_history,
     errorCode: row.error_code,
-    startedAt: row.started_at,
-    completedAt: row.completed_at,
+    startedAt: dbTimestamp(row.started_at),
+    completedAt:
+      row.completed_at === null ? null : dbTimestamp(row.completed_at),
   };
 }
 
@@ -141,7 +143,7 @@ function mapLesson(row: DbLesson): GeneratedLessonRecord {
     generationRunId: row.generation_run_id,
     generatedLesson: row.generated_lesson,
     contentSha256: row.content_sha256,
-    createdAt: row.created_at,
+    createdAt: dbTimestamp(row.created_at),
   };
 }
 
