@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import OpenAI from "openai";
 import { z } from "zod";
 import {
   OpenAICurriculumDocumentExtractor,
@@ -207,4 +208,82 @@ test("OpenAI curriculum boundary treats refusal as a terminal provider outcome",
     },
   );
   assert.equal(requestCount, 1);
+});
+
+test("OpenAI curriculum boundary preserves only safe API error metadata", async () => {
+  const providerError = new OpenAI.APIError(
+    429,
+    {
+      message: "provider detail that must not be propagated",
+      code: "rate_limit_exceeded",
+      type: "requests",
+      param: "model",
+      apiKey: "sk-test-secret",
+      prompt: "private document source",
+      arbitrary: "private arbitrary field",
+    },
+    "fallback provider detail",
+    new Headers({
+      authorization: "Bearer sk-test-secret",
+      "x-request-id": "req_safe_test_123",
+      "x-private-header": "private header value",
+    }),
+  );
+  const extractor = new OpenAICurriculumDocumentExtractor(
+    async () => {
+      throw providerError;
+    },
+    "curriculum-test-model",
+  );
+
+  await assert.rejects(
+    () => extractor.extract(ingestionInput),
+    (error: unknown) => {
+      assert.ok(error instanceof StructuredCandidateBoundaryError);
+      assert.equal(error.code, "provider_error");
+      assert.deepEqual(error.providerMetadata, {
+        name: "APIError",
+        status: 429,
+        code: "rate_limit_exceeded",
+        type: "requests",
+        param: "model",
+        requestId: "req_safe_test_123",
+      });
+
+      const serialized = JSON.stringify(error.providerMetadata);
+      assert.equal(serialized.includes("sk-test-secret"), false);
+      assert.equal(serialized.includes("private document source"), false);
+      assert.equal(serialized.includes("private arbitrary field"), false);
+      assert.equal(serialized.includes("private header value"), false);
+      return true;
+    },
+  );
+});
+
+test("OpenAI curriculum boundary sanitizes unknown provider failures", async () => {
+  const unknownError = Object.assign(
+    new Error("unexpected failure containing sk-test-secret"),
+    {
+      code: "arbitrary_code",
+      param: "private_prompt",
+      requestID: "arbitrary_request_id",
+      headers: { authorization: "Bearer sk-test-secret" },
+    },
+  );
+  const extractor = new OpenAICurriculumDocumentExtractor(
+    async () => {
+      throw unknownError;
+    },
+    "curriculum-test-model",
+  );
+
+  await assert.rejects(
+    () => extractor.extract(ingestionInput),
+    (error: unknown) => {
+      assert.ok(error instanceof StructuredCandidateBoundaryError);
+      assert.equal(error.code, "provider_error");
+      assert.deepEqual(error.providerMetadata, { name: "Error" });
+      return true;
+    },
+  );
 });

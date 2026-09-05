@@ -146,6 +146,9 @@ export function registerRealCurriculumDocumentWorkflowRoutes(
             error: error.code,
             reason: error.detail ?? null,
             validationHistory: error.validationHistory,
+            ...(error.providerMetadata
+              ? { providerMetadata: error.providerMetadata }
+              : {}),
           });
         }
         throw error;

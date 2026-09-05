@@ -12,6 +12,15 @@ export type CandidateValidationAttempt = {
   issues: ValidationIssue[];
 };
 
+export type SafeProviderErrorMetadata = Readonly<{
+  name: string;
+  status?: number;
+  code?: string;
+  type?: string;
+  param?: string;
+  requestId?: string;
+}>;
+
 export type ValidatedCandidate<T> = {
   value: T;
   attempts: number;
@@ -49,6 +58,7 @@ export class StructuredCandidateBoundaryError extends Error {
   constructor(
     readonly code: StructuredCandidateBoundaryErrorCode,
     readonly validationHistory: CandidateValidationAttempt[] = [],
+    readonly providerMetadata?: SafeProviderErrorMetadata,
   ) {
     super(`Structured AI boundary failed: ${code}`);
     this.name = "StructuredCandidateBoundaryError";

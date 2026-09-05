@@ -6,6 +6,7 @@ import {
 import {
   StructuredCandidateBoundaryError,
   type CandidateValidationAttempt,
+  type SafeProviderErrorMetadata,
 } from "../ai/structured-candidate-boundary.js";
 import {
   CURRICULUM_COMPILER_BOUNDARY_KEY,
@@ -45,6 +46,7 @@ export class CurriculumDocumentServiceError extends Error {
     readonly code: CurriculumDocumentServiceErrorCode,
     readonly detail?: string,
     readonly validationHistory: CandidateValidationAttempt[] = [],
+    readonly providerMetadata?: SafeProviderErrorMetadata,
   ) {
     super(`Curriculum document service failed: ${code}`);
     this.name = "CurriculumDocumentServiceError";
@@ -285,6 +287,11 @@ export class CurriculumDocumentService {
         error instanceof CurriculumDocumentServiceError
           ? error.validationHistory
           : [];
+      const providerMetadata =
+        error instanceof StructuredCandidateBoundaryError ||
+        error instanceof CurriculumDocumentServiceError
+          ? error.providerMetadata
+          : undefined;
 
       await this.store.failCompilation({
         userId,
@@ -300,6 +307,7 @@ export class CurriculumDocumentService {
         "compiler_failed",
         code,
         validationHistory,
+        providerMetadata,
       );
     }
   }
