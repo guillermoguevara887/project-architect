@@ -12,6 +12,10 @@ import {
   type CurriculumUnitSpec,
 } from "../curriculum/curriculum-unit-spec.js";
 import {
+  curriculumRequirementDomainMetadata,
+  type CurriculumRequirementDomain,
+} from "../curriculum/curriculum-requirement-domain.js";
+import {
   domainIdSchema,
   requiredTextSchema,
   semanticVersionSchema,
@@ -271,32 +275,6 @@ export type AdaptationCompilationResult = {
   validation: ValidationResult;
 };
 
-const PROFILE_SECTION_BY_DOMAIN: Record<string, LanguageProfileSection> = {
-  "writing.beginner_system": "writingSystem",
-  "phonology.initial_intelligibility": "phonology",
-  "sociolinguistics.initial_register": "sociolinguisticSystem",
-  "participant.basic_reference": "participantReference",
-  "nominal.beginner_package": "nominalSystem",
-  "predication.identity_state": "predicationSystem",
-  "age.basic_expression": "semanticSystems",
-  "possession.basic": "semanticSystems",
-  "action.basic_pattern": "verbalSystem",
-  "localization.first_contact": "sociolinguisticSystem",
-};
-
-const RESEARCH_GROUP_BY_DOMAIN: Record<string, string> = {
-  "writing.beginner_system": "literacy",
-  "phonology.initial_intelligibility": "pronunciation",
-  "sociolinguistics.initial_register": "first_contact",
-  "participant.basic_reference": "first_contact",
-  "nominal.beginner_package": "nominal_verbal_core",
-  "predication.identity_state": "predication_relations",
-  "age.basic_expression": "predication_relations",
-  "possession.basic": "predication_relations",
-  "action.basic_pattern": "nominal_verbal_core",
-  "localization.first_contact": "first_contact",
-};
-
 const RESEARCH_GROUP_METADATA: Record<
   string,
   {
@@ -362,11 +340,14 @@ function profileCoverageStatus(
 
 function researchNecessityFor(
   profile: LanguageProfile,
-  requirementDomain: string,
+  requirementDomain: CurriculumRequirementDomain,
   resolutionMode: "extend" | "resolve",
 ): z.infer<typeof gapSchema>["researchNecessity"] {
   if (resolutionMode === "extend") return "registry_reasoning";
-  const status = profileCoverageStatus(profile, PROFILE_SECTION_BY_DOMAIN[requirementDomain]);
+  const status = profileCoverageStatus(
+    profile,
+    curriculumRequirementDomainMetadata(requirementDomain).profileSection,
+  );
   if (status === "reviewed" || status === "resolved") return "registry_reasoning";
   if (status === "partial") return "profile_only";
   return "external_research";
@@ -374,13 +355,14 @@ function researchNecessityFor(
 
 function gapTypeFor(
   profile: LanguageProfile,
-  requirementDomain: string,
+  requirementDomain: CurriculumRequirementDomain,
   resolutionMode: "extend" | "resolve",
 ): z.infer<typeof gapSchema>["gapType"] {
   if (resolutionMode === "extend") return "insufficient_scope";
-  const status = profileCoverageStatus(profile, PROFILE_SECTION_BY_DOMAIN[requirementDomain]);
+  const metadata = curriculumRequirementDomainMetadata(requirementDomain);
+  const status = profileCoverageStatus(profile, metadata.profileSection);
   if (!status || status === "unresolved" || status === "partial") return "profile_gap";
-  if (requirementDomain === "localization.first_contact") return "localization_gap";
+  if (metadata.resolutionArea === "localization") return "localization_gap";
   return "missing_decision";
 }
 
@@ -410,7 +392,9 @@ function buildResearchPlan(
   for (const gap of gaps.filter((candidate) => candidate.researchNeeded)) {
     const requirement = requirementById.get(gap.requirementRef);
     if (!requirement) continue;
-    const group = RESEARCH_GROUP_BY_DOMAIN[requirement.domain] ?? `requirement_${gap.requirementRef}`;
+    const group = curriculumRequirementDomainMetadata(
+      requirement.domain,
+    ).researchGroup;
     const entries = grouped.get(group) ?? [];
     entries.push(gap);
     grouped.set(group, entries);

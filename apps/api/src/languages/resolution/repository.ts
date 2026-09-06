@@ -2,6 +2,10 @@ import { sql } from "drizzle-orm";
 import { getDb } from "../../db/client.js";
 import { dbTimestamp, type DbTimestamp } from "../../db/timestamps.js";
 import type { AdaptationPlan } from "../adaptation/adaptation-plan.js";
+import {
+  normalizePersistedCurriculumUnitSpec,
+  type CurriculumRequirementDomainNormalizationTrace,
+} from "../curriculum/curriculum-unit-domain-compatibility.js";
 import type { CurriculumUnitSpec } from "../curriculum/curriculum-unit-spec.js";
 import type { LanguageDecisionRegistry } from "../decisions/language-decision-registry.js";
 import type { LanguageProfile } from "../profile/language-profile.js";
@@ -10,6 +14,8 @@ import type { AdaptationResolutionStage } from "./adaptation-resolution-runtime.
 export type AdaptationResolutionContext = {
   curriculumUnitRecordId: string;
   curriculum: CurriculumUnitSpec;
+  persistedCurriculum?: unknown;
+  curriculumDomainNormalizations?: readonly CurriculumRequirementDomainNormalizationTrace[];
   profileRecordId: string;
   languageProfile: LanguageProfile;
   registryRecordId: string;
@@ -60,7 +66,7 @@ export interface AdaptationResolutionStore {
 
 type DbContext = {
   curriculum_unit_record_id: string;
-  curriculum: CurriculumUnitSpec;
+  curriculum: unknown;
   profile_record_id: string;
   language_profile: LanguageProfile;
   registry_record_id: string;
@@ -89,9 +95,15 @@ function rows<T>(value: unknown) {
 }
 
 function mapContext(row: DbContext): AdaptationResolutionContext {
+  const normalizedCurriculum = normalizePersistedCurriculumUnitSpec(
+    row.curriculum,
+  );
   return {
     curriculumUnitRecordId: row.curriculum_unit_record_id,
-    curriculum: row.curriculum,
+    curriculum: normalizedCurriculum.curriculum,
+    persistedCurriculum: structuredClone(row.curriculum),
+    curriculumDomainNormalizations:
+      normalizedCurriculum.domainNormalizations,
     profileRecordId: row.profile_record_id,
     languageProfile: row.language_profile,
     registryRecordId: row.registry_record_id,
@@ -189,7 +201,9 @@ export const adaptationResolutionStore: AdaptationResolutionStore = {
         AND review.user_id = ${input.userId}
         AND review.action = 'accepted'
         AND review.promoted_spec IS NOT NULL
-        AND review.promoted_spec = ${JSON.stringify(input.context.curriculum)}::jsonb
+        AND review.promoted_spec = ${JSON.stringify(
+          input.context.persistedCurriculum ?? input.context.curriculum,
+        )}::jsonb
       JOIN language_curriculum_compilation_runs compilation
         ON compilation.id = unit.compilation_run_id
       JOIN language_curriculum_document_versions version

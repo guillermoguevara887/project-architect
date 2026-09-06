@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { findDirectedCycle } from "../curriculum/graph.js";
+import { curriculumRequirementDomainSchema } from "../curriculum/curriculum-requirement-domain.js";
 import {
   confidenceSchema,
   domainIdSchema,
@@ -33,6 +34,13 @@ export const languageDecisionKindSchema = z.enum([
   "structural_interpretation",
   "pedagogical_strategy",
 ]);
+
+// This intentionally open decision taxonomy is distinct from the closed
+// CurriculumRequirementDomain namespace consumed by M4.
+export const languageDecisionDomainSchema = domainIdSchema;
+export type LanguageDecisionDomain = z.infer<
+  typeof languageDecisionDomainSchema
+>;
 
 export const decisionScopeTypeSchema = z.enum([
   "language_global",
@@ -153,7 +161,7 @@ export const languageDecisionSchema = z
         decisionId: domainIdSchema,
         decisionVersion: semanticVersionSchema,
         decisionKind: languageDecisionKindSchema,
-        domain: domainIdSchema,
+        domain: languageDecisionDomainSchema,
         status: languageDecisionStatusSchema,
       })
       .strict(),
@@ -274,7 +282,7 @@ export const languageDecisionRegistrySchema = z
       .object({
         levelScopes: z.array(domainIdSchema),
         unitScopes: z.array(domainIdSchema),
-        requirementDomains: z.array(domainIdSchema),
+        requirementDomains: z.array(curriculumRequirementDomainSchema),
         notes: z.array(requiredTextSchema),
       })
       .strict(),

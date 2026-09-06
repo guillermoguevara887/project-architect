@@ -4,6 +4,7 @@ import {
   curriculumUnitSpecSchema,
   validateCurriculumUnitSpec,
 } from "../curriculum/curriculum-unit-spec.js";
+import { CURRICULUM_REQUIREMENT_DOMAIN_PROMPT_GUIDANCE } from "../curriculum/curriculum-requirement-domain.js";
 import {
   domainIdSchema,
   requiredTextSchema,
@@ -47,6 +48,9 @@ Reglas obligatorias:
 - Formula competencias como capacidades observables y funciones semánticas.
 - No inventes una lengua objetivo. Esta etapa es anterior a LanguageProfile.
 - No investigues Internet ni introduzcas conocimiento lingüístico externo.
+- En adaptationRequirements[].domain usa exclusivamente uno de estos domains
+  canónicos, de acuerdo con su semántica:
+${CURRICULUM_REQUIREMENT_DOMAIN_PROMPT_GUIDANCE}
 - Divide el documento en unidades sólo cuando exista una frontera curricular
   coherente. No cortes mecánicamente por páginas, capítulos o número de lecciones.
 - Cada unidad debe tener evidencia terminal y conservar trazabilidad a la fuente.

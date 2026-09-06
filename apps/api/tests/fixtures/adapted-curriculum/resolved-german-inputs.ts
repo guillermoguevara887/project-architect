@@ -4,6 +4,7 @@ import {
 } from "../../../src/languages/adaptation/adaptation-plan.js";
 import type {
   LanguageDecision,
+  LanguageDecisionDomain,
   LanguageDecisionRegistry,
 } from "../../../src/languages/decisions/language-decision-registry.js";
 import { a1U01CurriculumFixture } from "../language-curriculum/a1-u01.js";
@@ -14,7 +15,7 @@ const curriculumRef = { id: "A1-U01", version: "1.0.0" } as const;
 
 function makeDecision(input: {
   id: string;
-  domain: string;
+  domain: LanguageDecisionDomain;
   requirementRef: string;
   featureRefs: string[];
   scopeType: "language_global" | "level_global" | "unit_contextual";

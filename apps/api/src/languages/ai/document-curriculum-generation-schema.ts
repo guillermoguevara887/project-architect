@@ -1,5 +1,6 @@
 import { zodTextFormat } from "openai/helpers/zod";
 import { z } from "zod";
+import { curriculumRequirementDomainSchema } from "../curriculum/curriculum-requirement-domain.js";
 import {
   criticalitySchema,
   domainIdSchema,
@@ -91,7 +92,7 @@ const targetArtifactGenerationSchema = z
 const adaptationRequirementGenerationSchema = z
   .object({
     requirementId: domainIdSchema,
-    domain: domainIdSchema,
+    domain: curriculumRequirementDomainSchema,
     semanticProblem: requiredTextSchema,
     decisionScope: z.enum([
       "language_global",

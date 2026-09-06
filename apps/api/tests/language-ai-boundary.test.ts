@@ -20,6 +20,7 @@ import {
   runStructuredCandidateBoundary,
   StructuredCandidateBoundaryError,
 } from "../src/languages/ai/structured-candidate-boundary.js";
+import { CURRICULUM_REQUIREMENT_DOMAINS } from "../src/languages/curriculum/curriculum-requirement-domain.js";
 import { validationIssue, validationResult } from "../src/languages/curriculum/validation.js";
 import { a1U01CurriculumFixture } from "./fixtures/language-curriculum/a1-u01.js";
 
@@ -245,6 +246,16 @@ test("M12 provider generation schema builds an OpenAI strict json_schema format"
     "specVersion",
     "status",
   ]);
+  const unitSchema = units.items;
+  assert.ok(unitSchema && !Array.isArray(unitSchema));
+  const requirements = unitSchema.properties?.adaptationRequirements;
+  assert.ok(requirements && !Array.isArray(requirements.items));
+  const requirementSchema = requirements.items;
+  assert.ok(requirementSchema && !Array.isArray(requirementSchema));
+  assert.deepEqual(
+    requirementSchema.properties?.domain?.enum,
+    CURRICULUM_REQUIREMENT_DOMAINS,
+  );
 
   let objectSchemaCount = 0;
   visitJsonSchema(schema, (node) => {
@@ -484,6 +495,9 @@ test("OpenAI curriculum input keeps its JSON instruction before untrusted source
   assert.equal(request.text.format.type, "json_schema");
   assert.equal(request.text.format.name, "curriculum_document_candidate");
   assert.equal(request.text.format.strict, true);
+  for (const domain of CURRICULUM_REQUIREMENT_DOMAINS) {
+    assert.equal(request.instructions.includes(`- ${domain}:`), true);
+  }
 });
 
 test("OpenAI curriculum boundary treats refusal as a terminal provider outcome", async () => {

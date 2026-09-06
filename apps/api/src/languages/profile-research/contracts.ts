@@ -13,6 +13,10 @@ import {
   type ValidationResult,
 } from "../curriculum/validation.js";
 import type { AdaptationPlan } from "../adaptation/adaptation-plan.js";
+import {
+  curriculumRequirementDomainMetadata,
+  type CurriculumRequirementDomain,
+} from "../curriculum/curriculum-requirement-domain.js";
 import type { CurriculumUnitSpec } from "../curriculum/curriculum-unit-spec.js";
 import {
   validateLanguageProfile,
@@ -70,22 +74,9 @@ export type LanguageProfileResearchCandidate = z.infer<
 export type ProfileResearchTarget = {
   researchTaskRef: string;
   requirementRef: string;
-  domain: string;
+  domain: CurriculumRequirementDomain;
   section: LanguageProfileSection;
   featureRefs: string[];
-};
-
-const PROFILE_SECTION_BY_DOMAIN: Record<string, LanguageProfileSection> = {
-  "writing.beginner_system": "writingSystem",
-  "phonology.initial_intelligibility": "phonology",
-  "sociolinguistics.initial_register": "sociolinguisticSystem",
-  "participant.basic_reference": "participantReference",
-  "nominal.beginner_package": "nominalSystem",
-  "predication.identity_state": "predicationSystem",
-  "age.basic_expression": "semanticSystems",
-  "possession.basic": "semanticSystems",
-  "action.basic_pattern": "verbalSystem",
-  "localization.first_contact": "sociolinguisticSystem",
 };
 
 function collectFeatureIds(value: unknown, target = new Set<string>()) {
@@ -127,8 +118,9 @@ export function deriveProfileResearchTargets(input: {
       const gap = gapById.get(gapRef);
       const requirement = gap ? requirementById.get(gap.requirementRef) : undefined;
       if (!requirement) continue;
-      const section = PROFILE_SECTION_BY_DOMAIN[requirement.domain];
-      if (!section) continue;
+      const section = curriculumRequirementDomainMetadata(
+        requirement.domain,
+      ).profileSection;
       targets.push({
         researchTaskRef,
         requirementRef: requirement.requirementId,

@@ -4,6 +4,10 @@ import {
   type AdaptationPlan,
   type AdaptationCompilationInput,
 } from "../adaptation/adaptation-plan.js";
+import {
+  curriculumRequirementDomainMetadata,
+  type CurriculumRequirementResolutionArea,
+} from "../curriculum/curriculum-requirement-domain.js";
 import type { CurriculumUnitSpec } from "../curriculum/curriculum-unit-spec.js";
 import {
   languageDecisionRefKey,
@@ -36,19 +40,6 @@ export type AdaptationResolutionAction =
   | {
       stage: "ready_for_planning";
     };
-
-const PROFILE_SECTION_BY_DOMAIN = {
-  "writing.beginner_system": "writingSystem",
-  "phonology.initial_intelligibility": "phonology",
-  "sociolinguistics.initial_register": "sociolinguisticSystem",
-  "participant.basic_reference": "participantReference",
-  "nominal.beginner_package": "nominalSystem",
-  "predication.identity_state": "predicationSystem",
-  "age.basic_expression": "semanticSystems",
-  "possession.basic": "semanticSystems",
-  "action.basic_pattern": "verbalSystem",
-  "localization.first_contact": "sociolinguisticSystem",
-} as const satisfies Record<string, keyof LanguageProfile>;
 
 function decisionByRef(
   registry: LanguageDecisionRegistry,
@@ -120,10 +111,9 @@ export function hasPromotableProfileEvidenceForTask(input: {
     const gap = gapById.get(gapRef);
     const requirement = gap ? requirementById.get(gap.requirementRef) : undefined;
     if (!requirement) return false;
-    const section = PROFILE_SECTION_BY_DOMAIN[
-      requirement.domain as keyof typeof PROFILE_SECTION_BY_DOMAIN
-    ];
-    if (!section) return false;
+    const section = curriculumRequirementDomainMetadata(
+      requirement.domain,
+    ).profileSection;
     const sectionFeatureIds = collectFeatureIds(input.languageProfile[section]);
     if (![...sectionFeatureIds].some((featureId) => eligibleClaimFeatureRefs.has(featureId))) {
       return false;
@@ -136,7 +126,7 @@ function requirementDecisionRefs(
   curriculum: CurriculumUnitSpec,
   plan: AdaptationPlan,
   registry: LanguageDecisionRegistry,
-  domainPrefix?: string,
+  resolutionArea?: CurriculumRequirementResolutionArea,
 ) {
   const requirementById = new Map(
     curriculum.adaptationRequirements.map((requirement) => [
@@ -150,7 +140,13 @@ function requirementDecisionRefs(
       if (!resolution.decisionRef) return [];
       const requirement = requirementById.get(resolution.requirementRef);
       if (!requirement) return [];
-      if (domainPrefix && !requirement.domain.startsWith(domainPrefix)) return [];
+      if (
+        resolutionArea &&
+        curriculumRequirementDomainMetadata(requirement.domain).resolutionArea !==
+          resolutionArea
+      ) {
+        return [];
+      }
       const decision = decisionByRef(registry, resolution.decisionRef);
       if (!decision || decision.identity.status !== "validated") return [];
       return [resolution.decisionRef];
@@ -300,19 +296,19 @@ export function finalizeResolvedAdaptationPlan(input: {
     input.curriculum,
     plan,
     input.registry,
-    "phonology.",
+    "pronunciation",
   );
   const literacyRefs = requirementDecisionRefs(
     input.curriculum,
     plan,
     input.registry,
-    "writing.",
+    "literacy",
   );
   const localizationRefs = requirementDecisionRefs(
     input.curriculum,
     plan,
     input.registry,
-    "localization.",
+    "localization",
   );
 
   plan.instructionalResolution = {

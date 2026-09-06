@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { curriculumRequirementDomainSchema } from "./curriculum-requirement-domain.js";
 import { findDirectedCycle } from "./graph.js";
 import {
   criticalitySchema,
@@ -120,7 +121,7 @@ const targetArtifactSchema = z
 const adaptationRequirementSchema = z
   .object({
     requirementId: domainIdSchema,
-    domain: domainIdSchema,
+    domain: curriculumRequirementDomainSchema,
     semanticProblem: requiredTextSchema,
     decisionScope: z.enum([
       "language_global",

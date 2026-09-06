@@ -10,7 +10,10 @@ export const germanDecisionRegistryFixture: LanguageDecisionRegistry = {
   coverage: {
     levelScopes: ["A1"],
     unitScopes: ["A1-U01"],
-    requirementDomains: ["participant.reference", "sociolinguistics.initial_register"],
+    requirementDomains: [
+      "participant.basic_reference",
+      "sociolinguistics.initial_register",
+    ],
     notes: ["Golden M3 registry fixture for first-contact German decisions."],
   },
   decisions: [
