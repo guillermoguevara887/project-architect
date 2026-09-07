@@ -230,6 +230,55 @@ test("Assimil dialogue normalization keeps literal unique lines in source order"
   assert.equal(input.sourceContent, exactSource);
 });
 
+
+test("Assimil grounding tolerates source whitespace differences", () => {
+  const wrappedInput = {
+    ...input,
+    sourceContent:
+      "Guten\nMorgen. Ich bin\t müde. Ich bin bereit. Bis morgen.",
+  };
+  const normalized = normalizeAssimilLanguageLessonContent(
+    wrappedInput,
+    validContent(),
+  );
+
+  assert.deepEqual(
+    normalized.dialogue?.map(({ text }) => text),
+    ["Guten Morgen.", "Ich bin müde."],
+  );
+  assert.deepEqual(
+    normalized.comprehension.map(({ line }) => line),
+    ["Guten Morgen.", "Ich bin müde."],
+  );
+});
+
+test("Assimil normalization rejects dialogue that becomes unplayable after grounding", () => {
+  assert.throws(
+    () =>
+      normalizeAssimilLanguageLessonContent(
+        input,
+        validContent({
+          dialogue: [
+            { speaker: "Anna", text: "Guten Morgen." },
+            { speaker: "Invented", text: "Das wurde erfunden." },
+          ],
+        }),
+      ),
+    LanguageLessonProcessingError,
+  );
+
+  assert.throws(
+    () =>
+      normalizeAssimilLanguageLessonContent(
+        input,
+        validContent({
+          dialogue: [{ speaker: "Anna", text: "Guten Morgen." }],
+        }),
+      ),
+    LanguageLessonProcessingError,
+  );
+});
+
 test("Assimil normalization rejects ungrounded comprehension and too few grounded key phrases", () => {
   assert.throws(
     () =>
