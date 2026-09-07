@@ -94,22 +94,31 @@ function responseContainsRefusal(output: unknown) {
   });
 }
 
+function normalizeGroundingText(value: string) {
+  return value.normalize("NFC").replace(/\s+/gu, " ").trim();
+}
+
 function groundedInSource<T>(
   sourceContent: string,
   items: T[],
   text: (item: T) => string,
 ) {
+  const normalizedSource = normalizeGroundingText(sourceContent);
   const seen = new Set<string>();
 
   return items
-    .map((item, originalIndex) => ({
-      item,
-      originalIndex,
-      value: text(item),
-      sourceIndex: sourceContent.indexOf(text(item)),
-    }))
+    .map((item, originalIndex) => {
+      const value = normalizeGroundingText(text(item));
+
+      return {
+        item,
+        originalIndex,
+        value,
+        sourceIndex: normalizedSource.indexOf(value),
+      };
+    })
     .filter(({ value, sourceIndex }) => {
-      if (sourceIndex < 0 || seen.has(value)) return false;
+      if (!value || sourceIndex < 0 || seen.has(value)) return false;
       seen.add(value);
       return true;
     })
@@ -144,8 +153,17 @@ export function normalizeAssimilLanguageLessonContent(
         ({ text }) => text,
       ).slice(0, 16)
     : undefined;
-  const dialogue =
-    groundedDialogue?.length === 1 ? [] : groundedDialogue;
+  const generatedDialogueCount = content.dialogue?.length ?? 0;
+  const groundedDialogueCount = groundedDialogue?.length ?? 0;
+
+  if (
+    generatedDialogueCount === 1 ||
+    (generatedDialogueCount >= 2 && groundedDialogueCount < 2)
+  ) {
+    throw new LanguageLessonProcessingError("invalid_response");
+  }
+
+  const dialogue = groundedDialogue;
   const normalized = {
     ...content,
     comprehension,
