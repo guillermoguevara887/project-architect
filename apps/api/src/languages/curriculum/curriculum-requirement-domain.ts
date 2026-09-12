@@ -1,27 +1,20 @@
-import { z } from "zod";
 import type { LanguageProfileSection } from "../profile/language-profile.js";
-
-export const CURRICULUM_REQUIREMENT_DOMAIN_VERSION = "1.0.0";
-
-export const CURRICULUM_REQUIREMENT_DOMAINS = [
-  "writing.beginner_system",
-  "phonology.initial_intelligibility",
-  "sociolinguistics.initial_register",
-  "participant.basic_reference",
-  "nominal.beginner_package",
-  "predication.identity_state",
-  "age.basic_expression",
-  "possession.basic",
-  "action.basic_pattern",
-  "localization.first_contact",
-] as const;
-
-export const curriculumRequirementDomainSchema = z.enum(
+import {
   CURRICULUM_REQUIREMENT_DOMAINS,
-);
-export type CurriculumRequirementDomain = z.infer<
-  typeof curriculumRequirementDomainSchema
->;
+  CURRICULUM_REQUIREMENT_DOMAIN_VERSION,
+  curriculumRequirementDomainSchema,
+  type CurriculumRequirementDomain,
+} from "./curriculum-requirement-domain-values.js";
+import {
+  requirementEvidenceTargetCatalogRef,
+  type RequirementEvidenceTargetCatalogRef,
+} from "../profile/requirement-evidence-targets.js";
+export {
+  CURRICULUM_REQUIREMENT_DOMAINS,
+  CURRICULUM_REQUIREMENT_DOMAIN_VERSION,
+  curriculumRequirementDomainSchema,
+  type CurriculumRequirementDomain,
+} from "./curriculum-requirement-domain-values.js";
 
 export type CurriculumRequirementResearchGroup =
   | "literacy"
@@ -41,9 +34,10 @@ export type CurriculumRequirementDomainMetadata = Readonly<{
   researchGroup: CurriculumRequirementResearchGroup;
   resolutionArea: CurriculumRequirementResolutionArea;
   promptDescription: string;
+  evidenceTargetCatalogRef: RequirementEvidenceTargetCatalogRef;
 }>;
 
-export const CURRICULUM_REQUIREMENT_DOMAIN_METADATA = {
+const domainMetadata = {
   "writing.beginner_system": {
     profileSection: "writingSystem",
     researchGroup: "literacy",
@@ -114,8 +108,20 @@ export const CURRICULUM_REQUIREMENT_DOMAIN_METADATA = {
   },
 } as const satisfies Record<
   CurriculumRequirementDomain,
-  CurriculumRequirementDomainMetadata
+  Omit<CurriculumRequirementDomainMetadata, "evidenceTargetCatalogRef">
 >;
+
+// Metadata points to the one catalog. Consumers retain their historical fields.
+export const CURRICULUM_REQUIREMENT_DOMAIN_METADATA = Object.fromEntries(
+  CURRICULUM_REQUIREMENT_DOMAINS.map((domain) => [domain, {
+    ...domainMetadata[domain],
+    evidenceTargetCatalogRef: requirementEvidenceTargetCatalogRef(domain),
+  }]),
+) as {
+  readonly [D in CurriculumRequirementDomain]: typeof domainMetadata[D] & {
+    readonly evidenceTargetCatalogRef: RequirementEvidenceTargetCatalogRef & { domain: D };
+  };
+};
 
 export const LEGACY_CURRICULUM_REQUIREMENT_DOMAIN_ALIASES = {
   writing_system: "writing.beginner_system",
