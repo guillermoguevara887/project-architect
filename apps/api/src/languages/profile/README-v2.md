@@ -4,8 +4,9 @@ S1 defines structure and vocabulary only. It contains no coverage resolver and
 does not classify requirements as covered, partial or missing. No existing
 consumer, route, stored profile or registry is switched to v2. S2 now implements
 the separate pure evaluator in `requirement-evidence.ts`, documented below.
-S3A adds pure human lifecycle/promotion in `profile-lifecycle-v2.ts`; S3B durable
-persistence and all v2 consumer integrations remain deferred.
+S3A adds pure human lifecycle/promotion in `profile-lifecycle-v2.ts`; S3B adds the
+transactional persistence boundary described below. All v2 consumer integrations
+remain deferred.
 
 ## Versions and compatibility
 
@@ -408,7 +409,7 @@ fingerprint below binds review content; it does not prove evidence authenticity.
 
 The stages remain separate: S1 defines knowledge/evidence contracts; S2 resolves
 evidence; S3A records human review and produces canonical snapshots through pure
-functions; S3B will provide durable persistence. `covered ≠ approved`,
+functions; S3B provides durable persistence. `covered ≠ approved`,
 `durableConsumable ≠ human ACCEPT`, and `review ≠ canonical`.
 
 `profile-lifecycle-v2.ts` exports two operations:
@@ -429,8 +430,8 @@ or timestamp. A decision requires `ACCEPT | REJECT`, `candidateSha256`,
 An optional note records context. Time is supplied by the caller, never read from
 the clock. Human identity is a required contract assertion, not an authenticated
 attestation; S3A does not verify users or external authority. A caller fabricating
-a human assertion is outside this pure contract's trust boundary. S3B must bind
-review decisions to an authenticated human action; research/AI output must never
+a human assertion is outside this pure contract's trust boundary. The future
+authenticated integration must bind review decisions to a human action; research/AI output must never
 be allowed to populate that action on the user's behalf.
 
 ### Exact snapshot and lineage
@@ -498,14 +499,11 @@ mismatch, never an automatic rebase of the human decision.
 
 ### Deferred persistence and consumers
 
-S3B must persist candidate/decision/canonical records append-only, map their
-references to record IDs and parent record IDs, enforce version uniqueness and
-one terminal decision per candidate, and atomically compare the parent against
-the actual current canonical. The pure function checks the parent supplied by
-its caller and does not know whether it is still current in storage. Replays are
-deterministic; preventing contradictory ACCEPT/REJECT records or replay after a
-terminal rejection belongs to that persistence boundary. No SQL, repository,
-HTTP route, authentication or migration is added by S3A.
+S3A checks the parent supplied by its caller and does not know whether it is
+still current in storage. Pure replays remain deterministic. S3B below now
+provides append-only records, durable identities, terminal/version uniqueness
+and atomic parent-current checks. No SQL, repository, HTTP route, authentication
+or migration is part of the S3A pure module.
 
 M4/M13/M14 integration is deferred. M4 must not treat historical profileCoverage
 as authority; M13 must use eligible claims specific to each target; M14 may
@@ -519,3 +517,118 @@ When a new canonical appears, it must be recreated or explicitly rebound; the
 old binding must never silently authorize the new snapshot. This module neither
 creates nor changes a Registry. The pre-existing literal-types/readonly LOW
 remains deferred; S3A's local immutable records do not change that scope.
+
+## S3B: transactional lifecycle persistence
+
+`profile-lifecycle-store-v2.ts` supplies `ProfileLifecycleStoreV2`, an internal
+repository with the service/transaction boundary inside its write operations.
+It uses the existing Drizzle/PostgreSQL client and accepts an injected database
+factory for isolated tests. It opens no connection merely by being imported.
+It adds no HTTP route, UI or M4/M13/M14/Registry consumer.
+
+`0026_create_language_profile_v2_lifecycle.sql` creates only these new objects:
+
+| Table | Durable content and constraints |
+| --- | --- |
+| `language_profile_v2_candidates` | UUID record ID, review snapshot/ref, context SHA, source/origin lineage, nullable exact parent record, DB event order and created time; context SHA is unique |
+| `language_profile_v2_decisions` | UUID, candidate FK, explicit action, complete S3A decision JSON including both hashes/reviewer/caller timestamp/note, optional canonical FK, DB event order/time; candidate FK is unique |
+| `language_profile_v2_canonicals` | UUID, exact canonical snapshot/ref, reviewed candidate and decision FKs, nullable parent FK, DB event order/time; profileId/version is historically unique |
+
+The shared `language_profile_v2_event_sequence` supplies bigint ordering for all
+three tables. IDs use the repo's UUID convention. Record creation times come
+from PostgreSQL; the decision's original caller timestamp is retained inside
+its JSON unchanged. There is no owner/auth field invented by this phase:
+`profileId` is the namespace within the v2 store; future authenticated access
+must explicitly authorize access to it before exposing this internal API.
+
+### Exact representation, append-only and integrity
+
+`snapshot_json` is TEXT containing the exact normalized S3A JSON, alongside its
+contractual SHA and reference columns. JSONB stores only candidate lineage and
+decision metadata. PostgreSQL JSONB key order is never used as the content hash
+authority. S3A's `validateProfileReviewCandidateV2()` exposes its existing checks
+without manufacturing ACCEPT/REJECT; S3B uses it when writing/reading candidates.
+S3A still computes hashes and the review-to-canonical transformation.
+
+Historical candidates, decisions and canonicals have no update/delete operation
+in this API. Promotion inserts a new canonical, never changes a review snapshot
+or an old canonical. Tables have no cascading history deletion. This is an
+application write boundary with DB uniqueness/referential enforcement, not
+tamper-proof storage against a privileged SQL administrator. Deployment roles
+must not expose arbitrary table mutation to consumers. Tests deliberately corrupt
+isolated rows to verify conservative read failures; no repair tool is provided.
+
+Readers validate runtime row shapes, then replay S3A validation in DB event order
+against historical parent snapshots. They check exact JSON, hashes, profile IDs,
+references, action/outcome consistency and complete ACCEPT/canonical pairs.
+Malformed or inconsistent history raises `storage_integrity`; it is not returned
+as a trusted profile through TypeScript casts. Reads use one REPEATABLE READ,
+read-only transaction so a concurrent commit cannot expose half an outcome.
+The initial implementation validates the complete history of one profile for
+each read; it introduces no cache or alternative authority.
+
+### Terminal writes, locks and current canonical
+
+Both writes use explicit READ COMMITTED transactions and a transaction-level
+advisory lock on `hashtextextended('language-profile-v2:' + profileId, 0)`.
+Every writer for that profile takes the same lock, including bootstrap and
+candidate insertion. After waiting, subsequent queries observe the winner's
+commit. Hash collisions only serialize unrelated profiles; they cannot allow
+two writers for the same profile to proceed concurrently. No mutable head table
+or `is_current` flag is needed.
+
+The current canonical is the validated canonical with the largest DB event
+sequence for that profile. Allocation order is commit order for successful
+same-profile writes because they share the lock. Sequence gaps after rollback
+are harmless. Caller timestamps and SemVer ordering never determine the head.
+
+`recordReviewDecision(candidateRecordId, decision)` loads the durable candidate,
+checks terminal uniqueness and exact current parent inside the lock, then calls
+S3A. It accepts no caller replacement candidate. ACCEPT inserts the terminal
+decision and the canonical in the same transaction. Mutually linked deferred
+FKs prevent an ACCEPT without its canonical from committing, and prevent a
+canonical from referencing REJECT. Candidate/profile composite FKs keep their
+identities aligned. The transaction rolls back both writes on any failure.
+REJECT inserts only its terminal decision and leaves the head unchanged.
+
+Terminal retry policy is **B**: every later decision, identical or different,
+returns `decision_already_recorded`. A UNIQUE constraint on candidate record ID
+enforces one durable terminal row independently of application checks. Candidate
+insertion is idempotent by context SHA; retrying it returns the same record,
+including after a terminal decision. A fresh review of a rejected proposed
+version must use a new S3A content/context identity. Candidate versions are not
+unique; only canonical `(profileId, version)` pairs are historically unique.
+Version comparison remains S3A's distinct-string rule, with historical reuse
+blocked by S3B; monotonic SemVer allocation is not inferred.
+
+A stale parent yields `stale_parent` without a decision or canonical write.
+This conservatively applies to both ACCEPT and REJECT, matching S3A's current
+parent requirement. Bootstrap with parent=null only succeeds while no canonical
+exists. Concurrent siblings therefore have one winner; the second observes a
+new head and fails. Partial unique indexes additionally enforce one root per
+profile and one canonical child per parent. Foreign parents are rejected by
+application validation and composite profile FKs. No triggers are necessary.
+
+### Internal API and isolated verification
+
+- `persistReviewCandidate({ candidate, parentCanonicalRecordId })`
+- `getReviewCandidate(recordId)` / `getReviewDecision(candidateRecordId)`
+- `recordReviewDecision(candidateRecordId, decision)` (complete transaction)
+- `getCanonical(recordId)` / `getCurrentCanonical(profileId)`
+- `listProfileHistory(profileId)` (all candidates, decisions and canonicals in DB order)
+
+Use `corepack pnpm test:integration:profile-lifecycle` from the repository root.
+The existing Docker runner starts a fresh PostgreSQL 16 container bound only to
+loopback, clears DATABASE_URL for the test process, and removes the container and
+its volumes afterward. The suite requires an explicit local-test opt-in and
+admin database name, creates a distinct disposable database, and applies only
+0026 through the normal migration runner. It never reads a production URL.
+Concurrency tests hold a third connection's profile lock until both contenders
+are visibly blocked in PostgreSQL, then assert one winner and no partial writes.
+Unit tests separately cover runtime reconstruction and corrupted row shapes.
+
+Still deferred after S3B: effective reviewer authentication, HTTP/API access,
+review UI, M4/M13/M14, Registry binding, production migration/rollout, external
+attestations and authority verification. `reviewerRef` remains caller-declared;
+S3B does not claim cryptographic human verification. The known literal-types/
+readonly debt is unchanged. No production migration has been executed.

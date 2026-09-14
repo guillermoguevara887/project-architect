@@ -150,12 +150,10 @@ export function createProfileReviewCandidateV2(input: unknown): Failure | { read
   return freeze({ ok: true as const, candidate });
 }
 
-/** Apply an explicit human decision to its exact review snapshot. This is a pure
- * contract boundary, not authentication or a persistence/concurrency boundary.
- */
-export function reviewProfileCandidateV2(
-  candidateInput: unknown, decisionInput: unknown, currentCanonical: unknown,
-): ProfileReviewOutcomeV2 {
+/** Shared candidate parsing, integrity and lifecycle checks, without a decision. */
+function readCandidate(candidateInput: unknown): Failure | {
+  ok: true; candidate: ProfileReviewCandidateV2; profile: LanguageProfileV2;
+} {
   const parsedCandidate = candidateSchema.safeParse(candidateInput);
   if (!parsedCandidate.success) return fail("candidate_invalid", "candidate", parsedCandidate.error.message);
   const candidate = parsedCandidate.data;
@@ -174,6 +172,31 @@ export function reviewProfileCandidateV2(
   if (profile.status !== "review") {
     return fail("illegal_lifecycle_transition", "snapshot.status", "Only review candidates are eligible for a human decision.");
   }
+  return { ok: true, candidate, profile };
+}
+
+/** S3B may revalidate a persisted candidate without fabricating a review decision. */
+export function validateProfileReviewCandidateV2(candidateInput: unknown, parentCanonical: unknown): Failure | {
+  readonly ok: true; readonly candidate: ProfileReviewCandidateV2;
+} {
+  const read = readCandidate(candidateInput);
+  if (!read.ok) return read;
+  const parent = parentProfile(parentCanonical);
+  if (parent !== null && "ok" in parent) return parent;
+  const lineageError = checkLineage(read.candidate, read.profile, parent);
+  if (lineageError) return lineageError;
+  return freeze({ ok: true as const, candidate: read.candidate });
+}
+
+/** Apply an explicit decision; candidate, decision, then parent validation keep
+ * the original S3A precedence. Persistence does not redefine these rules.
+ */
+export function reviewProfileCandidateV2(
+  candidateInput: unknown, decisionInput: unknown, currentCanonical: unknown,
+): ProfileReviewOutcomeV2 {
+  const read = readCandidate(candidateInput);
+  if (!read.ok) return read;
+  const { candidate, profile } = read;
   const parsedDecision = profileReviewDecisionV2Schema.safeParse(decisionInput);
   if (!parsedDecision.success) return fail("decision_invalid", "decision", parsedDecision.error.message);
   const decision = parsedDecision.data;

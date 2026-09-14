@@ -7,6 +7,12 @@ const dockerCommand = process.platform === "win32" ? "docker.exe" : "docker";
 const repositoryRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const apiDirectory = join(repositoryRoot, "apps", "api");
 const tsxCli = join(apiDirectory, "node_modules", "tsx", "dist", "cli.mjs");
+const suite = process.argv[2] ?? "migrations";
+const testFiles = {
+  migrations: "tests/integration/migrations.postgres.test.ts",
+  "profile-lifecycle-v2": "tests/integration/profile-lifecycle-v2.postgres.test.ts",
+};
+if (!Object.hasOwn(testFiles, suite)) throw new Error("Unknown isolated PostgreSQL suite.");
 const suffix = randomBytes(4).toString("hex");
 const containerName = `memoos-migration-test-${process.pid}-${suffix}`;
 const databaseUser = "memoos_test";
@@ -101,7 +107,7 @@ try {
     `@127.0.0.1:${portMatch[1]}/${adminDatabase}`;
   const testResult = run(
     process.execPath,
-    [tsxCli, "--test", "tests/integration/migrations.postgres.test.ts"],
+    [tsxCli, "--test", testFiles[suite]],
     {
       cwd: apiDirectory,
       env: {
