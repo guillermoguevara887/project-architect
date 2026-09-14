@@ -4,6 +4,8 @@ S1 defines structure and vocabulary only. It contains no coverage resolver and
 does not classify requirements as covered, partial or missing. No existing
 consumer, route, stored profile or registry is switched to v2. S2 now implements
 the separate pure evaluator in `requirement-evidence.ts`, documented below.
+S3A adds pure human lifecycle/promotion in `profile-lifecycle-v2.ts`; S3B durable
+persistence and all v2 consumer integrations remain deferred.
 
 ## Versions and compatibility
 
@@ -397,7 +399,123 @@ The persisted S1 v2 schema still rejects that field. V2 has no `coverageDepth`, 
 no depth eligibility rule or invented threshold is applied. The unchanged v1
 schema, fixtures and consumers retain their historical behavior.
 
-S3+ must integrate this resolver into M4/M13/M14 and define persistence/promotion
-boundaries. No consumer is integrated in S2. Real authority verification,
-editorial-independence research, profile bootstrapping and any evidence freshness
-or content fingerprinting are not implemented here.
+Later phases must integrate this resolver into M4/M13/M14. No consumer is
+integrated in S2 or S3A. Real authority verification, editorial-independence
+research and evidence freshness are not implemented here. S3A's snapshot
+fingerprint below binds review content; it does not prove evidence authenticity.
+
+## S3A: explicit human lifecycle and pure promotion
+
+The stages remain separate: S1 defines knowledge/evidence contracts; S2 resolves
+evidence; S3A records human review and produces canonical snapshots through pure
+functions; S3B will provide durable persistence. `covered ≠ approved`,
+`durableConsumable ≠ human ACCEPT`, and `review ≠ canonical`.
+
+`profile-lifecycle-v2.ts` exports two operations:
+
+- `createProfileReviewCandidateV2({ profile, proposedVersion, origin,
+  parentCanonical })` validates S1, normalizes a new review snapshot and returns
+  an immutable candidate. It never produces canonical. The explicit parent is
+  either the complete current canonical profile or `null` for bootstrap.
+- `reviewProfileCandidateV2(candidate, decision, currentCanonical)` validates the
+  sealed candidate, decision and exact parent binding. It returns an accepted
+  outcome with a new canonical snapshot, a rejected outcome with `canonical:
+  null`, or an error. Both successful outcomes retain the candidate and decision.
+
+`profileReviewDecisionV2Schema` validates the decision input. There is no helper
+that manufactures ACCEPT from a score, evidence result, lifecycle, research run
+or timestamp. A decision requires `ACCEPT | REJECT`, `candidateSha256`,
+`contentSha256`, an explicit `{ kind: "human", reviewerRef }`, and `decidedAt`.
+An optional note records context. Time is supplied by the caller, never read from
+the clock. Human identity is a required contract assertion, not an authenticated
+attestation; S3A does not verify users or external authority. A caller fabricating
+a human assertion is outside this pure contract's trust boundary. S3B must bind
+review decisions to an authenticated human action; research/AI output must never
+be allowed to populate that action on the user's behalf.
+
+### Exact snapshot and lineage
+
+A candidate contains an immutable `snapshotJson` string and a snapshot reference
+with `profileId`, content `version`, `schemaVersion`, target `contractVersion`,
+lifecycle `status` and `contentSha256`. SHA-256 covers the UTF-8 bytes of the
+stored JSON. S1 parsing/normalization occurs **before** that snapshot is offered
+for review. Key order follows the S1 parser; array order remains significant.
+ACCEPT revalidates but cannot silently normalize or replace the stored snapshot.
+
+`candidateSha256` hashes the review snapshot and its complete envelope: snapshot
+reference, source reference, parent canonical reference and origin. Origin has a
+closed kind (`manual`, `generated`, `researched`, `corrected`), an explicit
+`originRef` and an optional `runRef`. The candidate digest is a content/context
+identity, not a DB ID. Changing content changes the content SHA; changing source,
+parent, proposed version or origin changes the candidate identity. Either change
+requires a new decision. Same inputs intentionally recreate the same identity.
+
+The source reference identifies the exact input profile before its explicit
+conversion to review. A canonical source must equal the supplied parent. For a
+revision, the candidate and parent retain profile/language/variety IDs, and the
+caller supplies a content version distinct from the parent. Version allocation
+and uniqueness across historical records remain S3B responsibilities; S3A does
+not infer a version bump or a global latest version. The chosen version is part
+of the review snapshot, so ACCEPT cannot substitute an unreviewed version.
+
+On ACCEPT, all reviewed fields and the proposed version are preserved; only
+`status: "review"` becomes `status: "canonical"` in a **new** JSON snapshot.
+Consequently the canonical has its own SHA. The outcome keeps the complete
+reviewed snapshot, its SHA, decision, origin and exact parent binding. The review
+snapshot and previous canonical remain untouched. REJECT retains the same audit
+context and produces no canonical; it does not introduce a `rejected` profile
+state. A rejected review snapshot still cannot pass S2's durable guard.
+
+All returned successful records are recursively frozen and readonly. JSON strings
+make the profile payload immutable without changing the existing S1/S2 types.
+There is no IO, randomness, implicit clock, mutable global state or in-place
+transition. Hashing uses Node's local SHA-256 primitive. Identical inputs produce
+identical outcomes, including replay of a decision.
+
+### Allowed and forbidden transitions
+
+| Source | Operation | Result |
+| --- | --- | --- |
+| `draft` | Create candidate | New sealed `review` snapshot; source unchanged |
+| `review` | Create candidate | Sealed `review`; changed content/context requires a new decision |
+| `canonical` | Create revision with exact parent and distinct version | New `review`; previous canonical unchanged |
+| `review` candidate | Matching human `ACCEPT`, valid S1 and parent | New `canonical` snapshot plus audit outcome |
+| `review` candidate | Matching human `REJECT` | Decision retained, no canonical |
+| `draft`, `canonical`, `deprecated` | Direct ACCEPT | Forbidden: only sealed `review` is eligible |
+| `deprecated` | Create candidate | Forbidden: no silent resurrection |
+| Any state | Coverage, durable flag, AI, metadata or missing decision | No promotion |
+| Any state | In-place lifecycle mutation | Unsupported |
+| `canonical` | Deprecation | No deprecation operation in S3A; policy deferred |
+
+The four existing lifecycle states are unchanged. Other transitions are not
+provided by this API. Contract-invalid profiles cannot become candidates or be
+promoted, even if a caller recomputes hashes. Errors distinguish
+`candidate_invalid`, `snapshot_mismatch`, `decision_invalid`,
+`illegal_lifecycle_transition`, `stale_decision` and `lineage_mismatch`.
+ACCEPT on a non-review snapshot is an illegal transition; REJECT is a successful
+review outcome rather than an error. A changed current canonical is a lineage
+mismatch, never an automatic rebase of the human decision.
+
+### Deferred persistence and consumers
+
+S3B must persist candidate/decision/canonical records append-only, map their
+references to record IDs and parent record IDs, enforce version uniqueness and
+one terminal decision per candidate, and atomically compare the parent against
+the actual current canonical. The pure function checks the parent supplied by
+its caller and does not know whether it is still current in storage. Replays are
+deterministic; preventing contradictory ACCEPT/REJECT records or replay after a
+terminal rejection belongs to that persistence boundary. No SQL, repository,
+HTTP route, authentication or migration is added by S3A.
+
+M4/M13/M14 integration is deferred. M4 must not treat historical profileCoverage
+as authority; M13 must use eligible claims specific to each target; M14 may
+research only authorized existing targets and end in review, with no automatic
+ACCEPT. Human approval does not make an unknown or insufficient target covered:
+S2 must still evaluate evidence and its official durable guard remains required.
+
+Registry grounding is also deferred. A Registry must bind to the exact canonical
+`profileId`, version, schemaVersion, content SHA and target contract version.
+When a new canonical appears, it must be recreated or explicitly rebound; the
+old binding must never silently authorize the new snapshot. This module neither
+creates nor changes a Registry. The pre-existing literal-types/readonly LOW
+remains deferred; S3A's local immutable records do not change that scope.
