@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  resolveRequirementEvidence, requirementEvidenceReasonSchema,
-  type RequirementEvidenceInput, type RequirementEvidenceResolution, type RequirementEvidenceReason,
+  canConsumeRequirementEvidenceDurably, resolveRequirementEvidence, requirementEvidenceReasonSchema,
+  type DurableRequirementEvidenceResolution, type RequirementEvidenceInput,
+  type RequirementEvidenceResolution, type RequirementEvidenceReason,
 } from "../src/languages/profile/requirement-evidence.js";
 import { languageProfileV2Schema, type LanguageProfileV2 } from "../src/languages/profile/language-profile-v2.js";
 import {
@@ -137,6 +138,76 @@ test("review candidates are epistemically evaluable in preview and never durable
   assert.equal(preview.mode, "preview");
   assert.equal(preview.durableConsumable, false);
   assert.equal(resolveRequirementEvidence(requirement(), fixture(), { mode: "preview" }).durableConsumable, false);
+});
+
+function fictitiousDurableConsumer(result: RequirementEvidenceResolution): string | null {
+  if (!canConsumeRequirementEvidenceDurably(result)) return null;
+  const authorized: DurableRequirementEvidenceResolution = result;
+  return authorized.requirementRef;
+}
+
+test("pre-S3 durable guard separates preview coverage from durable authorization", () => {
+  const profile = fixture();
+  const durable = resolveRequirementEvidence(requirement(), profile);
+  const preview = resolveRequirementEvidence(requirement(), profile, { mode: "preview" });
+  assert.equal(durable.status, "covered");
+  assert.equal(preview.status, "covered");
+  assert.deepEqual(preview.groups, durable.groups);
+  assert.equal(canConsumeRequirementEvidenceDurably(durable), true);
+  assert.equal(canConsumeRequirementEvidenceDurably(preview), false);
+  assert.equal(durable.durableConsumable, true);
+  assert.equal(preview.durableConsumable, false);
+  assert.equal(fictitiousDurableConsumer(durable), requirement().requirementRef);
+  assert.equal(fictitiousDurableConsumer(preview), null);
+});
+
+test("pre-S3 durable guard rejects partial, missing and structurally invalid results", () => {
+  const partialProfile = fixture();
+  partialProfile.evidenceRegistry.claims[0]!.evidenceRefs.pop();
+  const missingProfile = fixture();
+  missingProfile.evidenceRegistry.claims = [];
+  const invalidProfile = structuredClone(fixture());
+  delete (invalidProfile as Partial<LanguageProfileV2>).identity;
+  const cases = [
+    ["partial", resolveRequirementEvidence(requirement(), partialProfile)],
+    ["missing", resolveRequirementEvidence(requirement(), missingProfile)],
+    ["invalid", resolveRequirementEvidence(requirement(), invalidProfile)],
+  ] as const;
+  assert.equal(cases[0][1].status, "partial");
+  assert.equal(cases[1][1].status, "missing");
+  for (const [name, result] of cases) {
+    assert.equal(canConsumeRequirementEvidenceDurably(result), false, name);
+    assert.equal(result.durableConsumable, false, name);
+    assert.equal(fictitiousDurableConsumer(result), null, name);
+  }
+});
+
+for (const status of ["draft", "review", "deprecated"] as const) {
+  test(`pre-S3 durable guard rejects ${status} lifecycle`, () => {
+    const profile = fixture();
+    profile.status = status;
+    const result = resolveRequirementEvidence(requirement(), profile);
+    assert.equal(canConsumeRequirementEvidenceDurably(result), false);
+    assert.equal(result.durableConsumable, false);
+    assert.equal(fictitiousDurableConsumer(result), null);
+  });
+}
+
+test("pre-S3 durable authorization is deterministic under input reordering", () => {
+  const profile = fixture();
+  const expected = resolveRequirementEvidence(requirement(), profile);
+  const reordered = structuredClone(profile);
+  reordered.evidenceRegistry.sources.reverse();
+  reordered.evidenceRegistry.evidence.reverse();
+  reordered.evidenceRegistry.claims.reverse();
+  for (const claim of reordered.evidenceRegistry.claims) {
+    claim.subjectRefs.reverse();
+    claim.requirementEvidenceTargetRefs.reverse();
+    claim.evidenceRefs.reverse();
+  }
+  const actual = resolveRequirementEvidence(requirement(), reordered);
+  assert.deepEqual(actual, expected);
+  assert.equal(canConsumeRequirementEvidenceDurably(actual), true);
 });
 
 for (const status of ["review", "draft", "deprecated"] as const) test(`${status} cannot produce durable covered`, () => {

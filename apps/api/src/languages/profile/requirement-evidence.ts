@@ -125,7 +125,7 @@ export type RequirementEvidenceGroupResolution = {
   status: RequirementEvidenceStatus;
   targets: RequirementEvidenceTargetResolution[];
 };
-export type RequirementEvidenceResolution = {
+type RequirementEvidenceResolutionBase = {
   requirementRef: string;
   domain: CurriculumRequirementDomain;
   profileId: string | null;
@@ -134,9 +134,6 @@ export type RequirementEvidenceResolution = {
   profileVersion: string | null;
   schemaVersion: string | null;
   targetCatalogVersion: typeof catalog.catalogVersion;
-  mode: RequirementEvidenceMode;
-  durableConsumable: boolean;
-  status: RequirementEvidenceStatus;
   groups: RequirementEvidenceGroupResolution[];
   claimEvaluations: RequirementEvidenceClaimEvaluation[];
   acceptedClaims: RequirementEvidenceClaimSummary[];
@@ -145,6 +142,42 @@ export type RequirementEvidenceResolution = {
   conflicts: Conflict[];
   gaps: RequirementEvidenceGap[];
 };
+export type DurableRequirementEvidenceResolution = RequirementEvidenceResolutionBase & {
+  mode: "durable";
+  durableConsumable: true;
+  status: "covered";
+};
+export type NonDurableRequirementEvidenceResolution = RequirementEvidenceResolutionBase & {
+  mode: RequirementEvidenceMode;
+  durableConsumable: false;
+  status: RequirementEvidenceStatus;
+};
+export type RequirementEvidenceResolution =
+  | DurableRequirementEvidenceResolution
+  | NonDurableRequirementEvidenceResolution;
+
+type RequirementEvidenceAuthorization =
+  | { mode: "durable"; durableConsumable: true; status: "covered" }
+  | { mode: RequirementEvidenceMode; durableConsumable: false; status: RequirementEvidenceStatus };
+
+/** The resolver's single authority for durable authorization. Coverage remains
+ * epistemic; canonical lifecycle and durable mode are independent gates.
+ */
+function requirementEvidenceAuthorization(
+  mode: RequirementEvidenceMode, status: RequirementEvidenceStatus, profileCanonical: boolean,
+): RequirementEvidenceAuthorization {
+  if (mode === "durable" && profileCanonical && status === "covered") {
+    return { mode, durableConsumable: true, status };
+  }
+  return { mode, durableConsumable: false, status };
+}
+
+/** Official consumer boundary. Do not infer durable authorization from status. */
+export function canConsumeRequirementEvidenceDurably(
+  result: RequirementEvidenceResolution,
+): result is DurableRequirementEvidenceResolution {
+  return result.durableConsumable === true;
+}
 
 const record = (value: unknown): Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -620,11 +653,12 @@ export function resolveRequirementEvidence(
   const claimEvaluations = ordered(groups.flatMap((group) => group.targets.flatMap((target) => target.claimEvaluations)));
   const summaries = summarizeClaims(claimEvaluations);
   const conflictIds = new Set(subjects.flatMap((subject) => subject.conflictRefs));
+  const authorization = requirementEvidenceAuthorization(mode, status, profile.status === "canonical");
   return {
     requirementRef: requirement.requirementRef, domain: requirement.domain,
     profileId: textOrNull(identity.profileId), languageId: textOrNull(identity.languageId), varietyId: textOrNull(identity.varietyId),
     profileVersion: textOrNull(profile.version), schemaVersion: textOrNull(profile.schemaVersion), targetCatalogVersion: catalog.catalogVersion,
-    mode, durableConsumable: mode === "durable" && profile.status === "canonical" && status === "covered", status, groups,
+    ...authorization, groups,
     claimEvaluations, acceptedClaims: summaries.filter((claim) => claim.status !== "rejected"), rejectedClaims: summaries.filter((claim) => claim.status === "rejected"),
     sourcesUsed: strings(claimEvaluations.flatMap((claim) => claim.usedSourceRefs)).map((id) => context.sources.get(id)!),
     conflicts: context.conflicts.filter((conflict) => conflictIds.has(conflict.conflictId)),

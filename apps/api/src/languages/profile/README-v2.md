@@ -281,6 +281,15 @@ status or authorize consumption. Invalid v2 contracts cannot produce global
 covered in either mode. Unversioned/v1 profiles return missing with
 `unsupported_schema_version`; no v1 claims are evaluated.
 
+`covered` means epistemological/evidential coverage; by itself it does not
+authorize durable consumption. Consumers must use the public
+`canConsumeRequirementEvidenceDurably(result)` guard as the official durable
+boundary. The result is discriminated by `durableConsumable`: the `true` branch
+narrows to durable mode with covered status, while preview and every other
+non-authorized result remain in the `false` branch. The resolver derives that
+discriminant from the same centralized mode, lifecycle and coverage decision used
+by the guard; consumers do not reconstruct those rules.
+
 Required/all needs every target; required/any needs at least one. Optional groups
 are evaluated but neither block global coverage nor create global partial alone.
 Gaps/rejections in optional groups or unused any alternatives remain visible even
