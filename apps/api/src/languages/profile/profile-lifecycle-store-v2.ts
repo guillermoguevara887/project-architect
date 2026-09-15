@@ -166,7 +166,7 @@ async function lookupProfile(db: Executor, kind: "candidate" | "canonical", id: 
  * until a method is explicitly invoked; tests inject an isolated Drizzle DB.
  */
 export class ProfileLifecycleStoreV2 {
-  constructor(private readonly database: () => Database = getDb) {}
+  constructor(private readonly database: () => Pick<Database, "transaction"> = getDb) {}
 
   async persistReviewCandidate(input: { candidate: unknown; parentCanonicalRecordId: string | null }): Promise<ProfileCandidateRecordV2> {
     // Read only enough shape to choose the lock; the full S3A validator is still

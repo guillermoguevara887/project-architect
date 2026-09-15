@@ -5,7 +5,8 @@ does not classify requirements as covered, partial or missing. No existing
 consumer, route, stored profile or registry is switched to v2. S2 now implements
 the separate pure evaluator in `requirement-evidence.ts`, documented below.
 S3A adds pure human lifecycle/promotion in `profile-lifecycle-v2.ts`; S3B adds the
-transactional persistence boundary described below. All v2 consumer integrations
+transactional persistence boundary described below. Registry Grounding now adds
+explicit durable Registry bindings to S3B canonicals. M4/M13/M14 integrations
 remain deferred.
 
 ## Versions and compatibility
@@ -511,12 +512,12 @@ research only authorized existing targets and end in review, with no automatic
 ACCEPT. Human approval does not make an unknown or insufficient target covered:
 S2 must still evaluate evidence and its official durable guard remains required.
 
-Registry grounding is also deferred. A Registry must bind to the exact canonical
-`profileId`, version, schemaVersion, content SHA and target contract version.
-When a new canonical appears, it must be recreated or explicitly rebound; the
-old binding must never silently authorize the new snapshot. This module neither
-creates nor changes a Registry. The pre-existing literal-types/readonly LOW
-remains deferred; S3A's local immutable records do not change that scope.
+Registry Grounding, documented below, binds a Registry to the exact canonical
+record, `profileId`, version, schemaVersion, canonical SHA and target contract
+version. A new canonical requires a new explicit Registry artifact/version;
+the old binding never authorizes the new snapshot. S3A itself neither creates
+nor changes a Registry. The pre-existing literal-types/readonly LOW remains
+deferred; S3A's local immutable records do not change that scope.
 
 ## S3B: transactional lifecycle persistence
 
@@ -627,8 +628,144 @@ Concurrency tests hold a third connection's profile lock until both contenders
 are visibly blocked in PostgreSQL, then assert one winner and no partial writes.
 Unit tests separately cover runtime reconstruction and corrupted row shapes.
 
-Still deferred after S3B: effective reviewer authentication, HTTP/API access,
-review UI, M4/M13/M14, Registry binding, production migration/rollout, external
+Still deferred after S3B and Registry Grounding: effective reviewer authentication,
+HTTP/API access, review UI, M4/M13/M14, production migration/rollout, external
 attestations and authority verification. `reviewerRef` remains caller-declared;
 S3B does not claim cryptographic human verification. The known literal-types/
 readonly debt is unchanged. No production migration has been executed.
+
+## Registry Grounding: exact canonical identity
+
+`Registry ≠ profileId`
+
+`Registry ≠ current profile`
+
+`Registry binding = exact canonical identity`
+
+The existing Registry is `LanguageDecisionRegistry` in
+`decisions/language-decision-registry.ts`. It contains its own `registryId`,
+language/variety/curriculum identity, content version, lifecycle status,
+decisions, dependency graph and coverage. Decision triggers use curricular
+adaptation requirement refs (such as `AR04`); coverage uses closed requirement
+domains. These refs are not themselves the S2 evidence target IDs. Decisions
+can reference profile features, mechanisms and claims. Its artifact schema has
+no separate `schemaVersion` field; Registry `version` is a content revision.
+
+Registry artifacts already have durable, user-scoped storage in
+`language_decision_registry_versions` (0022). Manual registration and M11 review
+promotion write them; existing adaptation planning, orchestration and resolution
+use the legacy v1 profile/Registry path. M6 constructs temporary Registries for
+candidate validation. None of those consumers or generators is switched to v2
+by this phase. The `evidenceRegistry` embedded inside a Profile is a different
+contract, not a replacement for `LanguageDecisionRegistry`.
+
+### Binding and SHA choice
+
+`decisions/registry-profile-binding-v2.ts` defines a strict binding envelope:
+
+| Field | Meaning |
+| --- | --- |
+| `bindingVersion` | Grounding contract format, `1.0.0` |
+| `profileId` | Stable identity of the S3B canonical profile |
+| `profileVersion` | Canonical content revision, independent of Registry version |
+| `schemaVersion` | Profile schema, `2.0.0` |
+| `contractVersion` | Requirement evidence target catalog contract, `1.0.0` |
+| `canonicalRecordId` | Exact S3B canonical UUID |
+| `canonicalSha256` | SHA of the materialized canonical snapshot |
+
+The canonical SHA is S3A's existing digest after the explicit review-to-canonical
+status transition. It is not the reviewed content SHA. The approved candidate
+and its reviewed SHA remain reachable through S3B lineage; the binding does not
+duplicate that identity or invent another profile digest. The existing Registry
+`content_sha256` still hashes the Registry artifact and has a different purpose.
+
+`compareRegistryProfileBindingsV2(actual, expected)` is the single pure comparison
+of every binding field. It is deterministic and returns a discriminated result:
+`registry_unbound`, malformed-binding diagnostics or `registry_profile_mismatch`
+with field names. This predicate compares identities; it cannot establish DB
+provenance for arbitrary caller objects. Use the durable service below for that.
+Matching language, profileId, version, partial content or SHA alone never suffices.
+
+### Durable API and atomicity
+
+`knowledge/registry-grounding-v2.ts` provides `RegistryGroundingStoreV2`:
+
+- `createRegistry({ userId, canonicalRecordId, registry })`
+- `getRegistry(userId, registryRecordId)`
+- `checkRegistryGrounding(userId, registryRecordId, canonicalRecordId)`
+- `getRegistryForCurrentCanonical({ userId, profileId, registryRef: { id, version } })`
+
+Creation accepts only an explicit canonical UUID. It rereads and validates that
+record through S3B, validates the Registry against the explicit v2 profile context,
+then constructs the binding privately. Raw profiles, candidates, review snapshots,
+deprecated profiles and fabricated canonical objects are not accepted as durable
+identity. The Registry validator reuses its existing semantic/reference checks;
+the v2 context is explicit and cannot be mixed with a v1 context. S1/S2 evidence
+resolution and S3A promotion rules are not reimplemented here.
+
+Artifact generation remains outside this service: a producer reads a pinned
+canonical and constructs the existing Registry artifact from it. Binding creation
+occurs with persistence, after artifact construction. Artifact and binding are
+inserted into one row in one transaction, so neither can be partially persisted.
+This records exact source identity; it does not attest that arbitrary reasoning
+was independently verified, approve Registry decisions, or authorize evidence
+consumption. Registry status is preserved, not promoted by grounding.
+
+Migration `0027_ground_language_decision_registries_v2.sql` extends the existing
+table, with no new table and no backfill. `profile_record_id` remains the legacy
+v1 FK but becomes nullable. New `canonical_record_id` references S3B; new
+`profile_binding_v2` contains the full binding. A CHECK requires exactly one path:
+legacy profile with no binding, or v2 canonical with a binding. Further CHECKs
+validate the envelope, supported contract versions and agreement between its
+canonical UUID and the FK column. Full equality with the referenced canonical,
+including hashes and version, is enforced by the service and readers. The DB FK
+alone does not validate a JSON digest against canonical content.
+
+The existing UNIQUE `(user_id, registry_id, version)` is preserved. Reusing that
+identity, even for an identical retry, returns `registry_version_exists`;
+concurrent attempts cannot overwrite the winner. Rebinding requires an explicitly
+new Registry version or ID. The API has no update/rebind/delete operation.
+Inherited user ownership/FKs remain; this is append-only through the workflow,
+not protection against administrative SQL or the existing user deletion cascade.
+
+### History, currentness and corruption
+
+New canonical B → Registry A remains historical → create Registry B explicitly.
+
+Registry A remains valid for canonical A after B is current. A check against B
+returns a mismatch. Explicitly creating for A after B was promoted is still an
+operation for historical A, never a claim that A is current. There is no ambiguous
+"bind to current" write API.
+
+Current lookup reads S3B current and finds the requested exact Registry ID/version
+for that canonical. Missing grounding returns `registry_not_found_for_canonical`;
+it never selects an older, latest-by-time or merely compatible Registry. Reads
+and creation use REPEATABLE READ. S3B reads share the outer transaction through
+its existing transaction boundary. If a promotion commits during a lookup, its
+returned canonical and Registry still belong to the same database snapshot.
+This is currentness as of that read, not a lease against future promotions.
+
+Readers runtime-validate the envelope, row metadata and Registry structure,
+reconstruct the existing Registry hash from schema-normalized JSONB, reread the
+referenced canonical through S3B, and compare all binding fields. Broken hashes,
+bindings, missing references or payload mismatches fail conservatively with
+`storage_integrity`. No casts or fallback create a trusted replacement binding.
+Legacy rows remain `registry_unbound` for the v2 guard. Existing legacy repository
+queries exclude v2 rows, preserving their non-null v1 profile contract. No existing
+Registry is silently relabeled as derived from a v2 canonical.
+
+### Verification and remaining integrations
+
+`corepack pnpm test:integration:registry-grounding` uses the existing disposable
+PostgreSQL runner. It verifies incremental 0027 migration with legacy data,
+exact bindings, historical/current behavior, explicit rebinding, ownership,
+concurrent creation/promotion, constraints, rollback and corrupted reads. The
+normal migration integration suite also applies the complete chain on fresh DBs.
+Migration execution is limited to isolated local tests; production rollout is
+separate and has not been executed.
+
+Future M4/M13/M14 must use this central grounding boundary and the appropriate
+S2 evidence authorization, not manual profileId comparisons. They remain
+unintegrated: no auto research, routes, UI, reviewer authentication or automatic
+promotion is introduced. Canonical access authorization, production rollout and
+general literal-types/readonly hardening remain deferred.

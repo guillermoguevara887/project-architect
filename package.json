@@ -15,6 +15,7 @@
     "test": "node scripts/turbo.mjs run test",
     "test:integration:migrations": "node scripts/test-migrations-postgres.mjs",
     "test:integration:profile-lifecycle": "node scripts/test-migrations-postgres.mjs profile-lifecycle-v2",
+    "test:integration:registry-grounding": "node scripts/test-migrations-postgres.mjs registry-grounding-v2",
     "db:generate": "corepack pnpm --filter @memoos/api db:generate",
     "db:migrate": "corepack pnpm --filter @memoos/api db:migrate",
     "db:migrate:status": "corepack pnpm --filter @memoos/api db:migrate:status",

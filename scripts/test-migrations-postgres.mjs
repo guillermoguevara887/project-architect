@@ -11,6 +11,7 @@ const suite = process.argv[2] ?? "migrations";
 const testFiles = {
   migrations: "tests/integration/migrations.postgres.test.ts",
   "profile-lifecycle-v2": "tests/integration/profile-lifecycle-v2.postgres.test.ts",
+  "registry-grounding-v2": "tests/integration/registry-grounding-v2.postgres.test.ts",
 };
 if (!Object.hasOwn(testFiles, suite)) throw new Error("Unknown isolated PostgreSQL suite.");
 const suffix = randomBytes(4).toString("hex");

@@ -21,6 +21,7 @@ import {
   languageProfileSchema,
   type LanguageProfile,
 } from "../profile/language-profile.js";
+import { languageProfileV2Schema, type LanguageProfileV2 } from "../profile/language-profile-v2.js";
 
 export const languageDecisionStatusSchema = z.enum([
   "provisional",
@@ -319,6 +320,8 @@ export type LanguageDecisionRegistry = z.infer<typeof languageDecisionRegistrySc
 
 export type LanguageDecisionValidationContext = {
   languageProfile?: LanguageProfile;
+  // Explicit v2 context; legacy callers never switch schemas implicitly.
+  languageProfileV2?: LanguageProfileV2;
 };
 
 function decisionRef(decision: LanguageDecision): LanguageDecisionRef {
@@ -379,7 +382,7 @@ type ProfileReferenceIndex = {
   sourceIds: Set<string>;
 };
 
-function collectProfileReferenceIndex(profile: LanguageProfile): ProfileReferenceIndex {
+function collectProfileReferenceIndex(profile: LanguageProfile | LanguageProfileV2): ProfileReferenceIndex {
   const index: ProfileReferenceIndex = {
     featureIds: new Set<string>(),
     mechanismIds: new Set<string>(),
@@ -407,7 +410,7 @@ function collectProfileReferenceIndex(profile: LanguageProfile): ProfileReferenc
 
 function validateProfileGrounding(
   registry: LanguageDecisionRegistry,
-  profile: LanguageProfile,
+  profile: LanguageProfile | LanguageProfileV2,
   issues: ValidationIssue[],
 ) {
   if (
@@ -728,7 +731,15 @@ export function validateLanguageDecisionRegistry(
     );
   }
 
-  if (context.languageProfile) {
+  if (context.languageProfileV2 !== undefined) {
+    const profileParsed = languageProfileV2Schema.safeParse(context.languageProfileV2);
+    if (context.languageProfile !== undefined || !profileParsed.success) {
+      issues.push(validationIssue("INVALID_LANGUAGE_PROFILE_CONTEXT", "context.languageProfileV2",
+        "Supply one explicit, valid v2 profile context; do not mix profile schemas"));
+    } else {
+      validateProfileGrounding(registry, profileParsed.data, issues);
+    }
+  } else if (context.languageProfile) {
     const profileParsed = languageProfileSchema.safeParse(context.languageProfile);
     if (!profileParsed.success) {
       issues.push(

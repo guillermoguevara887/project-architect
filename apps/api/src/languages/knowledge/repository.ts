@@ -313,6 +313,7 @@ export const languageKnowledgeStore: LanguageKnowledgeStore = {
           AND registry_id=${input.registry.identity.registryId}
           AND version=${input.registry.version}
           AND content_sha256=${input.contentSha256}
+          AND profile_record_id IS NOT NULL
         LIMIT 1
       `),
     );
@@ -324,6 +325,7 @@ export const languageKnowledgeStore: LanguageKnowledgeStore = {
       await getDb().execute(sql`
         SELECT * FROM language_decision_registry_versions
         WHERE id=${registryRecordId} AND user_id=${userId}
+          AND profile_record_id IS NOT NULL
         LIMIT 1
       `),
     );
@@ -335,6 +337,7 @@ export const languageKnowledgeStore: LanguageKnowledgeStore = {
       await getDb().execute(sql`
         SELECT * FROM language_decision_registry_versions
         WHERE user_id=${userId}
+          AND profile_record_id IS NOT NULL
           AND (${languageId ?? null}::text IS NULL OR language_id=${languageId ?? null})
           AND (${varietyId ?? null}::text IS NULL OR variety_id=${varietyId ?? null})
         ORDER BY created_at DESC
@@ -455,6 +458,7 @@ export const languageKnowledgeStore: LanguageKnowledgeStore = {
                 AND registry_id=${input.registry.identity.registryId}
                 AND version=${input.registry.version}
                 AND content_sha256=${input.contentSha256}
+                AND profile_record_id IS NOT NULL
               LIMIT 1
             `),
           );
