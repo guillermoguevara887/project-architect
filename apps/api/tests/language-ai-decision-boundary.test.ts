@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  compileInitialAdaptationPlan,
+  compileLegacyInitialAdaptationPlan as compileInitialAdaptationPlan,
   type AdaptationPlan,
 } from "../src/languages/adaptation/adaptation-plan.js";
 import {

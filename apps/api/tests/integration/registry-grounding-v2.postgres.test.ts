@@ -18,6 +18,9 @@ import { lifecycleDecision } from "../fixtures/profile-lifecycle-v2.js";
 import { groundingProfile, groundingRegistry } from "../fixtures/registry-grounding-v2.js";
 import { germanLanguageProfileFixture } from "../fixtures/language-profile/german.js";
 import { germanDecisionRegistryFixture } from "../fixtures/language-decisions/german.js";
+import { GroundedAdaptationCompiler } from "../../src/languages/adaptation/adaptation-plan.js";
+import { a1U01CurriculumFixture } from "../fixtures/language-curriculum/a1-u01.js";
+import { m4Registry } from "../fixtures/m4-grounded.js";
 
 const adminUrl = new URL(process.env.MIGRATION_TEST_DATABASE_URL ?? "postgres://invalid/invalid");
 if (process.env.MIGRATION_TEST_ALLOW_LOCAL !== "1" || !["127.0.0.1", "localhost", "[::1]"].includes(adminUrl.hostname) || adminUrl.pathname !== "/memoos_migration_admin") {
@@ -73,6 +76,10 @@ async function registry(c: ProfileCanonicalRecordV2, version = "1.0.0", registry
   return store.createRegistry({ userId: owner, canonicalRecordId: c.id, registry: groundingRegistry(version, registryId) });
 }
 const lookup = (profileId: string, id: string, version = "1.0.0") => ({ userId, profileId, registryRef: { id, version } });
+const m4Input = (canonicalRecordId: string, registryRecordId: string, owner = userId) => ({
+  userId: owner, canonicalRecordId, registryRecordId, curriculum: a1U01CurriculumFixture,
+});
+const m4 = new GroundedAdaptationCompiler(store);
 
 test("grounding migration upgrades existing Registry rows without fabricating v2 bindings", async () => {
   const [r] = await connection`SELECT * FROM language_decision_registry_versions WHERE id=${legacyRegistryId}`;
@@ -234,3 +241,99 @@ for (const corruption of ["sha", "profile", "version", "canonical_reference", "a
     assert.deepEqual(await store.getRegistry(userId, ra.id), ra);
   });
 }
+
+test("M4 PostgreSQL exact pair compiles approved strategies and pins output provenance", async () => {
+  const a = await canonical();
+  const r = await store.createRegistry({ userId, canonicalRecordId: a.id, registry: m4Registry("1.0.0", `registry.${a.profileId}`) });
+  const result = await m4.compile(m4Input(a.id, r.id)); assert.ok(result.ok);
+  assert.deepEqual(result.grounding, { registryRecordId: r.id, binding: r.profileBinding });
+  assert.deepEqual(result.plan.decisionChanges.reusedDecisionRefs.map(d => d.id), ["social.register.initial", "participant.actor_affected"]);
+  assert.equal(result.plan.gapAnalysis.length, 8);
+  assert.deepEqual(await m4.compile(m4Input(a.id, r.id)), result);
+});
+test("M4 PostgreSQL legacy/unbound plus reviewed profileCoverage cannot authorize planning", async () => {
+  const a = await canonical();
+  const result = await m4.compile(m4Input(a.id, legacyRegistryId)); assert.ok(!result.ok);
+  assert.equal(result.code, "registry_unbound"); assert.equal(result.plan, null);
+  const override = await m4.compile({ ...m4Input(a.id, legacyRegistryId), profileCoverage: germanLanguageProfileFixture.profileCoverage });
+  assert.ok(!override.ok); assert.equal(override.code, "invalid_input"); assert.equal(override.plan, null);
+});
+test("M4 PostgreSQL missing canonical/Registry and wrong owner fail without a plan", async () => {
+  const a = await canonical(), ra = await registry(a);
+  for (const [input, expected] of [
+    [m4Input(randomUUID(), ra.id), "canonical_not_found"],
+    [m4Input(a.id, randomUUID()), "registry_not_found"],
+    [m4Input(a.id, ra.id, otherUserId), "registry_not_found"],
+    [m4Input(a.candidateRecordId, ra.id), "canonical_not_found"],
+  ] as const) {
+    const result = await m4.compile(input); assert.ok(!result.ok); assert.equal(result.code, expected); assert.equal(result.plan, null);
+  }
+});
+test("M4 PostgreSQL wrong profile with matching version/language is a grounding mismatch", async () => {
+  const a = await canonical(), ra = await registry(a), other = await canonical();
+  const result = await m4.compile(m4Input(other.id, ra.id)); assert.ok(!result.ok);
+  assert.equal(result.code, "registry_profile_mismatch"); assert.equal(result.plan, null);
+});
+test("M4 PostgreSQL promotion rejects B with Registry A, allows B/B and explicit historical A/A", async () => {
+  const a = await canonical(), ra = await registry(a);
+  const before = await m4.compile(m4Input(a.id, ra.id)); assert.ok(before.ok);
+  const b = await canonical(a.profileId, "2.0.0", a);
+  const unavailable = await m4.compile(m4Input(b.id, ra.id)); assert.ok(!unavailable.ok);
+  assert.equal(unavailable.code, "registry_profile_mismatch"); assert.equal(unavailable.plan, null);
+  const rb = await registry(b, "2.0.0");
+  assert.ok((await m4.compile(m4Input(b.id, rb.id))).ok);
+  const reverse = await m4.compile(m4Input(a.id, rb.id)); assert.ok(!reverse.ok); assert.equal(reverse.code, "registry_profile_mismatch");
+  assert.deepEqual(await m4.compile(m4Input(a.id, ra.id)), before);
+});
+for (const [field, value] of Object.entries({ profileId: "wrong.profile", profileVersion: "9.0.0", schemaVersion: "9.0.0",
+  contractVersion: "9.0.0", canonicalRecordId: "00000000-0000-4000-8000-000000000099", canonicalSha256: "0".repeat(64) })) {
+  test(`M4 PostgreSQL rejects corrupt binding ${field} through central grounding`, async () => {
+    const a = await canonical(), ra = await registry(a), marker = new Error("restore isolated M4 corruption");
+    await assert.rejects(database.transaction(async (tx) => {
+      await tx.execute(sql`ALTER TABLE language_decision_registry_versions DROP CONSTRAINT ld_registry_profile_binding_shape`);
+      await tx.execute(sql`UPDATE language_decision_registry_versions SET profile_binding_v2=${JSON.stringify({ ...ra.profileBinding, [field]: value })}::jsonb WHERE id=${ra.id}`);
+      const reader = new RegistryGroundingStoreV2(() => ({ transaction: (operation) => operation(tx) }));
+      const result = await new GroundedAdaptationCompiler(reader).compile(m4Input(a.id, ra.id));
+      assert.ok(!result.ok); assert.equal(result.code, "storage_integrity"); assert.equal(result.plan, null);
+      throw marker;
+    }), e => e === marker);
+    assert.ok((await m4.compile(m4Input(a.id, ra.id))).ok);
+  });
+}
+for (const source of ["canonical", "registry"] as const) {
+  test(`M4 PostgreSQL propagates ${source} content corruption without fallback`, async () => {
+    const a = await canonical(), ra = await registry(a), marker = new Error("restore corruption");
+    await assert.rejects(database.transaction(async tx => {
+      await tx.execute(source === "canonical"
+        ? sql`UPDATE language_profile_v2_canonicals SET content_sha256=${"0".repeat(64)} WHERE id=${a.id}`
+        : sql`UPDATE language_decision_registry_versions SET registry='{}'::jsonb WHERE id=${ra.id}`);
+      const reader = new RegistryGroundingStoreV2(() => ({ transaction: operation => operation(tx) }));
+      const result = await new GroundedAdaptationCompiler(reader).compile(m4Input(a.id, ra.id));
+      assert.ok(!result.ok); assert.equal(result.code, "storage_integrity"); assert.equal(result.plan, null);
+      throw marker;
+    }), e => e === marker);
+  });
+}
+test("M4 PostgreSQL pinned resolution stays on A across a controlled concurrent promotion to B", async () => {
+  const a = await canonical(), ra = await registry(a), bc = await candidate(a.profileId, "2.0.0", a);
+  let promoted = false;
+  const reader = new RegistryGroundingStoreV2(() => ({ transaction: (operation, config) => database.transaction(async tx => {
+    assert.equal(config?.isolationLevel, "repeatable read"); assert.equal(config?.accessMode, "read only");
+    return operation(new Proxy(tx, { get(target, key) {
+      if (key === "execute") return async (query: Parameters<typeof tx.execute>[0]) => {
+        const result = await target.execute(query);
+        const queryText = new PgDialect().sqlToQuery(typeof query === "string" ? sql.raw(query) : query.getSQL()).sql;
+        if (!promoted && queryText.includes("SELECT * FROM language_profile_v2_candidates")) {
+          promoted = true; await lifecycle.recordReviewDecision(bc.id, lifecycleDecision(bc.candidate));
+        }
+        return result;
+      };
+      return Reflect.get(target, key, target);
+    } }));
+  }, config) }));
+  const result = await new GroundedAdaptationCompiler(reader).compile(m4Input(a.id, ra.id)); assert.ok(result.ok); assert.ok(promoted);
+  assert.equal(result.grounding.binding.canonicalRecordId, a.id);
+  assert.equal(result.plan.inputs.languageProfileRef.version, a.snapshot.version);
+  const b = await lifecycle.getCurrentCanonical(a.profileId); assert.ok(b); assert.notEqual(b.id, a.id);
+  const stale = await m4.compile(m4Input(b.id, ra.id)); assert.ok(!stale.ok); assert.equal(stale.code, "registry_profile_mismatch");
+});

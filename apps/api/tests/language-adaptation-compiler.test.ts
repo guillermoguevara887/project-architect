@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   adaptationPlanSchema,
-  compileInitialAdaptationPlan,
+  compileLegacyInitialAdaptationPlan as compileInitialAdaptationPlan,
   validateAdaptationPlan,
 } from "../src/languages/adaptation/adaptation-plan.js";
 import { a1U01CurriculumFixture } from "./fixtures/language-curriculum/a1-u01.js";

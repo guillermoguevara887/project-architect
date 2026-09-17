@@ -1,5 +1,5 @@
 import {
-  compileInitialAdaptationPlan,
+  compileLegacyInitialAdaptationPlan as compileInitialAdaptationPlan,
   validateAdaptationPlan,
   type AdaptationPlan,
   type AdaptationCompilationInput,

@@ -1,5 +1,5 @@
 import {
-  compileInitialAdaptationPlan,
+  compileLegacyInitialAdaptationPlan as compileInitialAdaptationPlan,
   type AdaptationPlan,
 } from "../../../src/languages/adaptation/adaptation-plan.js";
 import type {

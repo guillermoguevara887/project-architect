@@ -6,8 +6,8 @@ consumer, route, stored profile or registry is switched to v2. S2 now implements
 the separate pure evaluator in `requirement-evidence.ts`, documented below.
 S3A adds pure human lifecycle/promotion in `profile-lifecycle-v2.ts`; S3B adds the
 transactional persistence boundary described below. Registry Grounding now adds
-explicit durable Registry bindings to S3B canonicals. M4/M13/M14 integrations
-remain deferred.
+explicit durable Registry bindings to S3B canonicals. M4 now consumes a pinned
+grounded pair through its domain entry below. M13/M14 integration remains deferred.
 
 ## Versions and compatibility
 
@@ -506,8 +506,8 @@ provides append-only records, durable identities, terminal/version uniqueness
 and atomic parent-current checks. No SQL, repository, HTTP route, authentication
 or migration is part of the S3A pure module.
 
-M4/M13/M14 integration is deferred. M4 must not treat historical profileCoverage
-as authority; M13 must use eligible claims specific to each target; M14 may
+M4's grounded entry is documented below and never treats historical profileCoverage
+as authority. M13 must use eligible claims specific to each target; M14 may
 research only authorized existing targets and end in review, with no automatic
 ACCEPT. Human approval does not make an unknown or insufficient target covered:
 S2 must still evaluate evidence and its official durable guard remains required.
@@ -629,7 +629,7 @@ are visibly blocked in PostgreSQL, then assert one winner and no partial writes.
 Unit tests separately cover runtime reconstruction and corrupted row shapes.
 
 Still deferred after S3B and Registry Grounding: effective reviewer authentication,
-HTTP/API access, review UI, M4/M13/M14, production migration/rollout, external
+HTTP/API access, review UI, M13/M14 integration, production migration/rollout, external
 attestations and authority verification. `reviewerRef` remains caller-declared;
 S3B does not claim cryptographic human verification. The known literal-types/
 readonly debt is unchanged. No production migration has been executed.
@@ -693,6 +693,7 @@ Matching language, profileId, version, partial content or SHA alone never suffic
 - `createRegistry({ userId, canonicalRecordId, registry })`
 - `getRegistry(userId, registryRecordId)`
 - `checkRegistryGrounding(userId, registryRecordId, canonicalRecordId)`
+- `getRegistryForCanonical(userId, registryRecordId, canonicalRecordId)`
 - `getRegistryForCurrentCanonical({ userId, profileId, registryRef: { id, version } })`
 
 Creation accepts only an explicit canonical UUID. It rereads and validates that
@@ -764,8 +765,82 @@ normal migration integration suite also applies the complete chain on fresh DBs.
 Migration execution is limited to isolated local tests; production rollout is
 separate and has not been executed.
 
-Future M4/M13/M14 must use this central grounding boundary and the appropriate
-S2 evidence authorization, not manual profileId comparisons. They remain
-unintegrated: no auto research, routes, UI, reviewer authentication or automatic
-promotion is introduced. Canonical access authorization, production rollout and
-general literal-types/readonly hardening remain deferred.
+M4 uses this central grounding boundary as described below. Future M13/M14 must
+also respect exact grounding and the appropriate S2 evidence authorization.
+No auto research, routes, UI, reviewer authentication or automatic promotion is
+introduced. Canonical access authorization, production rollout and general
+literal-types/readonly hardening remain deferred.
+
+## M4: grounded initial adaptation compilation
+
+M4 is the deterministic initial `AdaptationPlan` compiler in
+`adaptation/adaptation-plan.ts`, not the M10 AI curriculum planner. Its authoritative
+entry is now asynchronous:
+
+```ts
+compileInitialAdaptationPlan({
+  userId, canonicalRecordId, registryRecordId, curriculum,
+});
+```
+
+`GroundedAdaptationCompiler` provides the same operation with an injectable trusted
+grounding-store port for tests/internal composition. Caller input is strict and
+cloned before IO. It cannot supply a profile, Registry payload, binding, language
+shortcut or `profileCoverage`. M4 consumes grounded Registry through
+`getRegistryForCanonical`; it never reconstructs the binding or issues SQL.
+That central reader shares one REPEATABLE READ, read-only transaction across S3B
+canonical reconstruction, owned Registry decoding and the existing pure comparator.
+It returns a pair only after all exact fields match.
+
+The existing compiler works on explicitly pinned inputs. Accordingly this entry
+requires exact UUIDs and supports historical canonicals; it does not select current.
+If A was pinned and B is promoted concurrently, the operation still uses A +
+Registry A coherently. Requesting B with Registry A fails with
+`registry_profile_mismatch`, including when no Registry B exists. There is no
+fallback, rebinding or retry against a different canonical. A caller requiring
+current selection can resolve it with the existing central current API before
+pinning its operation; M4 does not promise that its pinned canonical stays current.
+
+The result is a discriminated union. Success contains `ok: true`, the plan,
+validation, and `grounding: { registryRecordId, binding }` preserving the exact
+durable provenance outside the unchanged legacy plan schema. Failure contains
+`ok: false`, `plan: null`, failed validation and one of `invalid_input`,
+`registry_not_found`, `registry_unbound`, `registry_profile_mismatch`,
+`canonical_not_found`, `storage_integrity`. Infrastructure errors propagate without
+fallback. Storage ownership uses the supplied internal user context as before;
+this adds neither HTTP authentication nor reviewer authentication.
+
+`grounded ≠ evidence authorized`. M4 reuses only already validated Registry
+strategies under the existing decision/scope checks. Plan resolution coverage
+describes those strategies, not S2 evidence-target coverage. Grounding does not
+promote provisional decisions, mark audits passed or make the route ready. M4
+does not consume a Requirement Evidence result directly and cannot emit a durable
+evidence authorization. A future consumer using S2 results must call
+`canConsumeRequirementEvidenceDurably()`; checking `covered` alone is insufficient.
+
+`profileCoverage ≠ authority`. In v2 it is rejected as input. For an unresolved
+requirement M4 records `profile_gap` / `profile_only` without asserting knowledge
+sufficiency or external-research necessity. An existing strategy needing wider
+scope remains `insufficient_scope` / `registry_reasoning`. Ordering, reuse/extend
+selection, impacts, gap grouping and determinism retain the compiler mechanics.
+Research-plan entries are proposals for later evaluation, never dispatched work.
+
+`M4 ≠ researcher`; `M4 ≠ promoter`. This consumer has no write/lifecycle/research
+port. It creates no candidate, ACCEPT, canonical or Registry. M13 evidence-target
+reasoning and M14 authorized research ending in review remain unintegrated.
+
+Unmigrated v1 orchestration/resolution and their fixtures explicitly import
+`compileLegacyInitialAdaptationPlan`. Its synchronous behavior and historical gap
+classification are preserved solely for those legacy consumers, not accepted as
+v2 grounding. The old raw-object signature cannot invoke authoritative M4. No
+route or downstream consumer is switched wholesale to v2 by this change.
+
+M4 itself does not persist plans. No migration or storage writer is introduced;
+future durable consumers must preserve the returned grounding provenance and be
+integrated separately before persisting/authorizing v2 outputs. Production migration
+0026/0027 execution, rollout and the known literal-types/readonly debt remain deferred.
+
+Unit tests cover the strict entry, structured failures and functional regressions.
+The existing disposable Registry PostgreSQL suite also exercises M4 with real
+S3B/grounding stores, promotion/history, missing data, ownership, binding/content
+corruption and a promotion interleaved into the pinned read transaction.

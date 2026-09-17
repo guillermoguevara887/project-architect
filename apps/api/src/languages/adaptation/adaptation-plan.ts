@@ -9,6 +9,7 @@ import {
 } from "../decisions/language-decision-registry.js";
 import {
   validateCurriculumUnitSpec,
+  curriculumUnitSpecSchema,
   type CurriculumUnitSpec,
 } from "../curriculum/curriculum-unit-spec.js";
 import {
@@ -33,6 +34,10 @@ import {
   type LanguageProfile,
   type LanguageProfileSection,
 } from "../profile/language-profile.js";
+import { languageProfileV2Schema, type LanguageProfileV2 } from "../profile/language-profile-v2.js";
+import { ProfileLifecycleStoreError } from "../profile/profile-lifecycle-store-v2.js";
+import { RegistryGroundingErrorV2, RegistryGroundingStoreV2 } from "../knowledge/registry-grounding-v2.js";
+import type { RegistryProfileBindingV2 } from "../decisions/registry-profile-binding-v2.js";
 
 export const adaptationResolutionModeSchema = z.enum([
   "reuse",
@@ -260,7 +265,7 @@ export type AdaptationPlan = z.infer<typeof adaptationPlanSchema>;
 
 export type AdaptationPlanValidationContext = {
   curriculum?: CurriculumUnitSpec;
-  languageProfile?: LanguageProfile;
+  languageProfile?: LanguageProfile | LanguageProfileV2;
   registry?: LanguageDecisionRegistry;
 };
 
@@ -683,7 +688,9 @@ export function validateAdaptationPlan(
   return validationResult(issues);
 }
 
-export function compileInitialAdaptationPlan(
+/** Compatibility compiler for unmigrated v1 orchestration/resolution only.
+ * This does not establish v2 grounding and is not the authoritative M4 entry. */
+export function compileLegacyInitialAdaptationPlan(
   input: AdaptationCompilationInput,
 ): AdaptationCompilationResult {
   const inputIssues: ValidationIssue[] = [];
@@ -694,6 +701,22 @@ export function compileInitialAdaptationPlan(
     validateLanguageDecisionRegistry(input.registry, { languageProfile: input.languageProfile }),
     "registry",
   );
+
+  return compilePlan(input, inputIssues, (domain, mode) => ({
+    necessity: researchNecessityFor(input.languageProfile, domain, mode),
+    gapType: gapTypeFor(input.languageProfile, domain, mode),
+  }));
+}
+
+// Shared deterministic mechanics; no caller can invoke this kernel directly.
+function compilePlan(
+  input: { curriculum: CurriculumUnitSpec; languageProfile: LanguageProfile | LanguageProfileV2; registry: LanguageDecisionRegistry },
+  inputIssues: ValidationIssue[],
+  gapPolicy: (domain: CurriculumRequirementDomain, mode: "extend" | "resolve") => {
+    necessity: z.infer<typeof gapSchema>["researchNecessity"];
+    gapType: z.infer<typeof gapSchema>["gapType"];
+  },
+): AdaptationCompilationResult {
 
   if (input.curriculum.identity.curriculumId !== input.registry.identity.curriculumId) {
     inputIssues.push(
@@ -755,11 +778,11 @@ export function compileInitialAdaptationPlan(
     });
     if (result.mode === "extend" && result.decisionRef) extendedDecisionRefs.push(result.decisionRef);
 
-    const necessity = researchNecessityFor(input.languageProfile, requirement.domain, resolutionMode);
+    const { necessity, gapType } = gapPolicy(requirement.domain, resolutionMode);
     gaps.push({
       gapId: `gap.${requirement.requirementId}`,
       requirementRef: requirement.requirementId,
-      gapType: gapTypeFor(input.languageProfile, requirement.domain, resolutionMode),
+      gapType,
       criticality: requirement.affectedCapabilityRefs.some((ref) => terminalCapabilities.has(ref))
         ? "blocking"
         : "important",
@@ -859,4 +882,61 @@ export function compileInitialAdaptationPlan(
     registry: input.registry,
   });
   return { plan: planValidation.valid ? plan : null, validation: planValidation };
+}
+
+const groundedCompilationInputSchema = z.object({
+  userId: z.string().uuid(), canonicalRecordId: z.string().uuid(), registryRecordId: z.string().uuid(),
+  curriculum: curriculumUnitSpecSchema,
+}).strict();
+export type GroundedAdaptationCompilationInput = z.infer<typeof groundedCompilationInputSchema>;
+export type GroundedAdaptationErrorCode = "invalid_input" | "registry_not_found" | "registry_unbound" |
+  "registry_profile_mismatch" | "canonical_not_found" | "storage_integrity";
+export type GroundedAdaptationCompilationResult = {
+  ok: true; plan: AdaptationPlan; validation: ValidationResult;
+  grounding: { registryRecordId: string; binding: RegistryProfileBindingV2 };
+} | { ok: false; code: GroundedAdaptationErrorCode; plan: null; validation: ValidationResult };
+
+/** M4 consumes a pinned durable pair. The injected port is trusted infrastructure,
+ * never request data. There is no writer/researcher/evidence-authorizer port. */
+export class GroundedAdaptationCompiler {
+  constructor(private readonly grounding: Pick<RegistryGroundingStoreV2, "getRegistryForCanonical"> = new RegistryGroundingStoreV2()) {}
+
+  async compile(input: unknown): Promise<GroundedAdaptationCompilationResult> {
+    const fail = (code: GroundedAdaptationErrorCode, issues: ValidationIssue[] = []): GroundedAdaptationCompilationResult => ({
+      ok: false, code, plan: null, validation: validationResult(issues.length ? issues : [validationIssue(code, "grounding", code)]),
+    });
+    // Parse/clone before any await: no raw profile, Registry or coverage override.
+    const parsed = groundedCompilationInputSchema.safeParse(input);
+    if (!parsed.success) return fail("invalid_input", zodIssuesToValidationIssues(parsed.error));
+    const args = parsed.data;
+    const curriculumValidation = validateCurriculumUnitSpec(args.curriculum);
+    if (!curriculumValidation.valid) return fail("invalid_input", curriculumValidation.issues);
+    try {
+      const { canonical, registry } = await this.grounding.getRegistryForCanonical(args.userId, args.registryRecordId, args.canonicalRecordId);
+      const profile = languageProfileV2Schema.parse(JSON.parse(canonical.snapshotJson));
+      const result = compilePlan({ curriculum: args.curriculum, languageProfile: profile, registry: registry.registry }, [], (_domain, mode) => ({
+        // No aggregate knowledge sufficiency inference. These are proposed gaps,
+        // not dispatched research. M13 will evaluate specific evidence later.
+        necessity: mode === "extend" ? "registry_reasoning" : "profile_only",
+        gapType: mode === "extend" ? "insufficient_scope" : "profile_gap",
+      }));
+      if (!result.plan) return fail("invalid_input", result.validation.issues);
+      return { ok: true, plan: result.plan, validation: result.validation,
+        grounding: { registryRecordId: registry.id, binding: registry.profileBinding } };
+    } catch (error) {
+      if (error instanceof ProfileLifecycleStoreError && error.code === "storage_integrity") return fail("storage_integrity");
+      if (error instanceof RegistryGroundingErrorV2 && (
+        error.code === "invalid_input" || error.code === "registry_not_found" || error.code === "registry_unbound" ||
+        error.code === "registry_profile_mismatch" || error.code === "canonical_not_found" || error.code === "storage_integrity"
+      )) return fail(error.code);
+      // Infrastructure failures propagate; never substitute a profile/Registry.
+      throw error;
+    }
+  }
+}
+
+const groundedCompiler = new GroundedAdaptationCompiler();
+/** Authoritative M4 entry: durable IDs only, including explicit historical IDs. */
+export function compileInitialAdaptationPlan(input: unknown): Promise<GroundedAdaptationCompilationResult> {
+  return groundedCompiler.compile(input);
 }

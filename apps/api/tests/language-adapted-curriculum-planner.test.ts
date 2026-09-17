@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { compileInitialAdaptationPlan } from "../src/languages/adaptation/adaptation-plan.js";
+import { compileLegacyInitialAdaptationPlan as compileInitialAdaptationPlan } from "../src/languages/adaptation/adaptation-plan.js";
 import { StructuredCandidateBoundaryError } from "../src/languages/ai/structured-candidate-boundary.js";
 import type { LessonSpec } from "../src/languages/lessons/lesson-spec.js";
 import {

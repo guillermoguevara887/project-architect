@@ -11,7 +11,7 @@ import { languageProfileV2Schema } from "../profile/language-profile-v2.js";
 import { ProfileLifecycleStoreV2, type ProfileCanonicalRecordV2 } from "../profile/profile-lifecycle-store-v2.js";
 
 export type RegistryGroundingErrorCodeV2 = "invalid_input" | "invalid_registry" | "canonical_not_found" |
-  "registry_not_found" | "registry_not_found_for_canonical" | "registry_unbound" | "registry_version_exists" | "storage_integrity";
+  "registry_not_found" | "registry_not_found_for_canonical" | "registry_unbound" | "registry_profile_mismatch" | "registry_version_exists" | "storage_integrity";
 export class RegistryGroundingErrorV2 extends Error {
   constructor(readonly code: RegistryGroundingErrorCodeV2, readonly fields: readonly string[] = []) {
     super(code); this.name = "RegistryGroundingErrorV2";
@@ -155,6 +155,21 @@ export class RegistryGroundingStoreV2 {
         throw error;
       }
       return compareRegistryProfileBindingsV2(record.profileBinding, bindingFromRead(canonical));
+    }, { isolationLevel: "repeatable read", accessMode: "read only" });
+  }
+
+  /** Pinned historical/current pair from one snapshot. Consumers must not join
+   * independent getRegistry/getCanonical calls or reconstruct binding fields. */
+  async getRegistryForCanonical(userId: string, registryRecordId: string, canonicalRecordId: string): Promise<{
+    registry: GroundedRegistryRecordV2; canonical: ProfileCanonicalRecordV2;
+  }> {
+    const args = parseInput(recordInput.extend({ canonicalRecordId: uuid }), { userId, registryRecordId, canonicalRecordId });
+    return this.database().transaction(async (tx) => {
+      const canonical = await readCanonical(tx, args.canonicalRecordId);
+      const registry = await decode(tx, await selectRegistry(tx, args.userId, args.registryRecordId));
+      const checked = compareRegistryProfileBindingsV2(registry.profileBinding, bindingFromRead(canonical));
+      if (!checked.ok) return problem("registry_profile_mismatch", checked.fields);
+      return { registry, canonical };
     }, { isolationLevel: "repeatable read", accessMode: "read only" });
   }
 
