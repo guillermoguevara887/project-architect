@@ -7,7 +7,8 @@ the separate pure evaluator in `requirement-evidence.ts`, documented below.
 S3A adds pure human lifecycle/promotion in `profile-lifecycle-v2.ts`; S3B adds the
 transactional persistence boundary described below. Registry Grounding now adds
 explicit durable Registry bindings to S3B canonicals. M4 now consumes a pinned
-grounded pair through its domain entry below. M13/M14 integration remains deferred.
+grounded pair through its domain entry below. M13 v2 provides non-persistent
+target evidence resolution; M14 integration remains deferred.
 
 ## Versions and compatibility
 
@@ -401,8 +402,9 @@ The persisted S1 v2 schema still rejects that field. V2 has no `coverageDepth`, 
 no depth eligibility rule or invented threshold is applied. The unchanged v1
 schema, fixtures and consumers retain their historical behavior.
 
-Later phases must integrate this resolver into M4/M13/M14. No consumer is
-integrated in S2 or S3A. Real authority verification, editorial-independence
+S2 and S3A themselves integrate no consumers. M13 v2's later integration is
+documented below; M4 does not consume S2 directly and M14 remains deferred.
+Real authority verification, editorial-independence
 research and evidence freshness are not implemented here. S3A's snapshot
 fingerprint below binds review content; it does not prove evidence authenticity.
 
@@ -629,7 +631,7 @@ are visibly blocked in PostgreSQL, then assert one winner and no partial writes.
 Unit tests separately cover runtime reconstruction and corrupted row shapes.
 
 Still deferred after S3B and Registry Grounding: effective reviewer authentication,
-HTTP/API access, review UI, M13/M14 integration, production migration/rollout, external
+HTTP/API access, review UI, M13 v2 persistence, M14 integration, production migration/rollout, external
 attestations and authority verification. `reviewerRef` remains caller-declared;
 S3B does not claim cryptographic human verification. The known literal-types/
 readonly debt is unchanged. No production migration has been executed.
@@ -765,8 +767,8 @@ normal migration integration suite also applies the complete chain on fresh DBs.
 Migration execution is limited to isolated local tests; production rollout is
 separate and has not been executed.
 
-M4 uses this central grounding boundary as described below. Future M13/M14 must
-also respect exact grounding and the appropriate S2 evidence authorization.
+M4 and the non-persistent M13 v2 service use this central grounding boundary as
+described below. Future M14 must also respect exact grounding and S2 authorization.
 No auto research, routes, UI, reviewer authentication or automatic promotion is
 introduced. Canonical access authorization, production rollout and general
 literal-types/readonly hardening remain deferred.
@@ -826,8 +828,8 @@ selection, impacts, gap grouping and determinism retain the compiler mechanics.
 Research-plan entries are proposals for later evaluation, never dispatched work.
 
 `M4 ≠ researcher`; `M4 ≠ promoter`. This consumer has no write/lifecycle/research
-port. It creates no candidate, ACCEPT, canonical or Registry. M13 evidence-target
-reasoning and M14 authorized research ending in review remain unintegrated.
+port. It creates no candidate, ACCEPT, canonical or Registry. M13 v2 evidence-target
+resolution is a separate API below; M14 research ending in review remains deferred.
 
 Unmigrated v1 orchestration/resolution and their fixtures explicitly import
 `compileLegacyInitialAdaptationPlan`. Its synchronous behavior and historical gap
@@ -844,3 +846,98 @@ Unit tests cover the strict entry, structured failures and functional regression
 The existing disposable Registry PostgreSQL suite also exercises M4 with real
 S3B/grounding stores, promotion/history, missing data, ownership, binding/content
 corruption and a promotion interleaved into the pinned read transaction.
+
+## M13 v2: non-persistent target evidence resolution
+
+`resolution/target-evidence-v2.ts` exports `resolveTargetEvidenceV2(input)` and
+`TargetEvidenceResolverV2.resolve(input)`. The class accepts only a trusted
+`getRegistryForCanonical` infrastructure port. The public request is strict:
+
+```ts
+resolveTargetEvidenceV2({
+  userId, canonicalRecordId, registryRecordId,
+  requirement: { requirementRef, domain: "possession.basic" },
+  target: {
+    catalogVersion: "1.0.0",
+    targetId: "possession.basic.semanticSystems.possession",
+  },
+  mode: "durable", // or "preview"
+  // options: official S2 options, including restrictive targetPolicies
+});
+```
+
+The target must belong to the requirement domain in the official catalog. A
+target identifies a catalog slot and its existing S2 subject/relevance semantics,
+not a caller-supplied feature or a free-text claim. A future requirement needing
+a narrower subject selection must use an explicit S2 contract for that selection.
+M13 does not invent subject matching. Profiles, Registries, claims, precomputed
+results and `profileCoverage` cannot be injected through the request. Requests
+and policy options are cloned before IO; conflicting mode fields are rejected.
+
+`Registry Grounding = exact provenance`; `M4 = grounded initial adaptation plan`;
+`M13 v2 = target-specific evidence authorization`; `M14 = future gap research`.
+M13 resolves the same pinned pair through `getRegistryForCanonical`, with S3B
+reconstruction, ownership and central comparison in one REPEATABLE READ read-only
+transaction. It then recalculates `resolveRequirementEvidence` from those exact
+canonical snapshot bytes, never an independent current read or a cached result.
+A/A remains valid historically after B promotion; B/Registry A is an error.
+A concurrent promotion cannot replace the already pinned evidence snapshot.
+The supplied user context retains Registry ownership checks; no new canonical,
+reviewer or HTTP authentication is implied.
+
+The result is discriminated by `outcome`:
+
+- `authorized`: `durableAuthorized: true`, mode durable, the exact target is
+  covered and `canConsumeRequirementEvidenceDurably(evidence)` returned true.
+- `preview`: the official S2 result and local target evaluations are inspectable;
+  `durableAuthorized` is always false, even when preview is covered.
+- `gap`: durable mode has insufficient evidence (`evidence_missing`,
+  `evidence_partial`), an S2 evaluation limit (`limit_exceeded`) or lacks official
+  durable authorization. It performs no research or other side effect.
+- `error`: invalid request, absent canonical/Registry, legacy/unbound or mismatched
+  Registry, corrupt storage or S2 contract/profile invalidity. No research gap is
+  manufactured. Invalid input has no request/provenance; read failures have no
+  resolution; S2 invalidity retains the exact local evaluations for diagnostics.
+  Infrastructure exceptions propagate without fallback.
+
+S2 has three top-level statuses: covered, partial, missing. Invalidity is expressed
+through its diagnostics and limit_exceeded through local independence evaluations.
+M13 classifies those official diagnostics but does not repeat validation, claim
+matching, coverage, independence or limit algorithms. A healthy sibling's local
+coverage/evaluations remain intact when global profile invalidity blocks durable
+use. Claim summaries (including partially_accepted) are never authorization inputs.
+
+`covered preview != durable`; `profileCoverage != authority`; a grounded Registry
+alone authorizes no evidence. Effective policies and catalog version remain in
+the unchanged S2 result. The current official durable guard covers the complete
+requirement, not an individual target. M13 deliberately requires both the guard
+and coverage of the requested target: other required gaps can block a locally
+covered target; a covered alternative cannot authorize a missing requested target.
+Consumers must use the M13 discriminant for this exact target, not the aggregate
+S2 guard alone. The embedded S2 result remains unmodified for inspection.
+
+Provenance contains the durable Registry ID, Registry content SHA and the validated
+binding (canonical ID/SHA, profile/schema/contract versions). Requirement, target,
+mode, effective policy and local evaluations accompany it. No timestamp/random
+selection or implicit current lookup enters the result; unchanged inputs and
+artifacts yield unchanged results. There is no persistence/cache of this result.
+
+Legacy M13 remains `AdaptationResolutionService.start/resume`, its runtime,
+repository and existing HTTP/pilot/research consumers. That workflow compiles
+legacy M4 plans, checks section-level v1 claims, may request M6 proposals, waits
+for M11 review, finalizes plans and persists runs. Migration 0023 requires a
+legacy profile FK, while grounded Registries use canonical references under 0027.
+This phase intentionally leaves all those contracts and consumers unchanged.
+The v2 API has no connection to legacy createRun or proposal/research ports, no
+productive HTTP consumer, no schema change and no migration. It does not mark
+M4 plans ready or rewrite M4. A future caller may select an M4 gap's requirement
+and explicit catalog target, preserving its canonical/Registry IDs.
+
+M14 and v2 persistence are deferred. A future research consumer must decide which
+gaps it is authorized to investigate; errors and preview results are not an
+automatic research trigger. No candidate creation, lifecycle mutation, Registry
+rebinding, PDF ingestion, production migration or literal-types/readonly cleanup
+is included. Tests exercise the real S2 engine and disposable PostgreSQL stores,
+including exact historical evidence, corruption, ownership, read-only SQL and a
+promotion interleaved into the read snapshot. Test setup promotion/corruption is
+confined to the disposable database, outside the M13 service.

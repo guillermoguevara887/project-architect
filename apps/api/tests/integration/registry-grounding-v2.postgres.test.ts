@@ -21,6 +21,8 @@ import { germanDecisionRegistryFixture } from "../fixtures/language-decisions/ge
 import { GroundedAdaptationCompiler } from "../../src/languages/adaptation/adaptation-plan.js";
 import { a1U01CurriculumFixture } from "../fixtures/language-curriculum/a1-u01.js";
 import { m4Registry } from "../fixtures/m4-grounded.js";
+import { TargetEvidenceResolverV2 } from "../../src/languages/resolution/target-evidence-v2.js";
+import { m13Input, m13Profile } from "../fixtures/m13-target-evidence-v2.js";
 
 const adminUrl = new URL(process.env.MIGRATION_TEST_DATABASE_URL ?? "postgres://invalid/invalid");
 if (process.env.MIGRATION_TEST_ALLOW_LOCAL !== "1" || !["127.0.0.1", "localhost", "[::1]"].includes(adminUrl.hostname) || adminUrl.pathname !== "/memoos_migration_admin") {
@@ -80,6 +82,18 @@ const m4Input = (canonicalRecordId: string, registryRecordId: string, owner = us
   userId: owner, canonicalRecordId, registryRecordId, curriculum: a1U01CurriculumFixture,
 });
 const m4 = new GroundedAdaptationCompiler(store);
+const m13 = new TargetEvidenceResolverV2(store);
+const m13Request = (canonicalRecordId: string, registryRecordId: string, owner = userId) => ({
+  ...m13Input(), userId: owner, canonicalRecordId, registryRecordId,
+});
+async function evidenceCanonical() {
+  const profile = m13Profile(nextProfile()); profile.status = "draft";
+  const input = createProfileReviewCandidateV2({ profile, proposedVersion: "1.0.0", parentCanonical: null, origin: { kind: "manual", originRef: "test.m13" } });
+  assert.ok(input.ok);
+  const c = await lifecycle.persistReviewCandidate({ candidate: input.candidate, parentCanonicalRecordId: null });
+  const result = await lifecycle.recordReviewDecision(c.id, lifecycleDecision(c.candidate));
+  assert.ok(result.canonical); return result.canonical;
+}
 
 test("grounding migration upgrades existing Registry rows without fabricating v2 bindings", async () => {
   const [r] = await connection`SELECT * FROM language_decision_registry_versions WHERE id=${legacyRegistryId}`;
@@ -336,4 +350,82 @@ test("M4 PostgreSQL pinned resolution stays on A across a controlled concurrent 
   assert.equal(result.plan.inputs.languageProfileRef.version, a.snapshot.version);
   const b = await lifecycle.getCurrentCanonical(a.profileId); assert.ok(b); assert.notEqual(b.id, a.id);
   const stale = await m4.compile(m4Input(b.id, ra.id)); assert.ok(!stale.ok); assert.equal(stale.code, "registry_profile_mismatch");
+});
+
+test("M13 PostgreSQL exact evidence authorizes durable only; preview and no-evidence stay non-durable", async () => {
+  const a = await evidenceCanonical(), ra = await registry(a);
+  const input = m13Request(a.id, ra.id), result = await m13.resolve(input);
+  assert.ok(result.outcome === "authorized"); assert.equal(result.durableAuthorized, true);
+  assert.equal(result.provenance.binding.canonicalRecordId, a.id);
+  assert.equal(result.provenance.registryRecordId, ra.id);
+  const preview = await m13.resolve({ ...input, mode: "preview" });
+  assert.ok(preview.outcome === "preview"); assert.equal(preview.evidence.status, "covered"); assert.equal(preview.durableAuthorized, false);
+  const empty = await canonical(), re = await registry(empty);
+  const gap = await m13.resolve(m13Request(empty.id, re.id));
+  assert.ok(gap.outcome === "gap"); assert.equal(gap.reason, "evidence_missing");
+});
+
+test("M13 PostgreSQL historical A/A stays exact after B promotion; cross-pairs never fallback", async () => {
+  const a = await evidenceCanonical(), ra = await registry(a);
+  const before = await m13.resolve(m13Request(a.id, ra.id)); assert.equal(before.outcome, "authorized");
+  const b = await canonical(a.profileId, "2.0.0", a);
+  const stale = await m13.resolve(m13Request(b.id, ra.id));
+  assert.ok(stale.outcome === "error"); assert.equal(stale.reason, "registry_profile_mismatch"); assert.equal(stale.resolution, null);
+  const rb = await registry(b, "2.0.0");
+  const current = await m13.resolve(m13Request(b.id, rb.id)); assert.ok(current.outcome === "authorized");
+  assert.equal(current.evidence.profileVersion, "2.0.0"); assert.equal(current.provenance.binding.canonicalRecordId, b.id);
+  assert.deepEqual(await m13.resolve(m13Request(a.id, ra.id)), before);
+});
+
+test("M13 PostgreSQL ownership, missing records and legacy/unbound block before evidence", async () => {
+  const a = await evidenceCanonical(), ra = await registry(a);
+  for (const [input, expected] of [
+    [m13Request(a.id, ra.id, otherUserId), "registry_not_found"],
+    [m13Request(a.id, legacyRegistryId), "registry_unbound"],
+    [m13Request(a.id, randomUUID()), "registry_not_found"],
+    [m13Request(randomUUID(), ra.id), "canonical_not_found"],
+  ] as const) {
+    const result = await m13.resolve(input); assert.ok(result.outcome === "error");
+    assert.equal(result.reason, expected); assert.equal(result.resolution, null); assert.equal(result.durableAuthorized, false);
+  }
+});
+
+for (const source of ["canonical", "registry", "binding"] as const) {
+  test(`M13 PostgreSQL ${source} corruption fails closed without a gap`, async () => {
+    const a = await evidenceCanonical(), ra = await registry(a), marker = new Error("restore isolated M13 corruption");
+    await assert.rejects(database.transaction(async tx => {
+      if (source === "canonical") await tx.execute(sql`UPDATE language_profile_v2_canonicals SET content_sha256=${"0".repeat(64)} WHERE id=${a.id}`);
+      if (source === "registry") await tx.execute(sql`UPDATE language_decision_registry_versions SET registry='{}'::jsonb WHERE id=${ra.id}`);
+      if (source === "binding") await tx.execute(sql`UPDATE language_decision_registry_versions SET profile_binding_v2=${JSON.stringify({ ...ra.profileBinding, canonicalSha256: "0".repeat(64) })}::jsonb WHERE id=${ra.id}`);
+      const reader = new RegistryGroundingStoreV2(() => ({ transaction: operation => operation(tx) }));
+      const result = await new TargetEvidenceResolverV2(reader).resolve(m13Request(a.id, ra.id));
+      assert.ok(result.outcome === "error"); assert.equal(result.reason, "storage_integrity"); assert.equal(result.resolution, null);
+      throw marker;
+    }), error => error === marker);
+  });
+}
+
+test("M13 PostgreSQL read-only resolution emits no writes and promotion cannot swap its snapshot", async () => {
+  const a = await evidenceCanonical(), ra = await registry(a), bc = await candidate(a.profileId, "2.0.0", a);
+  const before = await m13.resolve(m13Request(a.id, ra.id));
+  let promoted = false; const queries: string[] = [];
+  const reader = new RegistryGroundingStoreV2(() => ({ transaction: (operation, config) => database.transaction(async tx => {
+    assert.equal(config?.isolationLevel, "repeatable read"); assert.equal(config?.accessMode, "read only");
+    return operation(new Proxy(tx, { get(target, key) {
+      if (key === "execute") return async (query: Parameters<typeof tx.execute>[0]) => {
+        const result = await target.execute(query);
+        const queryText = new PgDialect().sqlToQuery(typeof query === "string" ? sql.raw(query) : query.getSQL()).sql;
+        queries.push(queryText); assert.match(queryText.trim(), /^SELECT\b/iu);
+        if (!promoted && queryText.includes("SELECT * FROM language_profile_v2_candidates")) {
+          promoted = true; await lifecycle.recordReviewDecision(bc.id, lifecycleDecision(bc.candidate));
+        }
+        return result;
+      };
+      return Reflect.get(target, key, target);
+    } }));
+  }, config) }));
+  const result = await new TargetEvidenceResolverV2(reader).resolve(m13Request(a.id, ra.id));
+  assert.ok(promoted); assert.ok(queries.length > 0); assert.deepEqual(result, before);
+  assert.ok(result.outcome === "authorized"); assert.equal(result.evidence.profileVersion, "1.0.0");
+  const b = await lifecycle.getCurrentCanonical(a.profileId); assert.ok(b); assert.notEqual(b.id, a.id);
 });
