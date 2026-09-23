@@ -98,6 +98,8 @@ export function decodeProfileHistoryV2(profileId: string, rows: {
           snapshot: ref(row), lineage: row.lineage,
         }, parent === null ? null : JSON.parse(parent.snapshotJson));
         if (!checked.ok || contexts.has(row.candidate_sha256)) problem("storage_integrity");
+        if (checked.candidate.lineage.origin.researchProvenance?.registry.binding.canonicalRecordId !== undefined &&
+          checked.candidate.lineage.origin.researchProvenance.registry.binding.canonicalRecordId !== row.parent_canonical_record_id) problem("storage_integrity");
         contexts.add(row.candidate_sha256);
         const record: ProfileCandidateRecordV2 = { ...metadata(row), kind: "candidate",
           parentCanonicalRecordId: row.parent_canonical_record_id, candidate: checked.candidate };
@@ -183,6 +185,7 @@ export class ProfileLifecycleStoreV2 {
       const checked = validateProfileReviewCandidateV2(input.candidate, parent === null ? null : JSON.parse(parent.snapshotJson));
       if (!checked.ok) return problem(checked.code);
       const candidate = checked.candidate;
+      if (candidate.lineage.origin.researchProvenance && candidate.lineage.origin.researchProvenance.registry.binding.canonicalRecordId !== parentId) return problem("lineage_mismatch");
       const existing = events.find((e): e is ProfileCandidateRecordV2 => e.kind === "candidate" && e.candidate.candidateSha256 === candidate.candidateSha256);
       if (existing) {
         if (existing.parentCanonicalRecordId !== parentId) return problem("lineage_mismatch");

@@ -8,7 +8,8 @@ S3A adds pure human lifecycle/promotion in `profile-lifecycle-v2.ts`; S3B adds t
 transactional persistence boundary described below. Registry Grounding now adds
 explicit durable Registry bindings to S3B canonicals. M4 now consumes a pinned
 grounded pair through its domain entry below. M13 v2 provides non-persistent
-target evidence resolution; M14 integration remains deferred.
+target evidence resolution; M14 v2 now composes controlled research and candidate
+creation without migrating productive legacy consumers.
 
 ## Versions and compatibility
 
@@ -875,7 +876,7 @@ results and `profileCoverage` cannot be injected through the request. Requests
 and policy options are cloned before IO; conflicting mode fields are rejected.
 
 `Registry Grounding = exact provenance`; `M4 = grounded initial adaptation plan`;
-`M13 v2 = target-specific evidence authorization`; `M14 = future gap research`.
+`M13 v2 = target-specific evidence authorization`; `M14 v2 = controlled gap research`.
 M13 resolves the same pinned pair through `getRegistryForCanonical`, with S3B
 reconstruction, ownership and central comparison in one REPEATABLE READ read-only
 transaction. It then recalculates `resolveRequirementEvidence` from those exact
@@ -933,11 +934,300 @@ productive HTTP consumer, no schema change and no migration. It does not mark
 M4 plans ready or rewrite M4. A future caller may select an M4 gap's requirement
 and explicit catalog target, preserving its canonical/Registry IDs.
 
-M14 and v2 persistence are deferred. A future research consumer must decide which
-gaps it is authorized to investigate; errors and preview results are not an
-automatic research trigger. No candidate creation, lifecycle mutation, Registry
-rebinding, PDF ingestion, production migration or literal-types/readonly cleanup
-is included. Tests exercise the real S2 engine and disposable PostgreSQL stores,
+M13 itself has no persistence or candidate creation. M14's separate composition
+below selects researchable gaps; errors and preview results never trigger
+research. M13 tests exercise the real S2 engine and disposable PostgreSQL stores,
 including exact historical evidence, corruption, ownership, read-only SQL and a
 promotion interleaved into the read snapshot. Test setup promotion/corruption is
 confined to the disposable database, outside the M13 service.
+
+## M14 v2: controlled research, proposals and mandatory human review
+
+The chain is now:
+
+```text
+S1 -> S2 -> S3A -> S3B -> Registry Grounding -> M4 -> M13 -> M14
+  -> review candidate -> human ACCEPT/REJECT -> canonical only after ACCEPT
+```
+
+Research results are proposals, never authority. M14 cannot promote, reject,
+rebind a Registry or resume productive orchestration. Human review is required
+in the types, returned result and tests. Even after a human accepts a snapshot,
+S2 still controls evidence consumption; candidate acceptance does not upgrade
+`needs_review` claims into reviewed/validated evidence automatically.
+
+### Repository inspection and legacy boundary
+
+The existing M14 is `profile-research/service.ts` (`researchBlockedRun/getRun`),
+`contracts.ts` (`buildEnrichedLanguageProfile`), `researcher.ts`, `repository.ts`
+and `routes.ts`. Its `LanguageProfileResearcher` port takes a v1 LanguageProfile,
+AdaptationPlan and research tasks. `OpenAILanguageProfileResearcher` uses the
+existing OpenAI SDK, structured candidate boundary and mandatory web search;
+it validates observed URLs and has bounded repair attempts. Its service stores
+`language_profile_research_runs` (0024), registers an enriched legacy profile via
+`LanguageKnowledgeService.registerProfile`, and may resume legacy M13. Existing
+HTTP entry points and the M15 pilot consume this service through `create-server`.
+M13 legacy requests M6 registry reasoning and waits for M11 human Registry
+promotion; this is separate from v2 Profile lifecycle review. Existing profile
+producers include legacy registration/research enrichment and S3A candidate
+construction/S3B human promotion. No generic v2 external research adapter exists.
+The repository issue search for M14 returned no associated issue.
+
+All legacy files, routes, consumers, storage and semantics are unchanged. The
+legacy port is incompatible with exact v2 target/canonical input; it is not
+reused through a v1 coercion. New files under the same module are separate:
+
+- `contracts-v2.ts`: strict input, provider result, M13 reference and classification.
+- `proposal-v2.ts`: deterministic, pure proposal/snapshot construction.
+- `controlled-research-v2.ts`: `ControlledProfileResearchV2.research(input)`;
+  explicit injected `ProfileResearchProviderV2`, no default network provider.
+
+### Input and gap revalidation
+
+```ts
+const gap = await m13.resolve(evidenceRequest);
+if (gap.outcome === "gap") {
+  const result = await new ControlledProfileResearchV2(provider).research({
+    evidenceRequest, // userId, canonicalRecordId, registryRecordId,
+                     // exact requirement and catalog target, mode: "durable",
+                     // optional restrictive official S2 options
+    gap: m14GapReferenceV2(gap),
+    research: {
+      runRef: "research.request.123",
+      proposedVersion: "2.0.0",
+      materialRefs: [], // optional local reference IDs, not uploads
+      // question: optional bounded context for this target only
+    },
+  });
+}
+```
+
+The gap reference contains M13's discriminant, reason, full grounding provenance
+and a deterministic hash of its complete resolution (including requirement,
+target, policies and diagnostics). It is an untrusted assertion, not a signed
+capability. M14 recomputes M13 using the durable IDs and compares the reference.
+Fabricated reason/provenance/policy, stale Registry binding, ownership failure,
+corruption and invalid contracts cannot turn into research. Current `authorized`
+results stop immediately, even when the caller presents an old gap. Requests
+are parsed/cloned before IO. The provider receives a separate clone.
+
+The M13 composition captures the exact pair read through official
+`getRegistryForCanonical`; no independent profile join and no duplicate S2
+gap algorithm is introduced. After research it invokes M13 again with the same
+IDs/policy to recheck integrity and ownership before any candidate persistence.
+M4 is unchanged and no AdaptationPlan enters as epistemic authority.
+
+Classification is intentionally small: `researchable_gap`, `not_researchable`,
+`non_researchable_error`. Only M13 missing/partial with exact-target epistemic
+diagnostics permits research: missing/unknown/relevance knowledge, missing or
+insufficient-confidence claims, source/authority/independence deficits, unresolved
+conflicts or unsubstantiated non-applicability. Review-only deficits, evaluation
+limits and a locally covered target blocked by a sibling are not researchable.
+Storage, schema, grounding and ownership errors remain structured errors.
+
+### Provider, proposal, provenance and transformation
+
+The v2 provider receives the validated context and an AbortSignal and returns
+untrusted structured data. One invocation calls it once, with a 30-second default
+timeout (configurable from 1 ms to 120 seconds). Failure/timeout ends the call;
+late completion has no persistence path. A future adapter must honor cancellation
+to stop its own external work. There is no recursive research or repair loop.
+
+Provider results contain provider identity, optional response/model references,
+S1 source records, individually mapped findings (claim, requirement, target,
+subjects, evidence, confidence, rationale and optional exact knowledge changes),
+an optional whole-slot consistency assertion, and unresolved conflicts. URL or bibliographic
+sources are supported. Evidence may carry a document/material reference,
+extraction reference and page/section locator when supplied. Missing locators
+become the honest `Whole reference; no page or section supplied`, never invented
+pages. Metadata/source authority assertions remain proposed, not validated truth.
+
+The returned proposal contains the original M13 resolution, exact canonical and
+Registry provenance, request/run context, research result, explicit change IDs,
+`status: review`, `authority: proposal_only`, `humanReviewRequired: true`, and a
+deterministic proposal SHA. S3A seals that SHA in `lineage.origin.originRef` and
+new claim origins; the request's run reference also remains in lineage. Sources,
+evidence, exact requirement/target mapping and unresolved conflicts persist in
+the candidate snapshot. Optional `lineage.origin.researchProvenance` now carries
+a strict `kind: m14-controlled-research-v2`, `version: 1.0.0` context: exact Registry
+record/hash/binding (including canonical record/hash), requirement/target,
+durable mode, supplied options, effective S2 policy, gap reason/result digest,
+available provider/result references, proposal digest, shared-slot diagnostics,
+and each finding's claim/evidence/source/material/extraction and change mapping.
+Absent optional references remain absent. Snapshot records supply the actual
+statements, sources and values; origin does not duplicate a prompt or provider
+response. Read-back through S3B suffices without the transient M14 result.
+`originRef` is a logical digest link, not a claim of manifest-store resolvability.
+
+This optional S3A extension has no defaults. Historical origins retain their exact
+representation and hashes. The existing candidate/context SHA already seals
+lineage, so it naturally includes the new provenance; content SHA continues to
+hash only the normalized Profile snapshot. Holding that snapshot fixed while
+changing origin changes only context SHA. Existing claim origin references remain
+part of Profile content as before. Human promotion is unchanged and does not copy
+the process provenance into canonical knowledge. S3B uses its existing lineage
+JSONB column, validates references on read, and checks the provenance canonical
+record ID against the persisted parent ID. No new table, column or migration.
+
+The pure transformation clones the base and appends evidence/claims/sources/
+conflicts; duplicate or dangling IDs fail S1 instead of overwriting data. Claims
+are always `needs_review`, relationships always `unvalidated`; providers cannot
+supply a review status, human validation, parent, lifecycle state or arbitrary
+snapshot. Each finding must match the exact requirement and catalog target;
+section-wide or other-slot claims fail. Each finding can provide `knowledgeChanges`:
+`{changeId, path, value}`. Paths address actual named fields/array positions inside
+the catalog slot's S1 value. Values are individual strings or explicitly empty
+lists; object/whole-list replacements are forbidden. These are exact value/change
+assertions, not invented S1 subject IDs. Each path must resolve after S1 parsing to
+the same leaf value and to a feature, mechanism, structural item or slot contained
+by the finding's declared subjects. Mechanism references cannot authorize feature
+metadata or sibling mechanisms. Every material leaf of a new structure needs an
+assertion, including its identifiers and empty collections.
+
+The merge starts with a detached canonical value and inserts only those assertions.
+It can initialize unknown knowledge or append to existing arrays while preserving
+their existing entries/order. Overwrites, overlapping/duplicate changes, sparse or
+invalid structures, and replacing not-applicable knowledge fail closed. The optional
+legacy-shaped `knowledgeAddition` blob is only checked for exact consistency with
+the derived value and author findings. An extra mechanism/value/system or any
+disagreement rejects the ENTIRE proposal with the unsupported path; it is never
+silently filtered. Evidence-only findings remain supported without knowledge changes.
+
+The persisted extension is also reconciled against the exact parent in S3A's
+shared lineage gate. For each finding, the validator resolves its own new claim
+and reads the proposed leaf at each mapped path. It replays those assertions with
+the same additive builder used above, checks the actual S1 subjects, then requires
+the reconstructed knowledge to equal the candidate's entire knowledge. Existing
+values cannot be claimed as additions; missing/partial mappings, wrong subjects,
+reorder, replacement and extra changes fail even with correctly recomputed hashes.
+Prior evidence records and identity remain intact; new claims/evidence must be
+accounted for by findings, including evidence-only findings. Legitimate lifecycle
+status/version metadata is outside this knowledge comparison.
+
+New conflicts use `researchConflictIssueV2`, the same rule as the producer:
+unresolved status, exact requested target, at least one proposed finding claim,
+and only proposed claims or existing claims compatible with that target. New
+conflicts cannot accompany knowledge changes. Historical conflicts are preserved
+exactly and are not reauthorized; modifying, retargeting or removing them fails
+the existing prefix comparison. These checks also apply to correctly hashed
+artifacts constructed outside the producer, before persistence or human ACCEPT.
+
+Construction, reusable validation and human review all call this parent-aware
+gate. S3B persistence and historical decoding already call the same validator with
+the actual parent snapshot, so no separate decoder rule is needed. Schema/hash
+parsing alone is not lifecycle admission. Candidates without the optional M14
+extension retain their historical behavior. The unchanged context-hash primitive
+is shared internally with adversarial tests; computing a hash grants no admission.
+
+A slot shared by catalog targets remains one S1 truth. `sharedSlotEffects` reports
+S2 preview statuses for other catalog targets on that slot using the existing
+claims before/after the knowledge patch. This is a diagnostic comparison using the
+same requirement reference/options and each target's domain, not another authorized
+request. It is also retained in candidate provenance. A legitimate supported fact
+can help an existing claim for another target; an unsupported extra fact cannot enter
+the candidate. M14 adds no claims for additional targets. Review status is unchanged.
+Durable validation recomputes these diagnostics using the same helper as proposal
+construction and requires exact agreement; shared effects cannot cover an unmapped
+change or transfer a change between findings with incompatible subjects.
+Before calculating those effects, the shared M14 gate now compares every mapped
+change's actual S1 subject with the applicable subject evaluations in the official
+S2 preview for that finding's claim. A relevant age mechanism cannot authorize a
+change to a sibling mechanism merely because both appear in `subjectRefs` or a
+broad feature reference contains both. When an unknown feature is initialized,
+feature-level fields remain valid structural context for its applicable mechanism;
+each mechanism-level change still needs its own applicable identity. S3A repeats
+this check against the parent on construction, validation and human review; S3B
+uses the same validator on write and historical read. `sharedSlotEffects` remains
+derived diagnostics, never a separate write or applicability grant.
+
+S1 validates the complete proposed snapshot before S3A. Official S2 preview then
+checks whether every finding addresses an applicable target subject. It is only
+a diagnostic: coverage/durability is not required or manufactured by changing
+review status. New claims remain ineligible pending review. A valid proposal can
+therefore still show missing/partial in preview. Empty findings or findings that
+do not address the subject return `gap_unresolved` without a candidate. Malformed
+proposals return `error`. Declared contradictory findings persist as unresolved
+conflicts visible to review/S2; a conflicting knowledge initialization returns
+unresolved rather than selecting a value. M14 makes no semantic truth judgment
+or promise to detect contradictions not declared by the provider.
+
+### Candidate persistence, ownership, concurrency and retries
+
+M14 calls only `createProfileReviewCandidateV2` then S3B's
+`persistReviewCandidate`, with the original canonical bytes and durable parent ID.
+It cannot call either review-decision operation. Candidate persistence is the
+only write capability. The sole contract extension is optional candidate origin
+provenance. There is no new database schema, SQL from M14, queue, run-history store,
+migration or canonical UPDATE.
+
+The Registry remains user-owned; all reads pass the request user and exact
+Registry/canonical IDs through Grounding. S3B canonicals/candidates are existing
+shared internal artifacts without a user column, not newly invented user-owned
+records. M14 grants no cross-user Registry access and reaches the shared candidate
+writer only after an owned Registry has authorized the exact base context.
+Its proposal hash includes that user/Registry context, preventing cross-user
+retry identity reuse. This is an internal service, not an authentication route;
+reviewer/canonical authorization remains deferred as in S3B.
+
+Chosen stale semantics: abort new work on historical A once B is current.
+M14 checks currentness before external research and again before persistence;
+S3B rechecks the original parent under its existing profile lock, so promotion
+between precheck and write yields `stale_parent`, never an implicit rebase.
+If a candidate already persisted on A and B wins subsequently, that candidate
+remains historical with parent A; S3B refuses to review/promote it on B. M14's
+post-write check reports its stored candidate ID if it observes this race. A
+successful response is a snapshot, not a lease: `parentPolicy` explicitly requires
+the exact parent to be rechecked at human review. M13 can still reproduce the
+historical A gap; M14 deliberately refuses fresh research/candidates on A.
+
+Identical normalized input/run/result produces the same proposal and S3A hash.
+S3B retries (including concurrent ones) return the same candidate record. M14
+does not cache external research: a retry calls the provider again. Changed
+run/result/provenance/version may create a distinct candidate; there is no global
+idempotency or version allocation. A retry of an already reviewed candidate
+returns `candidate_already_reviewed`, not a fresh pending review. A persistence
+failure is an error; the result never labels research alone a durable candidate.
+As with S3B, an uncertain connection failure after commit is recovered by retrying
+the same deterministic input/result. External IO is outside the DB transaction.
+
+The result union is `proposal_created`, `gap_unresolved`, `not_researchable`, or
+`error`. Success includes the durable candidate ID and hashes, S2 preview,
+`candidateStatus: review`, mandatory human review and `canonicalChangedByM14: false`.
+No outcome itself makes research canonical or resolves human ACCEPT/REJECT.
+
+### Verification and deferred work
+
+`m14-controlled-research-v2.test.ts` covers gatekeeping, spoofing/corruption,
+ownership, provider failure/timeout, S1/S2 validation, deterministic preservation,
+conflicts, retries, promotion races, the original X/Y contamination regression,
+legitimate shared facts, exact atomic changes, legacy hashes and origin validation.
+`test:integration:m14` uses the existing
+disposable-local-PostgreSQL runner to verify real candidate storage, exact parent,
+ownership, canonical immutability, idempotency, concurrent promotion, historical
+rejection, legacy round-trip, provenance recovery after discarding the transient
+result, absent optional refs and corrupted-context rejection. The runner blanks
+production DATABASE_URL and removes its temporary
+container/volumes in `finally`; tests require an explicit local admin URL.
+Fix 3 tests additionally construct cryptographically valid but semantically false
+envelopes with official snapshot/context hashing. PostgreSQL tests reject them on
+write and inject them only in disposable databases to verify read-time rejection.
+
+Audit history: the initial implementation passed its basic suites (30 unit, 8 PG),
+but closure audit found HIGH slot contamination and MEDIUM durable provenance loss.
+Fix 1 stopped because closed S1/S3A contracts could not represent that provenance.
+Fix 2 was explicitly authorized to extend candidate origin and introduced the
+scoped finding assertions described above. Current verification is recorded in
+`docs/M14_CONTROLLED_RESEARCH_REPORT.md`; the initial PASS does not close the audit.
+The subsequent final audit found that valid hashes could still seal a mapping
+unrelated to the parent delta. Fix 3 adds the shared reconciliation above and its
+regression tests. It is ready for a separate final re-audit, not a final audit result.
+That re-audit confirmed the knowledge fix but found that new conflicts bypassed
+the producer's restrictions at lifecycle admission. Fix 4 shares that contract
+with the reconciler. Its current verification and local PostgreSQL availability
+are recorded in the report; earlier PostgreSQL results are not a Fix 4 result.
+
+PDF upload/extraction/OCR/ingestion, document UI, external production provider
+adapters, reviewer authentication, productive routes/UI, Registry rebinding,
+production migrations and general literal-types/readonly cleanup remain deferred.
+Future PDF ingestion is a producer of research material for this port, not an
+authority or a shortcut to canonical.

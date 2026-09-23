@@ -4,6 +4,9 @@ import { domainIdSchema, semanticVersionSchema } from "../curriculum/primitives.
 import { validationIssue, type ValidationIssue } from "../curriculum/validation.js";
 import { LANGUAGE_PROFILE_V2_SCHEMA_VERSION, languageProfileV2Schema, type LanguageProfileV2 } from "./language-profile-v2.js";
 import { REQUIREMENT_EVIDENCE_TARGET_CATALOG_VERSION } from "./requirement-evidence-targets.js";
+import { candidateResearchProvenanceV2Schema } from "./candidate-research-provenance-v2.js";
+import { reconcileResearchKnowledgeV2 } from "../profile-research/scoped-knowledge-v2.js";
+import { profileCandidateContextShaV2 as candidateSha } from "./profile-candidate-context-sha-v2.js";
 
 // Readonly is local to S3A's append-only records; it does not change S1/S2 types.
 type Immutable<T> = T extends object ? { readonly [K in keyof T]: Immutable<T[K]> } : T;
@@ -20,6 +23,7 @@ const originSchema = z.object({
   kind: z.enum(["manual", "generated", "researched", "corrected"]),
   originRef: domainIdSchema,
   runRef: domainIdSchema.optional(),
+  researchProvenance: candidateResearchProvenanceV2Schema.optional(),
 }).strict();
 const candidateSchema = z.object({
   candidateSha256: shaSchema,
@@ -87,11 +91,6 @@ function sameRef(left: ProfileSnapshotRefV2, right: ProfileSnapshotRefV2): boole
   return Object.keys(snapshotRefSchema.shape).every((key) =>
     left[key as keyof ProfileSnapshotRefV2] === right[key as keyof ProfileSnapshotRefV2]);
 }
-function candidateSha(candidate: Omit<z.infer<typeof candidateSchema>, "candidateSha256">): string {
-  // Stable field order from our schemas. Array order and normalized profile text
-  // remain significant. The digest also binds origin, source and parent context.
-  return sha(JSON.stringify({ snapshotJson: candidate.snapshotJson, snapshot: candidate.snapshot, lineage: candidate.lineage }));
-}
 function parentProfile(input: unknown): LanguageProfileV2 | null | Failure {
   if (input === null) return null;
   const parsed = languageProfileV2Schema.safeParse(input);
@@ -102,6 +101,26 @@ function parentProfile(input: unknown): LanguageProfileV2 | null | Failure {
 }
 function checkLineage(candidate: ProfileReviewCandidateV2, profile: LanguageProfileV2, parent: LanguageProfileV2 | null): Failure | null {
   const { source, parentCanonical } = candidate.lineage;
+  const origin = candidate.lineage.origin, provenance = origin.researchProvenance;
+  if (provenance) {
+    const binding = provenance.registry.binding;
+    if (origin.kind !== "researched" || origin.originRef !== `m14.${provenance.proposalSha256}` || origin.runRef !== provenance.runRef ||
+      parentCanonical === null || binding.profileId !== parentCanonical.profileId || binding.profileVersion !== parentCanonical.version ||
+      binding.canonicalSha256 !== parentCanonical.contentSha256 || binding.schemaVersion !== parentCanonical.schemaVersion ||
+      binding.contractVersion !== parentCanonical.contractVersion) {
+      return fail("lineage_mismatch", "lineage.origin.researchProvenance", "Research must bind the exact parent and proposal origin.");
+    }
+    for (const finding of provenance.findings) {
+      const claim = profile.evidenceRegistry.claims.find((entry) => entry.claimId === finding.claimRef);
+      if (!claim || claim.origin.kind !== "research_run" || claim.origin.originRunRef !== origin.originRef ||
+        !claim.requirementRefs.includes(provenance.gap.requirement.requirementRef) ||
+        !claim.requirementEvidenceTargetRefs.some((ref) => ref.targetId === provenance.gap.target.targetId) ||
+        finding.evidence.some((ref) => !claim.evidenceRefs.some((entry) => entry.evidenceRef === ref.evidenceRef) ||
+          !profile.evidenceRegistry.evidence.some((entry) => entry.evidenceId === ref.evidenceRef && entry.sourceRef === ref.sourceRef))) {
+        return fail("lineage_mismatch", "lineage.origin.researchProvenance.findings", "Research finding must resolve to its claim and source evidence.");
+      }
+    }
+  }
   if (source.status === "deprecated") {
     return fail("illegal_lifecycle_transition", "lineage.source", "Deprecated snapshots cannot re-enter review.");
   }
@@ -118,6 +137,10 @@ function checkLineage(candidate: ProfileReviewCandidateV2, profile: LanguageProf
     parent.identity.languageId !== profile.identity.languageId || parent.identity.varietyId !== profile.identity.varietyId ||
     parent.version === profile.version)) {
     return fail("lineage_mismatch", "lineage.parentCanonical", "A revision must preserve stable identity and use a distinct content version.");
+  }
+  if (provenance && parent) {
+    const semanticError = reconcileResearchKnowledgeV2(parent, profile, provenance);
+    if (semanticError) return fail("lineage_mismatch", "lineage.origin.researchProvenance", semanticError);
   }
   return null;
 }
