@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 
 type ListedUser = {
   id: string;
@@ -17,9 +17,17 @@ type AdminState =
   | { status: "error" }
   | { status: "ready"; users: ListedUser[] };
 
+type CreateFeedback = {
+  message: string;
+  tone: "error" | "success";
+};
+
 export function AdminScreen() {
   const router = useRouter();
   const [state, setState] = useState<AdminState>({ status: "loading" });
+  const [submitting, setSubmitting] = useState(false);
+  const [createFeedback, setCreateFeedback] = useState<CreateFeedback | null>(null);
+  const submittingRef = useRef(false);
 
   useEffect(() => {
     let active = true;
@@ -58,6 +66,75 @@ export function AdminScreen() {
     };
   }, [router]);
 
+  async function createUser(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (submittingRef.current) return;
+
+    submittingRef.current = true;
+    setSubmitting(true);
+    setCreateFeedback(null);
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    const email = String(formData.get("email") ?? "").trim();
+
+    try {
+      const response = await fetch("/api/admin/users", {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          username: formData.get("username"),
+          password: formData.get("password"),
+          ...(email ? { email } : {}),
+        }),
+      });
+
+      if (response.status === 401) {
+        router.replace("/");
+        return;
+      }
+      if (response.status === 403) {
+        setState({ status: "forbidden" });
+        return;
+      }
+
+      const result = (await response.json()) as {
+        user?: ListedUser;
+        message?: string;
+      };
+      if (!response.ok || !result.user) {
+        setCreateFeedback({
+          message: result.message ?? "No se pudo crear el usuario.",
+          tone: "error",
+        });
+        return;
+      }
+
+      const createdUser = result.user;
+      form.reset();
+      setState((current) =>
+        current.status === "ready"
+          ? {
+              status: "ready",
+              users: [...current.users, createdUser].sort(
+                (a, b) =>
+                  a.username.localeCompare(b.username) || a.id.localeCompare(b.id),
+              ),
+            }
+          : current,
+      );
+      setCreateFeedback({ message: "Usuario creado.", tone: "success" });
+    } catch {
+      setCreateFeedback({
+        message: "No se pudo crear el usuario.",
+        tone: "error",
+      });
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
+    }
+  }
+
   if (state.status === "loading") {
     return (
       <main className="flow-shell">
@@ -83,31 +160,79 @@ export function AdminScreen() {
           <p className="form-error" role="alert">
             No se pudo cargar el listado de usuarios.
           </p>
-        ) : state.users.length === 0 ? (
-          <p className="loading-message">No hay usuarios registrados.</p>
         ) : (
-          <div className="admin-table-wrap">
-            <table className="admin-table">
-              <thead>
-                <tr>
-                  <th scope="col">Usuario</th>
-                  <th scope="col">Correo electrónico</th>
-                  <th scope="col">Rol</th>
-                  <th scope="col">ID</th>
-                </tr>
-              </thead>
-              <tbody>
-                {state.users.map((user) => (
-                  <tr key={user.id}>
-                    <td>{user.username}</td>
-                    <td>{user.email ?? "—"}</td>
-                    <td>{user.role === "superadmin" ? "Superadmin" : "Usuario"}</td>
-                    <td className="admin-user-id">{user.id}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <>
+            <section className="account-section" aria-labelledby="admin-create-title">
+              <h2 id="admin-create-title">Crear usuario</h2>
+              <form className="auth-form admin-create-form" onSubmit={createUser}>
+                <label htmlFor="admin-username">Usuario</label>
+                <input
+                  id="admin-username"
+                  name="username"
+                  type="text"
+                  autoComplete="username"
+                  maxLength={64}
+                  required
+                />
+                <label htmlFor="admin-email">Correo electrónico (opcional)</label>
+                <input
+                  id="admin-email"
+                  name="email"
+                  type="email"
+                  autoComplete="email"
+                  maxLength={320}
+                />
+                <label htmlFor="admin-password">Contraseña</label>
+                <input
+                  id="admin-password"
+                  name="password"
+                  type="password"
+                  autoComplete="new-password"
+                  minLength={12}
+                  maxLength={256}
+                  required
+                />
+                {createFeedback ? (
+                  <p
+                    className={`form-${createFeedback.tone}`}
+                    role={createFeedback.tone === "error" ? "alert" : "status"}
+                  >
+                    {createFeedback.message}
+                  </p>
+                ) : null}
+                <button type="submit" disabled={submitting}>
+                  {submitting ? "Creando…" : "Crear usuario"}
+                </button>
+              </form>
+            </section>
+
+            {state.users.length === 0 ? (
+              <p className="loading-message">No hay usuarios registrados.</p>
+            ) : (
+              <div className="admin-table-wrap">
+                <table className="admin-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Usuario</th>
+                      <th scope="col">Correo electrónico</th>
+                      <th scope="col">Rol</th>
+                      <th scope="col">ID</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {state.users.map((user) => (
+                      <tr key={user.id}>
+                        <td>{user.username}</td>
+                        <td>{user.email ?? "—"}</td>
+                        <td>{user.role === "superadmin" ? "Superadmin" : "Usuario"}</td>
+                        <td className="admin-user-id">{user.id}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
         )}
       </section>
     </main>

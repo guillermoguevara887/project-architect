@@ -60,7 +60,7 @@ function toAccount(user: UserRow): Account {
   };
 }
 
-function uniqueConstraint(error: unknown) {
+export function uniqueConstraint(error: unknown) {
   if (!error || typeof error !== "object") {
     return null;
   }

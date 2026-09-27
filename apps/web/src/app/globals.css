@@ -96,6 +96,10 @@ body {
   overflow-wrap: anywhere;
 }
 
+.admin-create-form {
+  max-width: 30rem;
+}
+
 .summary-card {
   width: min(100%, 54rem);
 }

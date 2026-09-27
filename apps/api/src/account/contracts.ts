@@ -4,13 +4,13 @@ import {
   MIN_PASSWORD_LENGTH,
 } from "../auth/password.js";
 
-const usernameSchema = z
+export const usernameSchema = z
   .string()
   .trim()
   .min(1, "El nombre de usuario es obligatorio.")
   .max(64, "El nombre de usuario no puede superar 64 caracteres.");
 
-const emailSchema = z
+export const emailSchema = z
   .string()
   .trim()
   .min(1, "El correo electrónico es obligatorio.")
@@ -18,7 +18,7 @@ const emailSchema = z
   .email("Introduce un correo electrónico válido.")
   .transform((email) => email.toLowerCase());
 
-const newPasswordSchema = z
+export const newPasswordSchema = z
   .string()
   .min(
     MIN_PASSWORD_LENGTH,
