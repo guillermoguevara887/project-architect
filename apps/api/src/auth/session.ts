@@ -6,8 +6,9 @@ const DEVELOPMENT_SECRET =
   "architect-development-cookie-secret-change-before-production";
 
 type SessionPayload = {
-  version: 1;
+  version: 2;
   userId: string;
+  sessionVersion: number;
   expiresAt: number;
 };
 
@@ -59,10 +60,15 @@ function serializeCookie(value: string, maxAge: number) {
   return attributes.join("; ");
 }
 
-export function createSessionCookie(userId: string) {
+export function createSessionCookie(userId: string, sessionVersion: number) {
+  if (!Number.isSafeInteger(sessionVersion) || sessionVersion < 1) {
+    throw new Error("A session requires a positive integer sessionVersion.");
+  }
+
   const payload: SessionPayload = {
-    version: 1,
+    version: 2,
     userId,
+    sessionVersion,
     expiresAt: Math.floor(Date.now() / 1000) + SESSION_DURATION_SECONDS,
   };
   const encodedPayload = Buffer.from(JSON.stringify(payload)).toString(
@@ -101,7 +107,7 @@ function readCookie(cookieHeader: string | undefined) {
   return null;
 }
 
-export function readSessionUserId(cookieHeader: string | undefined) {
+export function readSession(cookieHeader: string | undefined) {
   const token = readCookie(cookieHeader);
 
   if (!token) {
@@ -130,16 +136,19 @@ export function readSessionUserId(cookieHeader: string | undefined) {
     ) as Partial<SessionPayload>;
 
     if (
-      payload.version !== 1 ||
+      payload.version !== 2 ||
       typeof payload.userId !== "string" ||
       payload.userId.length === 0 ||
+      typeof payload.sessionVersion !== "number" ||
+      !Number.isSafeInteger(payload.sessionVersion) ||
+      payload.sessionVersion < 1 ||
       typeof payload.expiresAt !== "number" ||
       payload.expiresAt <= Math.floor(Date.now() / 1000)
     ) {
       return null;
     }
 
-    return payload.userId;
+    return { userId: payload.userId, sessionVersion: payload.sessionVersion };
   } catch {
     return null;
   }

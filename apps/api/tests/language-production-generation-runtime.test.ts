@@ -166,6 +166,8 @@ test("M8 routes require auth and return accepted output without exposing LessonS
     id: "11111111-1111-4111-8111-111111111111",
     username: "memo",
     passwordHash: "hash",
+    role: "user",
+    sessionVersion: 1,
     createdAt: new Date(),
   };
   const authStore: AuthStore = {
@@ -188,7 +190,7 @@ test("M8 routes require auth and return accepted output without exposing LessonS
   });
   assert.equal(unauthorized.statusCode, 401);
 
-  const cookie = createSessionCookie(user.id).split(";", 1)[0] ?? "";
+  const cookie = createSessionCookie(user.id, user.sessionVersion).split(";", 1)[0] ?? "";
   const generated = await server.inject({
     method: "POST",
     url: "/languages/lesson-generations",

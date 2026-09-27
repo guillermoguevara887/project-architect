@@ -436,6 +436,8 @@ test("M13 routes require authentication and expose state without Registry/Profil
     id: USER_ID,
     username: "memo",
     passwordHash: "hash",
+    role: "user",
+    sessionVersion: 1,
     createdAt: new Date(),
   };
   const authStore: AuthStore = {
@@ -462,7 +464,7 @@ test("M13 routes require authentication and expose state without Registry/Profil
   });
   assert.equal(unauthorized.statusCode, 401);
 
-  const cookie = createSessionCookie(user.id).split(";", 1)[0] ?? "";
+  const cookie = createSessionCookie(user.id, user.sessionVersion).split(";", 1)[0] ?? "";
   const started = await server.inject({
     method: "POST",
     url: "/languages/adaptation-resolution-runs",

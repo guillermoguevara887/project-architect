@@ -1,4 +1,4 @@
-import { and, eq, gt, isNull } from "drizzle-orm";
+import { and, eq, gt, isNull, sql } from "drizzle-orm";
 import { getDb } from "../db/client.js";
 import { passwordResetTokens, users } from "../db/schema.js";
 import type { AccountProfileUpdate } from "./contracts.js";
@@ -8,6 +8,7 @@ export type Account = {
   username: string;
   email: string | null;
   passwordHash: string;
+  sessionVersion: number;
   createdAt: Date;
 };
 
@@ -27,7 +28,11 @@ export interface AccountStore {
     userId: string,
     update: AccountProfileUpdate,
   ): Promise<Account | null>;
-  updatePassword(userId: string, passwordHash: string): Promise<boolean>;
+  updatePassword(
+    userId: string,
+    passwordHash: string,
+    expectedSessionVersion: number,
+  ): Promise<number | null>;
   createPasswordResetToken(input: {
     userId: string;
     tokenHash: string;
@@ -50,6 +55,7 @@ function toAccount(user: UserRow): Account {
     username: user.username,
     email: user.email,
     passwordHash: user.passwordHash,
+    sessionVersion: user.sessionVersion,
     createdAt: user.createdAt,
   };
 }
@@ -115,14 +121,14 @@ export const accountStore: AccountStore = {
     }
   },
 
-  async updatePassword(userId, passwordHash) {
-    const updated = await getDb()
+  async updatePassword(userId, passwordHash, expectedSessionVersion) {
+    const [updated] = await getDb()
       .update(users)
-      .set({ passwordHash })
-      .where(eq(users.id, userId))
-      .returning({ id: users.id });
+      .set({ passwordHash, sessionVersion: sql`${users.sessionVersion} + 1` })
+      .where(and(eq(users.id, userId), eq(users.sessionVersion, expectedSessionVersion)))
+      .returning({ sessionVersion: users.sessionVersion });
 
-    return updated.length === 1;
+    return updated?.sessionVersion ?? null;
   },
 
   async createPasswordResetToken(input) {
@@ -177,7 +183,10 @@ export const accountStore: AccountStore = {
 
       const updated = await transaction
         .update(users)
-        .set({ passwordHash: input.passwordHash })
+        .set({
+          passwordHash: input.passwordHash,
+          sessionVersion: sql`${users.sessionVersion} + 1`,
+        })
         .where(eq(users.id, token.userId))
         .returning({ id: users.id });
 

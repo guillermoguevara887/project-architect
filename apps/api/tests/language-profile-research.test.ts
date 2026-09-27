@@ -210,6 +210,8 @@ function authStoreFake(): AuthStore {
             id: USER_ID,
             email: "m14@example.com",
             passwordHash: "not-used",
+            role: "user",
+            sessionVersion: 1,
             createdAt: new Date(),
             updatedAt: new Date(),
           }
@@ -439,7 +441,7 @@ test("M14 routes require authentication and never accept client-authored evidenc
   });
   assert.equal(unauthenticated.statusCode, 401);
 
-  const cookie = createSessionCookie(USER_ID);
+  const cookie = createSessionCookie(USER_ID, 1);
   const malicious = await server.inject({
     method: "POST",
     url: `/languages/adaptation-resolution-runs/${RESOLUTION_RUN_ID}/profile-research`,

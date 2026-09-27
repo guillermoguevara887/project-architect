@@ -310,6 +310,8 @@ test("M9 public routes require auth and cannot replace the trusted LessonSpec th
     id: USER_ID,
     username: "memo",
     passwordHash: "hash",
+    role: "user",
+    sessionVersion: 1,
     createdAt: new Date(),
   };
   const authStore: AuthStore = {
@@ -331,7 +333,7 @@ test("M9 public routes require auth and cannot replace the trusted LessonSpec th
   });
   assert.equal(unauthorized.statusCode, 401);
 
-  const cookie = createSessionCookie(user.id).split(";", 1)[0] ?? "";
+  const cookie = createSessionCookie(user.id, user.sessionVersion).split(";", 1)[0] ?? "";
   const response = await server.inject({
     method: "POST",
     url: `/languages/curriculum-planning-bundles/${bundle.id}/generate`,

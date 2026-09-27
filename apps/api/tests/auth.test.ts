@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { hashPassword, verifyPassword } from "../src/auth/password.js";
 import type { AuthStore, AuthUser } from "../src/auth/repository.js";
+import { createSessionCookie, readSession } from "../src/auth/session.js";
 import { createServer } from "../src/create-server.js";
 
 process.env.NODE_ENV = "test";
@@ -42,6 +44,8 @@ test("login, session verification and logout use an HTTP-only cookie", async () 
     id: "af31bb93-55f4-4cf4-a8ad-23c6733c3b36",
     username: "architect",
     passwordHash: await hashPassword("correct-password"),
+    role: "user",
+    sessionVersion: 7,
     createdAt: new Date("2026-01-02T03:04:05.000Z"),
   };
   const server = createServer({}, { authStore: new MemoryAuthStore(user) });
@@ -80,6 +84,7 @@ test("login, session verification and logout use an HTTP-only cookie", async () 
 
     const setCookie = login.headers["set-cookie"];
     const cookie = cookieValue(setCookie);
+    assert.deepEqual(readSession(cookie), { userId: user.id, sessionVersion: 7 });
     const serializedCookie = Array.isArray(setCookie) ? setCookie[0] : setCookie;
     assert.match(serializedCookie ?? "", /HttpOnly/);
     assert.match(serializedCookie ?? "", /SameSite=Lax/);
@@ -127,6 +132,8 @@ test("session rejects missing and tampered cookies", async () => {
     id: "8ac9bb20-229c-47f8-a038-ccab0a5f8d1f",
     username: "architect",
     passwordHash: await hashPassword("correct-password"),
+    role: "user",
+    sessionVersion: 1,
     createdAt: new Date("2026-01-02T03:04:05.000Z"),
   };
   const server = createServer({}, { authStore: new MemoryAuthStore(user) });
@@ -144,6 +151,55 @@ test("session rejects missing and tampered cookies", async () => {
 
     assert.equal(missing.statusCode, 401);
     assert.equal(tampered.statusCode, 401);
+  } finally {
+    await server.close();
+  }
+});
+
+test("sessions reject stale, legacy, missing-version, invalid-version and expired signed cookies", async () => {
+  const user: AuthUser = {
+    id: "8ac9bb20-229c-47f8-a038-ccab0a5f8d1f",
+    username: "architect",
+    passwordHash: "unused",
+    role: "user",
+    sessionVersion: 3,
+    createdAt: new Date(),
+  };
+  const server = createServer({}, { authStore: new MemoryAuthStore(user) });
+  const valid = { version: 2, userId: user.id, sessionVersion: 3, expiresAt: Math.floor(Date.now() / 1000) + 60 };
+  function signedCookie(payload: object) {
+    const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
+    const signature = createHmac("sha256", process.env.AUTH_COOKIE_SECRET!).update(encoded).digest("base64url");
+    return `architect_session=${encoded}.${signature}`;
+  }
+
+  try {
+    const currentCookie = cookieValue(createSessionCookie(user.id, user.sessionVersion));
+    assert.equal((await server.inject({ method: "GET", url: "/auth/session", headers: { cookie: currentCookie } })).statusCode, 200);
+    user.sessionVersion = 4;
+    assert.equal((await server.inject({ method: "GET", url: "/auth/session", headers: { cookie: currentCookie } })).statusCode, 401);
+    user.sessionVersion = 3;
+
+    const invalid = [
+      { ...valid, version: 1, sessionVersion: undefined },
+      { ...valid, sessionVersion: undefined },
+      { ...valid, sessionVersion: 0 },
+      { ...valid, sessionVersion: -1 },
+      { ...valid, sessionVersion: 1.5 },
+      { ...valid, sessionVersion: "3" },
+      { ...valid, sessionVersion: null },
+      { ...valid, expiresAt: Math.floor(Date.now() / 1000) - 1 },
+    ];
+    for (const payload of invalid) {
+      const response = await server.inject({ method: "GET", url: "/auth/session", headers: { cookie: signedCookie(payload) } });
+      assert.equal(response.statusCode, 401, JSON.stringify(payload));
+    }
+    const tampered = signedCookie(valid).replace(
+      Buffer.from(JSON.stringify(valid)).toString("base64url"),
+      Buffer.from(JSON.stringify({ ...valid, sessionVersion: 4 })).toString("base64url"),
+    );
+    assert.equal((await server.inject({ method: "GET", url: "/auth/session", headers: { cookie: tampered } })).statusCode, 401);
+    assert.throws(() => createSessionCookie(user.id, 0));
   } finally {
     await server.close();
   }

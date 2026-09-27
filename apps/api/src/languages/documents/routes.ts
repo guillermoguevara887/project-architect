@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { AuthStore } from "../../auth/repository.js";
-import { readSessionUserId } from "../../auth/session.js";
+import { readSession } from "../../auth/session.js";
 import {
   CURRICULUM_DOCUMENT_ROUTE_BODY_LIMIT,
   attachCurriculumExtractedTextSchema,
@@ -24,10 +24,10 @@ async function authenticatedUserId(
   request: FastifyRequest,
   authStore: AuthStore,
 ) {
-  const userId = readSessionUserId(request.headers.cookie);
-  if (!userId) return null;
-  const user = await authStore.findById(userId);
-  return user?.id ?? null;
+  const session = readSession(request.headers.cookie);
+  if (!session) return null;
+  const user = await authStore.findById(session.userId);
+  return user?.sessionVersion === session.sessionVersion ? user.id : null;
 }
 
 function publicDocument(document: CurriculumDocumentRecord) {

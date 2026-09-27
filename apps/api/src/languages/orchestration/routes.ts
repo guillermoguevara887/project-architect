@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { AuthStore } from "../../auth/repository.js";
-import { readSessionUserId } from "../../auth/session.js";
+import { readSession } from "../../auth/session.js";
 import {
   CurriculumOrchestrationServiceError,
   type CurriculumOrchestrationService,
@@ -19,10 +19,10 @@ async function authenticatedUserId(
   request: FastifyRequest,
   authStore: AuthStore,
 ) {
-  const userId = readSessionUserId(request.headers.cookie);
-  if (!userId) return null;
-  const user = await authStore.findById(userId);
-  return user?.id ?? null;
+  const session = readSession(request.headers.cookie);
+  if (!session) return null;
+  const user = await authStore.findById(session.userId);
+  return user?.sessionVersion === session.sessionVersion ? user.id : null;
 }
 
 function publicRun(run: {

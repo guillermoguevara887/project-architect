@@ -13,8 +13,8 @@ import {
   type AccountStore,
 } from "../src/account/repository.js";
 import { hashPassword, verifyPassword } from "../src/auth/password.js";
-import type { AuthStore } from "../src/auth/repository.js";
-import { createSessionCookie } from "../src/auth/session.js";
+import type { AuthStore, AuthUser } from "../src/auth/repository.js";
+import { createSessionCookie, readSession } from "../src/auth/session.js";
 import { createServer } from "../src/create-server.js";
 
 process.env.NODE_ENV = "test";
@@ -31,7 +31,7 @@ type StoredResetToken = {
 class MemoryAccountStore implements AccountStore, AuthStore {
   readonly tokens: StoredResetToken[] = [];
 
-  constructor(readonly users: Account[]) {}
+  constructor(readonly users: (Account & AuthUser)[]) {}
 
   async findById(userId: string) {
     return this.users.find(({ id }) => id === userId) ?? null;
@@ -76,15 +76,16 @@ class MemoryAccountStore implements AccountStore, AuthStore {
     return user;
   }
 
-  async updatePassword(userId: string, passwordHash: string) {
+  async updatePassword(userId: string, passwordHash: string, expectedSessionVersion: number) {
     const user = await this.findById(userId);
 
-    if (!user) {
-      return false;
+    if (!user || user.sessionVersion !== expectedSessionVersion) {
+      return null;
     }
 
     user.passwordHash = passwordHash;
-    return true;
+    user.sessionVersion += 1;
+    return user.sessionVersion;
   }
 
   async createPasswordResetToken(input: {
@@ -139,6 +140,7 @@ class MemoryAccountStore implements AccountStore, AuthStore {
 
     token.usedAt = input.now;
     user.passwordHash = input.passwordHash;
+    user.sessionVersion += 1;
     return true;
   }
 }
@@ -170,6 +172,8 @@ async function createFixture() {
       username: "architect",
       email: "architect@example.com",
       passwordHash: await hashPassword(initialPassword),
+      role: "user",
+      sessionVersion: 1,
       createdAt: new Date("2026-01-02T03:04:05.000Z"),
     },
     {
@@ -177,6 +181,8 @@ async function createFixture() {
       username: "existing",
       email: "existing@example.com",
       passwordHash: await hashPassword("another-password-123"),
+      role: "user",
+      sessionVersion: 1,
       createdAt: new Date("2026-02-03T04:05:06.000Z"),
     },
   ]);
@@ -193,7 +199,7 @@ async function createFixture() {
       passwordResetTokenGenerator: () => token,
     },
   );
-  const cookie = createSessionCookie(userId).split(";", 1)[0];
+  const cookie = createSessionCookie(userId, 1).split(";", 1)[0];
 
   return { cookie, mailer, now, server, store, token };
 }
@@ -262,6 +268,31 @@ test("account profile requires a session and updates unique normalized fields", 
   }
 });
 
+test("account profile rejects role mass assignment without changing the stored user", async () => {
+  const fixture = await createFixture();
+  try {
+    const before = { ...await fixture.store.findById(userId) };
+    for (const payload of [
+      { role: "superadmin" },
+      { username: "promoted-user", role: "superadmin" },
+      { email: "promoted@example.com", role: "superadmin" },
+    ]) {
+      const response = await fixture.server.inject({
+        method: "PATCH",
+        url: "/account/profile",
+        headers: { cookie: fixture.cookie },
+        payload,
+      });
+      assert.equal(response.statusCode, 400);
+      assert.equal(response.json().error, "VALIDATION_ERROR");
+      assert.deepEqual(await fixture.store.findById(userId), before);
+      assert.equal((await fixture.store.findById(userId))?.role, "user");
+    }
+  } finally {
+    await fixture.server.close();
+  }
+});
+
 test("authenticated password change verifies the current password", async () => {
   const fixture = await createFixture();
   const newPassword = "updated-password-456";
@@ -307,9 +338,19 @@ test("authenticated password change verifies the current password", async () => 
       },
     });
     assert.equal(changed.statusCode, 200);
+    assert.equal(readSession(fixture.cookie)?.sessionVersion, 1);
+    const renewedCookie = String(changed.headers["set-cookie"]).split(";", 1)[0];
+    assert.equal(readSession(renewedCookie)?.sessionVersion, 2);
+    for (const url of ["/auth/session", "/account"]) {
+      const stale = await fixture.server.inject({ method: "GET", url, headers: { cookie: fixture.cookie } });
+      const current = await fixture.server.inject({ method: "GET", url, headers: { cookie: renewedCookie } });
+      assert.equal(stale.statusCode, 401);
+      assert.equal(current.statusCode, 200);
+    }
 
     const user = await fixture.store.findById(userId);
     assert.ok(user);
+    assert.equal(user.sessionVersion, 2);
     assert.equal(await verifyPassword(initialPassword, user.passwordHash), false);
     assert.equal(await verifyPassword(newPassword, user.passwordHash), true);
 
@@ -415,6 +456,11 @@ test("reset tokens expire, are one-use and replace the scrypt password hash", as
       },
     });
     assert.equal(reset.statusCode, 200);
+    assert.equal(reset.headers["set-cookie"], undefined);
+    for (const url of ["/auth/session", "/account"]) {
+      const stale = await fixture.server.inject({ method: "GET", url, headers: { cookie: fixture.cookie } });
+      assert.equal(stale.statusCode, 401);
+    }
 
     const reused = await fixture.server.inject({
       method: "POST",
@@ -432,6 +478,13 @@ test("reset tokens expire, are one-use and replace the scrypt password hash", as
     assert.equal(await verifyPassword(initialPassword, user.passwordHash), false);
     assert.equal(await verifyPassword(newPassword, user.passwordHash), true);
     assert.ok(fixture.store.tokens.at(-1)?.usedAt);
+    assert.equal(user.sessionVersion, 2);
+
+    const oldLogin = await fixture.server.inject({
+      method: "POST", url: "/auth/login",
+      payload: { username: "architect", password: initialPassword },
+    });
+    assert.equal(oldLogin.statusCode, 401);
 
     const login = await fixture.server.inject({
       method: "POST",
@@ -439,6 +492,10 @@ test("reset tokens expire, are one-use and replace the scrypt password hash", as
       payload: { username: "architect", password: newPassword },
     });
     assert.equal(login.statusCode, 200);
+    const cookie = String(login.headers["set-cookie"]).split(";", 1)[0];
+    assert.equal(readSession(cookie)?.sessionVersion, 2);
+    const session = await fixture.server.inject({ method: "GET", url: "/auth/session", headers: { cookie } });
+    assert.equal(session.statusCode, 200);
   } finally {
     await fixture.server.close();
   }

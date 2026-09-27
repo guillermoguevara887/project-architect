@@ -199,7 +199,7 @@ test("M7 migration is additive and keeps source versions and compilation runs im
 
 test("M7 routes require auth and never return storage keys or extracted source text", async () => {
   const { service } = makeService();
-  const user = { id: "11111111-1111-4111-8111-111111111111", username: "memo", passwordHash: "hash", createdAt: new Date() };
+  const user = { id: "11111111-1111-4111-8111-111111111111", username: "memo", passwordHash: "hash", role: "user" as const, sessionVersion: 1, createdAt: new Date() };
   const authStore: AuthStore = {
     async findById(userId) { return userId === user.id ? user : null; },
     async findByUsername(username) { return username === user.username ? user : null; },
@@ -209,7 +209,7 @@ test("M7 routes require auth and never return storage keys or extracted source t
   const unauthorized = await server.inject({ method: "GET", url: "/languages/curriculum-documents" });
   assert.equal(unauthorized.statusCode, 401);
 
-  const cookie = createSessionCookie(user.id).split(";", 1)[0];
+  const cookie = createSessionCookie(user.id, user.sessionVersion).split(";", 1)[0];
   const uploaded = await server.inject({
     method: "POST",
     url: "/languages/curriculum-documents",
@@ -230,6 +230,20 @@ test("M7 routes require auth and never return storage keys or extracted source t
   assert.equal(compiled.statusCode, 201);
   assert.equal(compiled.json().units[0].status, "review");
 
+  user.sessionVersion += 1;
+  const stale = await server.inject({
+    method: "POST",
+    url: "/languages/curriculum-documents/A1-MASTER-P01/versions/1.0.0/compile",
+    headers: { cookie: cookie ?? "" },
+  });
+  assert.equal(stale.statusCode, 401);
+  const refreshed = await server.inject({
+    method: "GET", url: "/languages/curriculum-documents",
+    headers: { cookie: createSessionCookie(user.id, user.sessionVersion).split(";", 1)[0] ?? "" },
+  });
+  assert.equal(refreshed.statusCode, 200);
+  assert.equal(refreshed.json().documents.length, 1);
+
   await server.close();
 });
 
@@ -239,6 +253,8 @@ test("M7 routes serialize repository timestamps normalized from SQL strings", as
     id: "11111111-1111-4111-8111-111111111111",
     username: "memo",
     passwordHash: "hash",
+    role: "user" as const,
+    sessionVersion: 1,
     createdAt: new Date(),
   };
   store.documents.push({
@@ -262,7 +278,7 @@ test("M7 routes serialize repository timestamps normalized from SQL strings", as
     { logger: false },
     { authStore, curriculumDocumentService: service },
   );
-  const cookie = createSessionCookie(user.id).split(";", 1)[0];
+  const cookie = createSessionCookie(user.id, user.sessionVersion).split(";", 1)[0];
 
   const response = await server.inject({
     method: "GET",

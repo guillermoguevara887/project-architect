@@ -102,6 +102,8 @@ const firstUser: AuthUser = {
   id: "aaec2ea2-9130-4a70-b516-e187c994d119",
   username: "language-user",
   passwordHash: "unused",
+  role: "user",
+  sessionVersion: 1,
   createdAt: new Date("2026-01-02T03:04:05.000Z"),
 };
 
@@ -109,6 +111,8 @@ const secondUser: AuthUser = {
   id: "bdf28936-4853-423d-b43e-020bb1b5ddcb",
   username: "other-user",
   passwordHash: "unused",
+  role: "user",
+  sessionVersion: 1,
   createdAt: new Date("2026-01-02T03:04:05.000Z"),
 };
 
@@ -1221,7 +1225,7 @@ class MemoryLanguageAudioStorage implements LanguageAudioStorage {
 }
 
 function sessionCookie(userId: string) {
-  return createSessionCookie(userId).split(";", 1)[0];
+  return createSessionCookie(userId, 1).split(";", 1)[0];
 }
 
 function testServer(

@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { hashPassword, verifyPassword } from "../auth/password.js";
-import { readSessionUserId } from "../auth/session.js";
+import { createSessionCookie, readSession } from "../auth/session.js";
 import {
   accountProfileUpdateSchema,
   authenticatedPasswordUpdateSchema,
@@ -46,8 +46,10 @@ async function authenticatedAccount(
   request: FastifyRequest,
   store: AccountStore,
 ) {
-  const userId = readSessionUserId(request.headers.cookie);
-  return userId ? store.findById(userId) : null;
+  const session = readSession(request.headers.cookie);
+  if (!session) return null;
+  const account = await store.findById(session.userId);
+  return account?.sessionVersion === session.sessionVersion ? account : null;
 }
 
 function unauthorized(reply: FastifyReply) {
@@ -186,15 +188,17 @@ export function registerAccountRoutes(
       }
 
       const passwordHash = await hashPassword(parsed.data.newPassword);
-      const updated = await dependencies.accountStore.updatePassword(
+      const sessionVersion = await dependencies.accountStore.updatePassword(
         account.id,
         passwordHash,
+        account.sessionVersion,
       );
 
-      if (!updated) {
+      if (sessionVersion === null) {
         return unauthorized(reply);
       }
 
+      reply.header("set-cookie", createSessionCookie(account.id, sessionVersion));
       return { success: true, message: "Contraseña actualizada" };
     } catch (error) {
       server.log.error({ error }, "Authenticated password update failed.");

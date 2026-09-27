@@ -10,6 +10,7 @@ const tsxCli = join(apiDirectory, "node_modules", "tsx", "dist", "cli.mjs");
 const suite = process.argv[2] ?? "migrations";
 const testFiles = {
   migrations: "tests/integration/migrations.postgres.test.ts",
+  "account-session": "tests/integration/account-session.postgres.test.ts",
   "profile-lifecycle-v2": "tests/integration/profile-lifecycle-v2.postgres.test.ts",
   "registry-grounding-v2": "tests/integration/registry-grounding-v2.postgres.test.ts",
   "m14-controlled-research-v2": "tests/integration/m14-controlled-research-v2.postgres.test.ts",

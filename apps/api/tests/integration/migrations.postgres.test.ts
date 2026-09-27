@@ -2603,6 +2603,120 @@ test("Proyectos migration preserves historical projects and enforces link direct
   }
 });
 
+test("user role and session version migration preserves users and enforces defaults and constraints", async () => {
+  const isolatedUrl = await createIsolatedDatabase("user_role_session");
+  const database = createPostgresMigrationDatabase(isolatedUrl);
+  const migrations = await loadMigrationFiles(migrationDirectory);
+  const migrationId = "0028_add_user_role_and_session_version.sql";
+  const migrationIndex = migrations.findIndex(({ id }) => id === migrationId);
+  assert.ok(migrationIndex > 0);
+  assert.equal(migrations[migrationIndex - 1]?.id, "0027_ground_language_decision_registries_v2.sql");
+  const before = migrations.slice(0, migrationIndex);
+  const through = migrations.slice(0, migrationIndex + 1);
+  const legacyUserId = "78000000-0000-4000-8000-000000000001";
+  const legacyCreatedAt = new Date("2026-01-02T03:04:05.123Z");
+
+  try {
+    await migratePending(database, before);
+    await withSql(isolatedUrl, async (sql) => {
+      await sql`
+        INSERT INTO users (id, username, password_hash, email, created_at)
+        VALUES (
+          ${legacyUserId}, 'legacy-role-user', 'unchanged-test-password-hash',
+          'legacy-role@example.com', ${legacyCreatedAt}
+        )
+      `;
+      await sql`
+        INSERT INTO users (username, password_hash)
+        VALUES ('legacy-without-email', 'another-test-password-hash')
+      `;
+    });
+
+    assert.deepEqual(await migratePending(database, through), [migrationId]);
+    assert.deepEqual(await migratePending(database, through), []);
+
+    await withSql(isolatedUrl, async (sql) => {
+      const [legacy] = await sql`
+        SELECT id, username, password_hash, email, created_at, role, session_version
+        FROM users WHERE id = ${legacyUserId}
+      `;
+      assert.deepEqual(legacy, {
+        id: legacyUserId,
+        username: "legacy-role-user",
+        password_hash: "unchanged-test-password-hash",
+        email: "legacy-role@example.com",
+        created_at: legacyCreatedAt,
+        role: "user",
+        session_version: 1,
+      });
+      const [withoutEmail] = await sql`
+        SELECT email, role, session_version FROM users
+        WHERE username = 'legacy-without-email'
+      `;
+      assert.deepEqual(withoutEmail, { email: null, role: "user", session_version: 1 });
+
+      const [ordinary] = await sql`
+        INSERT INTO users (username, password_hash)
+        VALUES ('new-default-user', 'test-password-hash')
+        RETURNING role, session_version
+      `;
+      assert.deepEqual(ordinary, { role: "user", session_version: 1 });
+
+      for (const role of ["user", "superadmin"]) {
+        const [explicit] = await sql`
+          INSERT INTO users (username, password_hash, role, session_version)
+          VALUES (${`explicit-${role}`}, 'test-password-hash', ${role}, 2)
+          RETURNING role, session_version
+        `;
+        assert.deepEqual(explicit, { role, session_version: 2 });
+      }
+
+      for (const role of ["admin", "SUPERADMIN", "", " user"]) {
+        await assert.rejects(
+          sql`
+            INSERT INTO users (username, password_hash, role)
+            VALUES ('invalid-role', 'test-password-hash', ${role})
+          `,
+          { code: "23514", constraint_name: "users_role_check" },
+        );
+      }
+      await assert.rejects(
+        sql`
+          INSERT INTO users (username, password_hash, role)
+          VALUES ('null-role', 'test-password-hash', NULL)
+        `,
+        { code: "23502", column_name: "role" },
+      );
+      await assert.rejects(
+        sql`
+          INSERT INTO users (username, password_hash, session_version)
+          VALUES ('null-session-version', 'test-password-hash', NULL)
+        `,
+        { code: "23502", column_name: "session_version" },
+      );
+      for (const version of [0, -1]) {
+        await assert.rejects(
+          sql`
+            INSERT INTO users (username, password_hash, session_version)
+            VALUES ('invalid-session-version', 'test-password-hash', ${version})
+          `,
+          { code: "23514", constraint_name: "users_session_version_check" },
+        );
+      }
+      await assert.rejects(
+        sql`UPDATE users SET role = 'admin' WHERE id = ${legacyUserId}`,
+        { code: "23514", constraint_name: "users_role_check" },
+      );
+      await assert.rejects(
+        sql`UPDATE users SET session_version = 0 WHERE id = ${legacyUserId}`,
+        { code: "23514", constraint_name: "users_session_version_check" },
+      );
+    });
+  } finally {
+    await database.close();
+  }
+});
+
 test("direct SQL curriculum repository normalizes real PostgreSQL timestamptz values", async () => {
   const isolatedUrl = await createIsolatedDatabase("curriculum_timestamps");
   const migrationDatabase = createPostgresMigrationDatabase(isolatedUrl);

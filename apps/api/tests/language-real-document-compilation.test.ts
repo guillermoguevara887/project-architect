@@ -250,6 +250,8 @@ test("M12 authenticated process route performs the real workflow without exposin
     id: "11111111-1111-4111-8111-111111111111",
     username: "memo",
     passwordHash: "hash",
+    role: "user" as const,
+    sessionVersion: 1,
     createdAt: new Date(),
   };
   const authStore: AuthStore = {
@@ -275,7 +277,7 @@ test("M12 authenticated process route performs the real workflow without exposin
   });
   assert.equal(unauthorized.statusCode, 401);
 
-  const cookie = createSessionCookie(user.id).split(";", 1)[0];
+  const cookie = createSessionCookie(user.id, user.sessionVersion).split(";", 1)[0];
   const uploaded = await server.inject({
     method: "POST",
     url: "/languages/curriculum-documents",
@@ -336,6 +338,8 @@ test("M12 process exposes only safe provider metadata on compiler failure", asyn
     id: "11111111-1111-4111-8111-111111111111",
     username: "memo",
     passwordHash: "hash",
+    role: "user" as const,
+    sessionVersion: 1,
     createdAt: new Date(),
   };
   const authStore: AuthStore = {
@@ -360,7 +364,7 @@ test("M12 process exposes only safe provider metadata on compiler failure", asyn
       realCurriculumDocumentWorkflow: workflow,
     },
   );
-  const cookie = createSessionCookie(user.id).split(";", 1)[0];
+  const cookie = createSessionCookie(user.id, user.sessionVersion).split(";", 1)[0];
 
   const response = await server.inject({
     method: "POST",

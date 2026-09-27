@@ -1,10 +1,10 @@
-import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
+import { readAuthenticatedUser } from "./authenticated-user.js";
 import { verifyPassword } from "./password.js";
 import type { AuthStore, AuthUser } from "./repository.js";
 import {
   clearSessionCookie,
   createSessionCookie,
-  readSessionUserId,
 } from "./session.js";
 
 function publicUser(user: AuthUser) {
@@ -46,15 +46,6 @@ function readCredentials(body: unknown) {
   };
 }
 
-async function readAuthenticatedUser(
-  request: FastifyRequest,
-  store: AuthStore,
-) {
-  const userId = readSessionUserId(request.headers.cookie);
-
-  return userId ? store.findById(userId) : null;
-}
-
 export function registerAuthRoutes(server: FastifyInstance, store: AuthStore) {
   server.post("/auth/login", async (request, reply) => {
     const credentials = readCredentials(request.body);
@@ -73,7 +64,7 @@ export function registerAuthRoutes(server: FastifyInstance, store: AuthStore) {
         return invalidCredentials(reply);
       }
 
-      reply.header("set-cookie", createSessionCookie(user.id));
+      reply.header("set-cookie", createSessionCookie(user.id, user.sessionVersion));
 
       return {
         user: publicUser(user),

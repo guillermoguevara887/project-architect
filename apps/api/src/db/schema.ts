@@ -195,6 +195,8 @@ export const discoveryAnswers = pgTable(
   }),
 );
 
+export type UserRole = "user" | "superadmin";
+
 export const users = pgTable(
   "users",
   {
@@ -202,6 +204,8 @@ export const users = pgTable(
     username: text("username").notNull(),
     email: text("email"),
     passwordHash: text("password_hash").notNull(),
+    role: text("role").$type<UserRole>().default("user").notNull(),
+    sessionVersion: integer("session_version").default(1).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -214,6 +218,14 @@ export const users = pgTable(
     emailNormalizedCheck: check(
       "users_email_normalized_check",
       sql`${table.email} is null or ${table.email} = lower(btrim(${table.email}))`,
+    ),
+    roleCheck: check(
+      "users_role_check",
+      sql`${table.role} in ('user', 'superadmin')`,
+    ),
+    sessionVersionCheck: check(
+      "users_session_version_check",
+      sql`${table.sessionVersion} >= 1`,
     ),
   }),
 );

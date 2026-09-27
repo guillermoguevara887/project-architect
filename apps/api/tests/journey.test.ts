@@ -22,6 +22,8 @@ const firstUser: AuthUser = {
   id: "1ea48778-ef55-4a23-a550-0f31801a6413",
   username: "memoos-user",
   passwordHash: "unused",
+  role: "user",
+  sessionVersion: 1,
   createdAt: new Date("2026-01-02T03:04:05.000Z"),
 };
 
@@ -29,6 +31,8 @@ const secondUser: AuthUser = {
   id: "f3a8af82-632c-4773-a57d-68ca21d10a8b",
   username: "other-user",
   passwordHash: "unused",
+  role: "user",
+  sessionVersion: 1,
   createdAt: new Date("2026-01-02T03:04:05.000Z"),
 };
 
@@ -162,7 +166,7 @@ class MemoryJourneyStore implements JourneyStore {
 }
 
 function sessionCookie(userId: string) {
-  return createSessionCookie(userId).split(";", 1)[0];
+  return createSessionCookie(userId, 1).split(";", 1)[0];
 }
 
 function testServer(store = new MemoryJourneyStore()) {

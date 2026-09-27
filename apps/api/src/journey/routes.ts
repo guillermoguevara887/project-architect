@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { AuthStore } from "../auth/repository.js";
-import { readSessionUserId } from "../auth/session.js";
+import { readSession } from "../auth/session.js";
 import type { JourneySourceType } from "../db/schema.js";
 import type {
   JourneyFeedEntry,
@@ -46,14 +46,14 @@ async function authenticatedUserId(
   request: FastifyRequest,
   authStore: AuthStore,
 ) {
-  const userId = readSessionUserId(request.headers.cookie);
+  const session = readSession(request.headers.cookie);
 
-  if (!userId) {
+  if (!session) {
     return null;
   }
 
-  const user = await authStore.findById(userId);
-  return user?.id ?? null;
+  const user = await authStore.findById(session.userId);
+  return user?.sessionVersion === session.sessionVersion ? user.id : null;
 }
 
 function readIdeaInput(body: unknown) {

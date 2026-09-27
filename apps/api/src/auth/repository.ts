@@ -1,11 +1,13 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "../db/client.js";
-import { users } from "../db/schema.js";
+import { users, type UserRole } from "../db/schema.js";
 
 export type AuthUser = {
   id: string;
   username: string;
   passwordHash: string;
+  sessionVersion: number;
+  role: UserRole;
   createdAt: Date;
 };
 
@@ -21,6 +23,8 @@ function toAuthUser(user: UserRow): AuthUser {
     id: user.id,
     username: user.username,
     passwordHash: user.passwordHash,
+    sessionVersion: user.sessionVersion,
+    role: user.role,
     createdAt: user.createdAt,
   };
 }
