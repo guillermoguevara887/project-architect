@@ -21,6 +21,8 @@ import {
   type PasswordResetMailer,
 } from "./account/email.js";
 import { registerAccountRoutes } from "./account/routes.js";
+import { adminUserStore, type AdminUserStore } from "./admin/repository.js";
+import { registerAdminRoutes } from "./admin/routes.js";
 import { authStore, type AuthStore } from "./auth/repository.js";
 import { registerAuthRoutes } from "./auth/routes.js";
 import { assertSessionConfiguration } from "./auth/session.js";
@@ -117,6 +119,7 @@ import { registerProfileResearchRoutes } from "./languages/profile-research/rout
 type ServerDependencies = {
   authStore?: AuthStore;
   accountStore?: AccountStore;
+  adminUserStore?: AdminUserStore;
   passwordResetMailer?: PasswordResetMailer;
   accountNow?: () => Date;
   passwordResetTokenGenerator?: () => string;
@@ -228,6 +231,11 @@ export function configureServer(
   });
 
   registerAuthRoutes(server, configuredAuthStore);
+  registerAdminRoutes(
+    server,
+    configuredAuthStore,
+    dependencies.adminUserStore ?? adminUserStore,
+  );
   registerAccountRoutes(server, {
     accountStore: dependencies.accountStore ?? accountStore,
     mailer: dependencies.passwordResetMailer ?? resendPasswordResetMailer,
