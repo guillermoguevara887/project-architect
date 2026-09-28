@@ -1,9 +1,10 @@
 import type { FastifyInstance } from "fastify";
+import { z } from "zod";
 import { AccountConflictError } from "../account/repository.js";
 import { requireSuperadmin } from "../auth/authorization.js";
 import { hashPassword } from "../auth/password.js";
 import type { AuthStore } from "../auth/repository.js";
-import { adminUserCreateSchema } from "./contracts.js";
+import { adminPasswordResetSchema, adminUserCreateSchema } from "./contracts.js";
 import type { AdminUserStore } from "./repository.js";
 
 export function registerAdminRoutes(
@@ -83,6 +84,46 @@ export function registerAdminRoutes(
         return reply.code(503).send({
           error: "ADMIN_UNAVAILABLE",
           message: "No se pudo crear el usuario.",
+        });
+      }
+    },
+  );
+
+  server.post<{ Params: { userId: string } }>(
+    "/admin/users/:userId/reset-password",
+    { preHandler: requireSuperadmin(authStore) },
+    async (request, reply) => {
+      reply.header("cache-control", "no-store");
+      const userId = z.string().uuid().safeParse(request.params.userId);
+      if (!userId.success) {
+        return reply.code(400).send({
+          error: "VALIDATION_ERROR",
+          message: "El identificador de usuario no es válido.",
+        });
+      }
+      const parsed = adminPasswordResetSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send({
+          error: "VALIDATION_ERROR",
+          message: parsed.error.issues[0]?.message ?? "Los datos proporcionados no son válidos.",
+        });
+      }
+
+      try {
+        const passwordHash = await hashPassword(parsed.data.newPassword);
+        const updated = await userStore.resetPassword(userId.data, passwordHash);
+        if (!updated) {
+          return reply.code(404).send({
+            error: "USER_NOT_FOUND",
+            message: "El usuario no existe.",
+          });
+        }
+        return { success: true };
+      } catch {
+        server.log.error("Admin password reset failed.");
+        return reply.code(503).send({
+          error: "ADMIN_UNAVAILABLE",
+          message: "No se pudo restablecer la contraseña.",
         });
       }
     },

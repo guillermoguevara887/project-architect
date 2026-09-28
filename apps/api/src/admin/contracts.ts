@@ -12,3 +12,7 @@ export const adminUserCreateSchema = z
     password: newPasswordSchema,
   })
   .strict();
+
+export const adminPasswordResetSchema = z
+  .object({ newPassword: newPasswordSchema })
+  .strict();

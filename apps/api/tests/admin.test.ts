@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { AccountConflictError } from "../src/account/repository.js";
 import type { AuthStore, AuthUser } from "../src/auth/repository.js";
-import { verifyPassword } from "../src/auth/password.js";
+import { hashPassword, verifyPassword } from "../src/auth/password.js";
 import { createSessionCookie } from "../src/auth/session.js";
 import type { AdminUserStore } from "../src/admin/repository.js";
 import { createServer } from "../src/create-server.js";
@@ -22,15 +22,9 @@ function fixture(role: AuthUser["role"] = "superadmin") {
   };
   let listCalls = 0;
   let createCalls = 0;
+  let resetCalls = 0;
   let listError: Error | null = null;
-  const authStore: AuthStore = {
-    async findById(id) {
-      return user?.id === id ? { ...user } : null;
-    },
-    async findByUsername() {
-      throw new Error("Listing must authenticate by cookie identity.");
-    },
-  };
+  let resetError: Error | null = null;
   const row = {
     id: "22222222-2222-4222-8222-222222222222",
     username: "member",
@@ -39,6 +33,16 @@ function fixture(role: AuthUser["role"] = "superadmin") {
     passwordHash: "never-return-this-hash",
     sessionVersion: 7,
     createdAt: new Date(),
+  };
+  const authStore: AuthStore = {
+    async findById(id) {
+      if (user?.id === id) return { ...user };
+      return row.id === id ? { ...row } : null;
+    },
+    async findByUsername(username) {
+      if (user?.username === username) return { ...user };
+      return row.username === username ? { ...row } : null;
+    },
   };
   const createdUsers: Array<typeof row> = [];
   const adminUserStore: AdminUserStore = {
@@ -67,6 +71,21 @@ function fixture(role: AuthUser["role"] = "superadmin") {
       createdUsers.push(created);
       return created;
     },
+    async resetPassword(userId, passwordHash) {
+      resetCalls++;
+      if (resetError) throw resetError;
+      if (row.id === userId) {
+        row.passwordHash = passwordHash;
+        row.sessionVersion += 1;
+        return true;
+      }
+      if (user?.id === userId) {
+        user.passwordHash = passwordHash;
+        user.sessionVersion += 1;
+        return true;
+      }
+      return false;
+    },
   };
   const server = createServer({}, { authStore, adminUserStore });
   const cookie = createSessionCookie(user.id, 2).split(";", 1)[0]!;
@@ -77,6 +96,9 @@ function fixture(role: AuthUser["role"] = "superadmin") {
     setExistingEmail(value: string) { row.email = value; },
     get user() { return user!; },
     get createdUsers() { return createdUsers; },
+    get row() { return row; },
+    get resetCalls() { return resetCalls; },
+    failReset(error: Error) { resetError = error; },
     get createCalls() { return createCalls; },
     failList(error: Error) { listError = error; },
     get listCalls() { return listCalls; },
@@ -317,6 +339,168 @@ test("GET /admin/users keeps storage failures private", async () => {
     assert.equal(response.statusCode, 503);
     assert.deepEqual(response.json(), { error: "ADMIN_UNAVAILABLE" });
     assert.doesNotMatch(response.body, /private database connection details/);
+  } finally {
+    await f.server.close();
+  }
+});
+
+const resetUrl = "/admin/users/22222222-2222-4222-8222-222222222222/reset-password";
+
+test("POST admin reset changes only the target password and revokes its existing cookie", async () => {
+  const f = fixture();
+  const oldPassword = "previous-password-123";
+  const newPassword = "replacement-password-123";
+  f.row.passwordHash = await hashPassword(oldPassword);
+  const before = { ...f.row };
+  const targetCookie = createSessionCookie(f.row.id, f.row.sessionVersion).split(";", 1)[0]!;
+  try {
+    const priorSession = await f.server.inject({
+      method: "GET", url: "/auth/session", headers: { cookie: targetCookie },
+    });
+    assert.equal(priorSession.statusCode, 200);
+
+    const response = await f.server.inject({
+      method: "POST", url: resetUrl, headers: { cookie: f.cookie },
+      payload: { newPassword },
+    });
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.headers["cache-control"], "no-store");
+    assert.deepEqual(response.json(), { success: true });
+    assert.equal(response.headers["set-cookie"], undefined);
+    assert.doesNotMatch(response.body, /password|hash|token|sessionVersion|secret|scrypt/i);
+    assert.equal(f.resetCalls, 1);
+    assert.notEqual(f.row.passwordHash, before.passwordHash);
+    assert.notEqual(f.row.passwordHash, newPassword);
+    assert.equal(await verifyPassword(newPassword, f.row.passwordHash), true);
+    assert.equal(await verifyPassword(oldPassword, f.row.passwordHash), false);
+    assert.equal(f.row.sessionVersion, before.sessionVersion + 1);
+    assert.deepEqual({ ...f.row, passwordHash: before.passwordHash, sessionVersion: before.sessionVersion }, before);
+
+    const staleSession = await f.server.inject({
+      method: "GET", url: "/auth/session", headers: { cookie: targetCookie },
+    });
+    assert.equal(staleSession.statusCode, 401);
+    assert.deepEqual(staleSession.json(), { authenticated: false });
+
+    const oldLogin = await f.server.inject({
+      method: "POST", url: "/auth/login",
+      payload: { username: f.row.username, password: oldPassword },
+    });
+    assert.equal(oldLogin.statusCode, 401);
+    const newLogin = await f.server.inject({
+      method: "POST", url: "/auth/login",
+      payload: { username: f.row.username, password: newPassword },
+    });
+    assert.equal(newLogin.statusCode, 200);
+    const newCookie = String(newLogin.headers["set-cookie"]).split(";", 1)[0]!;
+    assert.equal((await f.server.inject({
+      method: "GET", url: "/auth/session", headers: { cookie: newCookie },
+    })).statusCode, 200);
+  } finally {
+    await f.server.close();
+  }
+});
+
+test("POST admin reset uses the persisted actor role and current signed session", async () => {
+  const f = fixture("user");
+  const request = (cookie?: string) => f.server.inject({
+    method: "POST", url: `${resetUrl}?role=superadmin`,
+    headers: cookie ? { cookie, "x-role": "superadmin" } : { "x-role": "superadmin" },
+    payload: { newPassword: "replacement-password-123" },
+  });
+  try {
+    assert.equal((await request(f.cookie)).statusCode, 403);
+    f.setUser({ ...f.user, role: "superadmin" });
+    const tampered = f.cookie.slice(0, -1) + (f.cookie.endsWith("A") ? "B" : "A");
+    for (const cookie of [undefined, tampered, createSessionCookie(f.user.id, 1).split(";", 1)[0]]) {
+      const response = await request(cookie);
+      assert.equal(response.statusCode, 401);
+      assert.deepEqual(response.json(), { error: "UNAUTHORIZED" });
+    }
+    f.setUser({ ...f.user, sessionVersion: 3 });
+    assert.equal((await request(f.cookie)).statusCode, 401);
+    assert.equal(f.resetCalls, 0);
+  } finally {
+    await f.server.close();
+  }
+});
+
+test("POST admin reset rejects invalid input and extra account fields without mutation", async () => {
+  const f = fixture();
+  const before = { ...f.row };
+  try {
+    for (const payload of [
+      { newPassword: "short" },
+      { newPassword: "x".repeat(257) },
+      { newPassword: "replacement-password-123", role: "superadmin" },
+      { newPassword: "replacement-password-123", sessionVersion: 1 },
+      { newPassword: "replacement-password-123", username: "changed" },
+      { newPassword: "replacement-password-123", email: "changed@example.com" },
+      { newPassword: "replacement-password-123", userId: f.user.id },
+      {},
+    ]) {
+      const response = await f.server.inject({
+        method: "POST", url: resetUrl, headers: { cookie: f.cookie }, payload,
+      });
+      assert.equal(response.statusCode, 400);
+      assert.equal(response.json().error, "VALIDATION_ERROR");
+    }
+    const invalidId = await f.server.inject({
+      method: "POST", url: "/admin/users/not-a-uuid/reset-password",
+      headers: { cookie: f.cookie }, payload: { newPassword: "replacement-password-123" },
+    });
+    assert.equal(invalidId.statusCode, 400);
+    assert.equal(f.resetCalls, 0);
+    assert.deepEqual(f.row, before);
+  } finally {
+    await f.server.close();
+  }
+});
+
+test("POST admin reset returns a controlled 404 for a missing target and a private 503 on storage failure", async () => {
+  const f = fixture();
+  const password = "replacement-password-123";
+  try {
+    const missing = await f.server.inject({
+      method: "POST", url: "/admin/users/33333333-3333-4333-8333-333333333333/reset-password",
+      headers: { cookie: f.cookie }, payload: { newPassword: password },
+    });
+    assert.equal(missing.statusCode, 404);
+    assert.deepEqual(missing.json(), { error: "USER_NOT_FOUND", message: "El usuario no existe." });
+    f.failReset(new Error("private database connection details"));
+    const failed = await f.server.inject({
+      method: "POST", url: resetUrl, headers: { cookie: f.cookie },
+      payload: { newPassword: password },
+    });
+    assert.equal(failed.statusCode, 503);
+    assert.equal(failed.json().error, "ADMIN_UNAVAILABLE");
+    assert.doesNotMatch(failed.body, /private database connection details|replacement-password-123|scrypt\$/);
+  } finally {
+    await f.server.close();
+  }
+});
+
+test("POST admin reset permits a superadmin to reset themselves and invalidates their current cookie", async () => {
+  const f = fixture();
+  const newPassword = "new-admin-password-123";
+  try {
+    assert.equal((await f.server.inject({
+      method: "GET", url: "/auth/session", headers: { cookie: f.cookie },
+    })).statusCode, 200);
+    const response = await f.server.inject({
+      method: "POST", url: `/admin/users/${f.user.id}/reset-password`,
+      headers: { cookie: f.cookie }, payload: { newPassword },
+    });
+    assert.equal(response.statusCode, 200);
+    assert.equal(f.user.sessionVersion, 3);
+    assert.equal(await verifyPassword(newPassword, f.user.passwordHash), true);
+    assert.equal((await f.server.inject({
+      method: "GET", url: "/auth/session", headers: { cookie: f.cookie },
+    })).statusCode, 401);
+    assert.equal((await f.server.inject({
+      method: "POST", url: resetUrl, headers: { cookie: f.cookie },
+      payload: { newPassword },
+    })).statusCode, 401);
   } finally {
     await f.server.close();
   }

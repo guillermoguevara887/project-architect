@@ -28,6 +28,10 @@ export function AdminScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [createFeedback, setCreateFeedback] = useState<CreateFeedback | null>(null);
   const submittingRef = useRef(false);
+  const [resetTarget, setResetTarget] = useState<ListedUser | null>(null);
+  const [resetSubmitting, setResetSubmitting] = useState(false);
+  const [resetFeedback, setResetFeedback] = useState<CreateFeedback | null>(null);
+  const resetSubmittingRef = useRef(false);
 
   useEffect(() => {
     let active = true;
@@ -135,6 +139,68 @@ export function AdminScreen() {
     }
   }
 
+  async function resetPassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (resetSubmittingRef.current || !resetTarget) return;
+
+    resetSubmittingRef.current = true;
+    setResetSubmitting(true);
+    setResetFeedback(null);
+    const form = event.currentTarget;
+    const target = resetTarget;
+    const newPassword = String(new FormData(form).get("newPassword") ?? "");
+
+    try {
+      const response = await fetch(
+        `/api/admin/users/${encodeURIComponent(target.id)}/reset-password`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ newPassword }),
+        },
+      );
+      if (response.status === 401) {
+        router.replace("/");
+        return;
+      }
+      if (response.status === 403) {
+        setState({ status: "forbidden" });
+        return;
+      }
+
+      if (!response.ok) {
+        const result = (await response.json()) as { message?: string };
+        setResetFeedback({
+          message: result.message ?? "No se pudo restablecer la contraseña.",
+          tone: "error",
+        });
+        return;
+      }
+
+      setResetTarget(null);
+      setResetFeedback({
+        message: `Contraseña de ${target.username} restablecida. Si es tu cuenta, vuelve a iniciar sesión.`,
+        tone: "success",
+      });
+    } catch {
+      setResetFeedback({
+        message: "No se pudo restablecer la contraseña.",
+        tone: "error",
+      });
+    } finally {
+      form.reset();
+      resetSubmittingRef.current = false;
+      setResetSubmitting(false);
+    }
+  }
+
+  function cancelReset() {
+    if (resetSubmittingRef.current) return;
+    setResetTarget(null);
+    setResetFeedback(null);
+  }
+
   if (state.status === "loading") {
     return (
       <main className="flow-shell">
@@ -217,6 +283,7 @@ export function AdminScreen() {
                       <th scope="col">Correo electrónico</th>
                       <th scope="col">Rol</th>
                       <th scope="col">ID</th>
+                      <th scope="col">Acción</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -226,12 +293,58 @@ export function AdminScreen() {
                         <td>{user.email ?? "—"}</td>
                         <td>{user.role === "superadmin" ? "Superadmin" : "Usuario"}</td>
                         <td className="admin-user-id">{user.id}</td>
+                        <td>
+                          <button
+                            type="button"
+                            className="secondary-button admin-reset-action"
+                            disabled={resetSubmitting}
+                            onClick={() => {
+                              setResetTarget(user);
+                              setResetFeedback(null);
+                            }}
+                          >
+                            Restablecer contraseña
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
             )}
+            {resetTarget ? (
+              <section className="account-section admin-reset-section" aria-labelledby="admin-reset-title">
+                <h2 id="admin-reset-title">Restablecer contraseña</h2>
+                <p>
+                  Usuario: <strong>{resetTarget.username}</strong> ({resetTarget.id})
+                </p>
+                <form key={resetTarget.id} className="auth-form admin-reset-form" onSubmit={resetPassword}>
+                  <label htmlFor="admin-reset-password">Nueva contraseña</label>
+                  <input
+                    id="admin-reset-password"
+                    name="newPassword"
+                    type="password"
+                    autoComplete="new-password"
+                    minLength={12}
+                    maxLength={256}
+                    required
+                  />
+                  {resetFeedback?.tone === "error" ? (
+                    <p className="form-error" role="alert">{resetFeedback.message}</p>
+                  ) : null}
+                  <div className="admin-reset-buttons">
+                    <button type="submit" disabled={resetSubmitting}>
+                      {resetSubmitting ? "Restableciendo…" : `Confirmar reset de ${resetTarget.username}`}
+                    </button>
+                    <button type="button" className="secondary-button" disabled={resetSubmitting} onClick={cancelReset}>
+                      Cancelar
+                    </button>
+                  </div>
+                </form>
+              </section>
+            ) : resetFeedback?.tone === "success" ? (
+              <p className="form-success" role="status">{resetFeedback.message}</p>
+            ) : null}
           </>
         )}
       </section>

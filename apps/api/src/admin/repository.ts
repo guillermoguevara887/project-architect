@@ -1,3 +1,4 @@
+import { eq, sql } from "drizzle-orm";
 import { getDb } from "../db/client.js";
 import { users } from "../db/schema.js";
 import {
@@ -17,6 +18,7 @@ export interface AdminUserStore {
     email: string | null;
     passwordHash: string;
   }): Promise<AdminListedUser>;
+  resetPassword(userId: string, passwordHash: string): Promise<boolean>;
 }
 
 export const adminUserStore: AdminUserStore = {
@@ -58,5 +60,14 @@ export const adminUserStore: AdminUserStore = {
       }
       throw error;
     }
+  },
+  async resetPassword(userId, passwordHash) {
+    const [updated] = await getDb()
+      .update(users)
+      .set({ passwordHash, sessionVersion: sql`${users.sessionVersion} + 1` })
+      .where(eq(users.id, userId))
+      .returning({ id: users.id });
+
+    return updated !== undefined;
   },
 };
