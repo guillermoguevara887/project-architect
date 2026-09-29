@@ -133,12 +133,17 @@ export class CurriculumDocumentService {
     let version = reservation.version;
     if (version.storageStatus !== "ready") {
       try {
-        await this.storage.put({
-          key: storageKey,
-          contentType: input.mediaType,
-          body: bytes,
+        const ready = await this.store.markStorageReadyUnderUserBarrier({
+          userId,
+          versionId: version.id,
+          put: () => this.storage.put({
+            key: storageKey,
+            contentType: input.mediaType,
+            body: bytes,
+          }),
         });
-        version = (await this.store.markStorageReady(version.id)) ?? version;
+        if (!ready) throw new CurriculumDocumentServiceError("not_found");
+        version = ready;
       } catch {
         await this.store.markStorageFailed(version.id);
         throw new CurriculumDocumentServiceError("storage_error");

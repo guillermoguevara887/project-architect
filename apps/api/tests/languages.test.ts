@@ -1117,11 +1117,12 @@ class MemoryLanguageAudioStore implements LanguageAudioStore {
     return { kind: "claimed" as const, asset, generationStartedAt };
   }
 
-  async complete(input: { assetId: string; generationStartedAt: Date }) {
+  async completeUnderUserBarrier(input: { userId: string; assetId: string; generationStartedAt: Date; put: () => Promise<void> }) {
     const asset = this.assets.find(({ id }) => id === input.assetId);
 
     if (
       !asset ||
+      asset.userId !== input.userId ||
       asset.status !== "generating" ||
       asset.generationStartedAt?.getTime() !==
         input.generationStartedAt.getTime()
@@ -1129,6 +1130,7 @@ class MemoryLanguageAudioStore implements LanguageAudioStore {
       return null;
     }
 
+    await input.put();
     asset.status = "ready";
     asset.generationStartedAt = null;
     asset.updatedAt = this.now();

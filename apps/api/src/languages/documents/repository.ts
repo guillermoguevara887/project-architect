@@ -112,7 +112,7 @@ export interface CurriculumDocumentStore {
   listVersions(userId: string, documentId: string): Promise<CurriculumDocumentVersionRecord[] | null>;
   findVersionForUser(userId: string, documentId: string, documentVersion: string): Promise<CurriculumDocumentWithVersion | null>;
   reserveVersion(input: ReserveCurriculumDocumentVersionInput): Promise<ReserveCurriculumDocumentVersionResult>;
-  markStorageReady(versionId: string): Promise<CurriculumDocumentVersionRecord | null>;
+  markStorageReadyUnderUserBarrier(input: { userId: string; versionId: string; put: () => Promise<void> }): Promise<CurriculumDocumentVersionRecord | null>;
   markStorageFailed(versionId: string): Promise<CurriculumDocumentVersionRecord | null>;
   attachExtractedText(input: { userId: string; documentId: string; documentVersion: string; extractedText: string; extractedTextSha256: string; extractionMethod: string }): Promise<AttachExtractedTextResult>;
   beginCompilation(input: { userId: string; documentId: string; documentVersion: string; boundaryKey: string }): Promise<BeginCompilationResult>;
@@ -210,9 +210,23 @@ export const curriculumDocumentStore: CurriculumDocumentStore = {
     });
   },
 
-  async markStorageReady(versionId) {
-    const updated = rows<DbVersion>(await getDb().execute(sql`UPDATE language_curriculum_document_versions SET storage_status='ready', updated_at=now() WHERE id=${versionId} RETURNING *`));
-    return updated[0] ? mapVersion(updated[0]) : null;
+  async markStorageReadyUnderUserBarrier(input) {
+    return getDb().transaction(async (tx) => {
+      await tx.execute(sql`SET LOCAL lock_timeout = '5s'`);
+      // Acquire the user barrier before PUT or changing child metadata.
+      const owner = rows<{ exists: number }>(await tx.execute(sql`SELECT 1 AS exists FROM users WHERE id=${input.userId} FOR KEY SHARE`));
+      if (owner.length === 0) return null;
+
+      await input.put();
+      const updated = rows<DbVersion>(await tx.execute(sql`
+        UPDATE language_curriculum_document_versions AS v
+        SET storage_status='ready', updated_at=now()
+        FROM language_curriculum_documents AS d
+        WHERE v.id=${input.versionId} AND v.document_record_id=d.id AND d.user_id=${input.userId}
+        RETURNING v.*
+      `));
+      return updated[0] ? mapVersion(updated[0]) : null;
+    });
   },
 
   async markStorageFailed(versionId) {

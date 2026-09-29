@@ -64,9 +64,10 @@ export class InMemoryCurriculumDocumentStore implements CurriculumDocumentStore 
     return { kind: "reserved", document, version };
   }
 
-  async markStorageReady(versionId: string) {
-    const version = this.versions.find((item) => item.id === versionId);
-    if (!version) return null;
+  async markStorageReadyUnderUserBarrier(input: { userId: string; versionId: string; put: () => Promise<void> }) {
+    const version = this.versions.find((item) => item.id === input.versionId);
+    if (!version || !this.documents.some((item) => item.id === version.documentRecordId && item.userId === input.userId)) return null;
+    await input.put();
     version.storageStatus = "ready";
     return version;
   }

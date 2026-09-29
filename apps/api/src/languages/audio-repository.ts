@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "../db/client.js";
 import { languageAudioAssets } from "../db/schema.js";
 
@@ -30,9 +30,11 @@ export type ClaimLanguageAudioResult =
 
 export interface LanguageAudioStore {
   claim(input: ClaimLanguageAudioInput): Promise<ClaimLanguageAudioResult>;
-  complete(input: {
+  completeUnderUserBarrier(input: {
+    userId: string;
     assetId: string;
     generationStartedAt: Date;
+    put: () => Promise<void>;
   }): Promise<LanguageAudioAsset | null>;
   fail(input: {
     assetId: string;
@@ -130,28 +132,28 @@ export const languageAudioStore: LanguageAudioStore = {
     });
   },
 
-  async complete(input) {
-    const completedAt = new Date();
-    const [asset] = await getDb()
-      .update(languageAudioAssets)
-      .set({
-        status: "ready",
-        generationStartedAt: null,
-        updatedAt: completedAt,
-      })
-      .where(
-        and(
-          eq(languageAudioAssets.id, input.assetId),
-          eq(languageAudioAssets.status, "generating"),
-          eq(
-            languageAudioAssets.generationStartedAt,
-            input.generationStartedAt,
-          ),
-        ),
-      )
-      .returning();
+  async completeUnderUserBarrier(input) {
+    return getDb().transaction(async (transaction) => {
+      await transaction.execute(sql`SET LOCAL lock_timeout = '5s'`);
+      // First relevant lock: account deletion takes FOR UPDATE.
+      const owner = await transaction.execute(
+        sql`SELECT 1 FROM users WHERE id=${input.userId} FOR KEY SHARE`,
+      );
+      if (owner.length === 0) return null;
 
-    return asset ?? null;
+      await input.put();
+      const [asset] = await transaction
+        .update(languageAudioAssets)
+        .set({ status: "ready", generationStartedAt: null, updatedAt: new Date() })
+        .where(and(
+          eq(languageAudioAssets.id, input.assetId),
+          eq(languageAudioAssets.userId, input.userId),
+          eq(languageAudioAssets.status, "generating"),
+          eq(languageAudioAssets.generationStartedAt, input.generationStartedAt),
+        ))
+        .returning();
+      return asset ?? null;
+    });
   },
 
   async fail(input) {

@@ -502,14 +502,15 @@ export async function getOrCreateLanguageAudio(
       language: input.language,
       configuration,
     });
-    await dependencies.storage.put({
-      key: claim.asset.storageKey,
-      contentType: configuration.contentType,
-      body: audio,
-    });
-    const asset = await dependencies.store.complete({
+    const asset = await dependencies.store.completeUnderUserBarrier({
+      userId: input.userId,
       assetId: claim.asset.id,
       generationStartedAt: claim.generationStartedAt,
+      put: () => dependencies.storage.put({
+        key: claim.asset.storageKey,
+        contentType: configuration.contentType,
+        body: audio,
+      }),
     });
 
     if (!asset) {

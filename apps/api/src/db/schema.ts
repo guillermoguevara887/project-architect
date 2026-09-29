@@ -271,7 +271,7 @@ export const architectProjects = pgTable(
     id: uuid("id").defaultRandom().primaryKey(),
     userId: uuid("user_id")
       .notNull()
-      .references(() => users.id),
+      .references(() => users.id, { onDelete: "cascade" }),
     projectType: text("project_type").$type<ArchitectProjectType>().notNull(),
     sourceText: text("source_text"),
     officialUrl: text("official_url"),
@@ -330,7 +330,7 @@ export const journeyIdeas = pgTable(
     id: uuid("id").defaultRandom().primaryKey(),
     userId: uuid("user_id")
       .notNull()
-      .references(() => users.id),
+      .references(() => users.id, { onDelete: "cascade" }),
     title: text("title").notNull(),
     sourceType: text("source_type").$type<JourneySourceType>().notNull(),
     sourceReference: text("source_reference").notNull(),
@@ -467,7 +467,7 @@ export const languageProjects = pgTable(
     id: uuid("id").defaultRandom().primaryKey(),
     userId: uuid("user_id")
       .notNull()
-      .references(() => users.id),
+      .references(() => users.id, { onDelete: "cascade" }),
     language: text("language").notNull(),
     level: text("level").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })

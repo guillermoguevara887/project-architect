@@ -15,6 +15,7 @@
     "test": "node scripts/turbo.mjs run test",
     "test:integration:migrations": "node scripts/test-migrations-postgres.mjs",
     "test:integration:account-session": "node scripts/test-migrations-postgres.mjs account-session",
+    "test:integration:account-deletion": "node scripts/test-migrations-postgres.mjs account-deletion",
     "test:integration:profile-lifecycle": "node scripts/test-migrations-postgres.mjs profile-lifecycle-v2",
     "test:integration:registry-grounding": "node scripts/test-migrations-postgres.mjs registry-grounding-v2",
     "test:integration:m14": "node scripts/test-migrations-postgres.mjs m14-controlled-research-v2",
