@@ -1,12 +1,13 @@
 import { and, eq, gt, isNull, sql } from "drizzle-orm";
 import { getDb } from "../db/client.js";
-import { passwordResetTokens, users } from "../db/schema.js";
+import { passwordResetTokens, users, type UserRole } from "../db/schema.js";
 import type { AccountProfileUpdate } from "./contracts.js";
 
 export type Account = {
   id: string;
   username: string;
   email: string | null;
+  role: UserRole;
   passwordHash: string;
   sessionVersion: number;
   createdAt: Date;
@@ -54,6 +55,7 @@ function toAccount(user: UserRow): Account {
     id: user.id,
     username: user.username,
     email: user.email,
+    role: user.role,
     passwordHash: user.passwordHash,
     sessionVersion: user.sessionVersion,
     createdAt: user.createdAt,

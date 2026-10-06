@@ -34,6 +34,7 @@ function publicAccount(account: Account) {
     id: account.id,
     username: account.username,
     email: account.email,
+    role: account.role,
     createdAt: account.createdAt.toISOString(),
   };
 }

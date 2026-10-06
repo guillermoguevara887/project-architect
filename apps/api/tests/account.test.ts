@@ -225,8 +225,10 @@ test("account profile requires a session and updates unique normalized fields", 
       username: "architect",
       email: "architect@example.com",
       createdAt: "2026-01-02T03:04:05.000Z",
+      role: "user",
     });
     assert.equal("passwordHash" in account.json().account, false);
+    assert.equal("sessionVersion" in account.json().account, false);
 
     const updateUsername = await fixture.server.inject({
       method: "PATCH",
@@ -263,6 +265,31 @@ test("account profile requires a session and updates unique normalized fields", 
     });
     assert.equal(duplicateEmail.statusCode, 409);
     assert.equal(duplicateEmail.json().error, "EMAIL_IN_USE");
+  } finally {
+    await fixture.server.close();
+  }
+});
+
+test("account returns the stored superadmin role without exposing private fields", async () => {
+  const fixture = await createFixture();
+
+  try {
+    const user = await fixture.store.findById(userId);
+    assert.ok(user);
+    const sessionVersion = user.sessionVersion;
+    user.role = "superadmin";
+
+    const response = await fixture.server.inject({
+      method: "GET",
+      url: "/account",
+      headers: { cookie: fixture.cookie },
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().account.role, "superadmin");
+    assert.equal("passwordHash" in response.json().account, false);
+    assert.equal("sessionVersion" in response.json().account, false);
+    assert.equal(user.sessionVersion, sessionVersion);
   } finally {
     await fixture.server.close();
   }

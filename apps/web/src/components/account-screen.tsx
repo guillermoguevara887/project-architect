@@ -9,6 +9,7 @@ type Account = {
   id: string;
   username: string;
   email: string | null;
+  role: "user" | "superadmin";
   createdAt: string;
 };
 
@@ -435,6 +436,15 @@ export function AccountScreen() {
             {loggingOut ? "Saliendo…" : "Cerrar sesión"}
           </button>
         </section>
+
+        {account.role === "superadmin" && (
+          <section className="account-section" aria-labelledby="administration-title">
+            <h2 id="administration-title">Administración</h2>
+            <Link className="primary-link" href="/admin">
+              Administrar usuarios
+            </Link>
+          </section>
+        )}
       </section>
     </main>
   );

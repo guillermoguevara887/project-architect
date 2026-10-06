@@ -29,6 +29,18 @@ test("Account contains profile, security and the real database health request", 
   assert.match(account, /Estado del sistema/);
 });
 
+test("Account shows administration navigation only for superadmins", async () => {
+  const account = await source("../../web/src/components/account-screen.tsx");
+  const section = account.match(
+    /\{account\.role === "superadmin" && \(\s*(<section\b[\s\S]*?<\/section>)\s*\)\}/,
+  );
+
+  assert.ok(section, "Administration must be inside the superadmin condition");
+  assert.match(section[1], /<h2[^>]*>Administración<\/h2>/);
+  assert.match(section[1], /<Link[^>]*href="\/admin"[^>]*>\s*Administrar usuarios\s*<\/Link>/);
+  assert.equal((account.match(/href="\/admin"/g) ?? []).length, 1);
+});
+
 test("Login and reset pages expose the complete recovery flow", async () => {
   const login = await source("../../web/src/components/login-screen.tsx");
   const forgot = await source(
