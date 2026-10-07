@@ -18,7 +18,7 @@ export type CurriculumUnitReviewInput = z.infer<typeof curriculumUnitReviewInput
 
 export type CurriculumUnitReviewRecord = {
   id: string;
-  userId: string;
+  reviewedByUserId: string | null;
   sourceUnitRecordId: string;
   action: "accepted" | "rejected";
   reviewNote: string;
@@ -27,27 +27,27 @@ export type CurriculumUnitReviewRecord = {
   reviewedAt: Date;
 };
 
-type OwnedReviewCandidate = {
+type ReviewCandidate = {
   sourceUnitRecordId: string;
   spec: CurriculumUnitSpec;
 };
 
 export interface CurriculumUnitReviewStore {
-  findOwnedCandidate(userId: string, unitRecordId: string): Promise<OwnedReviewCandidate | null>;
+  findCandidate(unitRecordId: string): Promise<ReviewCandidate | null>;
   createReview(input: {
-    userId: string;
+    reviewedByUserId: string;
     sourceUnitRecordId: string;
     action: CurriculumUnitReviewRecord["action"];
     reviewNote: string;
     promotedSpec: CurriculumUnitSpec | null;
     promotedSpecSha256: string | null;
   }): Promise<CurriculumUnitReviewRecord | null>;
-  findReview(userId: string, unitRecordId: string): Promise<CurriculumUnitReviewRecord | null>;
+  findReview(unitRecordId: string): Promise<CurriculumUnitReviewRecord | null>;
 }
 
 type DbReview = {
   id: string;
-  user_id: string;
+  reviewed_by_user_id: string | null;
   source_unit_record_id: string;
   action: "accepted" | "rejected";
   review_note: string;
@@ -63,7 +63,7 @@ function rows<T>(value: unknown) {
 function mapReview(row: DbReview): CurriculumUnitReviewRecord {
   return {
     id: row.id,
-    userId: row.user_id,
+    reviewedByUserId: row.reviewed_by_user_id,
     sourceUnitRecordId: row.source_unit_record_id,
     action: row.action,
     reviewNote: row.review_note,
@@ -74,7 +74,7 @@ function mapReview(row: DbReview): CurriculumUnitReviewRecord {
 }
 
 export const curriculumUnitReviewStore: CurriculumUnitReviewStore = {
-  async findOwnedCandidate(userId, unitRecordId) {
+  async findCandidate(unitRecordId) {
     const result = rows<{ source_unit_record_id: string; spec: CurriculumUnitSpec }>(
       await getDb().execute(sql`
         SELECT unit.id AS source_unit_record_id, unit.spec
@@ -86,7 +86,6 @@ export const curriculumUnitReviewStore: CurriculumUnitReviewStore = {
         JOIN language_curriculum_documents document
           ON document.id = version.document_record_id
         WHERE unit.id = ${unitRecordId}
-          AND document.user_id = ${userId}
         LIMIT 1
       `),
     );
@@ -99,7 +98,7 @@ export const curriculumUnitReviewStore: CurriculumUnitReviewStore = {
   async createReview(input) {
     const result = rows<DbReview>(await getDb().execute(sql`
       INSERT INTO language_curriculum_unit_reviews (
-        user_id,
+        reviewed_by_user_id,
         source_unit_record_id,
         action,
         review_note,
@@ -107,7 +106,7 @@ export const curriculumUnitReviewStore: CurriculumUnitReviewStore = {
         promoted_spec_sha256
       )
       SELECT
-        ${input.userId},
+        ${input.reviewedByUserId},
         unit.id,
         ${input.action},
         ${input.reviewNote},
@@ -121,19 +120,17 @@ export const curriculumUnitReviewStore: CurriculumUnitReviewStore = {
       JOIN language_curriculum_documents document
         ON document.id = version.document_record_id
       WHERE unit.id = ${input.sourceUnitRecordId}
-        AND document.user_id = ${input.userId}
       ON CONFLICT (source_unit_record_id) DO NOTHING
       RETURNING *
     `));
     return result[0] ? mapReview(result[0]) : null;
   },
 
-  async findReview(userId, unitRecordId) {
+  async findReview(unitRecordId) {
     const result = rows<DbReview>(await getDb().execute(sql`
       SELECT *
       FROM language_curriculum_unit_reviews
-      WHERE user_id = ${userId}
-        AND source_unit_record_id = ${unitRecordId}
+      WHERE source_unit_record_id = ${unitRecordId}
       LIMIT 1
     `));
     return result[0] ? mapReview(result[0]) : null;
@@ -177,10 +174,10 @@ export class CurriculumUnitReviewService {
 
   async review(userId: string, unitRecordId: string, rawInput: CurriculumUnitReviewInput) {
     const input = curriculumUnitReviewInputSchema.parse(rawInput);
-    const candidate = await this.store.findOwnedCandidate(userId, unitRecordId);
+    const candidate = await this.store.findCandidate(unitRecordId);
     if (!candidate) throw new CurriculumUnitReviewServiceError("candidate_not_found");
 
-    const existing = await this.store.findReview(userId, unitRecordId);
+    const existing = await this.store.findReview(unitRecordId);
     if (existing) throw new CurriculumUnitReviewServiceError("already_reviewed", existing.action);
 
     const sourceValidation = validateCurriculumUnitSpec(candidate.spec);
@@ -193,7 +190,7 @@ export class CurriculumUnitReviewService {
 
     if (input.action === "reject") {
       const rejected = await this.store.createReview({
-        userId,
+        reviewedByUserId: userId,
         sourceUnitRecordId: unitRecordId,
         action: "rejected",
         reviewNote: input.note,
@@ -213,7 +210,7 @@ export class CurriculumUnitReviewService {
     }
 
     const accepted = await this.store.createReview({
-      userId,
+      reviewedByUserId: userId,
       sourceUnitRecordId: unitRecordId,
       action: "accepted",
       reviewNote: input.note,
@@ -224,8 +221,8 @@ export class CurriculumUnitReviewService {
     return accepted;
   }
 
-  async getReview(userId: string, unitRecordId: string) {
-    return this.store.findReview(userId, unitRecordId);
+  async getReview(unitRecordId: string) {
+    return this.store.findReview(unitRecordId);
   }
 }
 

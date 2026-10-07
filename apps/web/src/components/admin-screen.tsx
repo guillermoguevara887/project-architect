@@ -218,6 +218,10 @@ export function AdminScreen() {
         </Link>
         <h1 id="admin-title">Usuarios</h1>
 
+        {state.status === "ready" ? (
+          <p><Link href="/admin/material">Material curricular</Link></p>
+        ) : null}
+
         {state.status === "forbidden" ? (
           <p className="form-error" role="alert">
             No tienes acceso a esta página.

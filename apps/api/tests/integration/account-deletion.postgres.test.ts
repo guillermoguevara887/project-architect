@@ -71,16 +71,21 @@ test("GUI-17 migration, deletion, and PostgreSQL lock races", async (t) => {
   }
 
   async function document(userId: string, key = randomUUID()) {
+    const [next] = await db<{ unit_order: number }[]>`
+      SELECT COALESCE(MAX(unit_order), 0) + 1 AS unit_order
+      FROM language_curriculum_documents WHERE curriculum_id='memoos-core-language' AND level_id='A1'`;
+    const unitOrder = next!.unit_order;
+    const unitId = `A1-U${String(unitOrder).padStart(2, "0")}`;
     const [doc] = await db<{ id: string }[]>`
-      INSERT INTO language_curriculum_documents (user_id, document_id, curriculum_id, level_id)
-      VALUES (${userId}, ${key}, 'curriculum', 'level') RETURNING id`;
+      INSERT INTO language_curriculum_documents (uploaded_by_user_id, document_id, curriculum_id, level_id, unit_id, unit_order)
+      VALUES (${userId}, ${key}, 'memoos-core-language', 'A1', ${unitId}, ${unitOrder}) RETURNING id`;
     const [version] = await db<{ id: string }[]>`
       INSERT INTO language_curriculum_document_versions
         (document_record_id, document_version, source_title, source_format,
          original_filename, media_type, storage_key, content_sha256, byte_size)
       VALUES (${doc!.id}, 'v1', 'source', 'plain_text', 'source.txt', 'text/plain',
               ${key}, ${"a".repeat(64)}, 1) RETURNING id`;
-    return { id: version!.id, key, documentId: key };
+    return { id: version!.id, key, documentId: key, unitId, unitOrder };
   }
 
   async function unit(userId: string) {
@@ -91,7 +96,7 @@ test("GUI-17 migration, deletion, and PostgreSQL lock races", async (t) => {
     const [record] = await db<{ id: string }[]>`
       INSERT INTO language_curriculum_units
         (compilation_run_id, unit_id, spec_version, unit_order, status, spec)
-      VALUES (${run!.id}, ${randomUUID()}, 'v1', 1, 'draft', ${{}})
+      VALUES (${run!.id}, ${version.unitId}, 'v1', ${version.unitOrder}, 'draft', ${{}})
       RETURNING id`;
     return record!.id;
   }
@@ -116,7 +121,7 @@ test("GUI-17 migration, deletion, and PostgreSQL lock races", async (t) => {
       (user_id, planning_bundle_id, expected_lesson_count)
       VALUES (${userId}, ${bundleId}, 1) RETURNING id`;
     await db`INSERT INTO language_curriculum_unit_reviews
-      (user_id, source_unit_record_id, action, review_note)
+      (reviewed_by_user_id, source_unit_record_id, action, review_note)
       VALUES (${userId}, ${unitId}, 'rejected', 'test')`;
     const [profile] = await db<{ id: string }[]>`
       INSERT INTO language_knowledge_profiles
@@ -187,7 +192,10 @@ test("GUI-17 migration, deletion, and PostgreSQL lock races", async (t) => {
       for (const name of cascades) {
         assert.equal(constraints.find((row) => row.conname === name)?.confdeltype, "c");
       }
-      assert.equal(constraints.filter((row) => row.confdeltype !== "c").length, 0);
+      assert.deepEqual(constraints.filter((row) => row.confdeltype !== "c").map((row) => row.conname).sort(), [
+        "language_curriculum_documents_uploaded_by_user_id_fkey",
+        "language_curriculum_unit_reviews_reviewed_by_user_id_fkey",
+      ]);
     });
 
     await t.test("superadmin is protected without session revocation or R2 access", async () => {
@@ -199,11 +207,11 @@ test("GUI-17 migration, deletion, and PostgreSQL lock races", async (t) => {
       assert.deepEqual(deleted, []);
     });
 
-    await t.test("ownership preflight rejects both cross-user directions before R2", async () => {
+    await t.test("global units and review actors do not create cross-user ownership violations", async () => {
       const a = await user(), b = await user();
       const unitA = await unit(a), unitB = await unit(b);
       await db`INSERT INTO language_curriculum_unit_reviews
-        (user_id, source_unit_record_id, action, review_note)
+        (reviewed_by_user_id, source_unit_record_id, action, review_note)
         VALUES (${b}, ${unitA}, 'rejected', 'cross-owner')`;
       await db`INSERT INTO language_curriculum_planning_bundles
         (user_id, curriculum_unit_record_id, language_id, variety_id, level_id, unit_id,
@@ -211,12 +219,16 @@ test("GUI-17 migration, deletion, and PostgreSQL lock races", async (t) => {
          adapted_unit_spec, lesson_route, lesson_specs, content_sha256)
         VALUES (${a}, ${unitB}, 'en', 'general', 'A1', 'unit',
                 ${{}}, ${{}}, ${{}}, ${{}}, ${{}}, ${{}}, ${[{}]}, ${"a".repeat(64)})`;
+      const sharedBundle = await bundle(b, unitA);
       const { store, deleted } = storage();
-      assert.equal(await deleteUserAccount(a, { storage: store }), "ownership_violation");
-      assert.deepEqual(deleted, []);
-      assert.equal((await db`SELECT 1 FROM users WHERE id=${a}`).length, 1);
+      assert.equal(await deleteUserAccount(a, { storage: store }), "deleted");
+      assert.deepEqual(deleted, [[]]);
+      assert.equal((await db`SELECT 1 FROM users WHERE id=${a}`).length, 0);
       assert.equal((await db`SELECT 1 FROM users WHERE id=${b}`).length, 1);
-      assert.equal((await db`SELECT 1 FROM language_curriculum_unit_reviews WHERE user_id=${b}`).length, 1);
+      assert.equal((await db`SELECT 1 FROM language_curriculum_unit_reviews WHERE reviewed_by_user_id=${b}`).length, 1);
+      assert.equal((await db`SELECT 1 FROM language_curriculum_units WHERE id=${unitA}`).length, 1);
+      assert.equal((await db`SELECT 1 FROM language_curriculum_units WHERE id=${unitB}`).length, 1);
+      assert.equal((await db`SELECT 1 FROM language_curriculum_planning_bundles WHERE id=${sharedBundle}`).length, 1);
     });
 
     await t.test("cascades owned graph, preserves B and global rows, and is idempotent", async () => {
@@ -285,10 +297,6 @@ test("GUI-17 migration, deletion, and PostgreSQL lock races", async (t) => {
       });
       const expectedKeys = [
         ...(await db<{ storage_key: string }[]>`SELECT storage_key FROM language_audio_assets WHERE user_id=${a}`),
-        ...(await db<{ storage_key: string }[]>`
-          SELECT v.storage_key FROM language_curriculum_document_versions v
-          JOIN language_curriculum_documents d ON d.id=v.document_record_id
-          WHERE d.user_id=${a}`),
       ].map((row) => row.storage_key);
       const { store, deleted } = storage();
       assert.equal(await deleteUserAccount(a, { storage: store }), "deleted");
@@ -305,9 +313,10 @@ test("GUI-17 migration, deletion, and PostgreSQL lock races", async (t) => {
       assert.equal((await db`SELECT 1 FROM language_audio_assets WHERE user_id=${a}`).length, 0);
       assert.equal((await db`SELECT 1 FROM language_audio_assets WHERE user_id=${b}`).length, 3);
       assert.equal((await db`SELECT 1 FROM language_curriculum_document_versions WHERE storage_key=${docB.key}`).length, 1);
-      assert.equal((await db`SELECT 1 FROM language_curriculum_document_versions WHERE storage_key=${docA.key}`).length, 0);
-      assert.equal((await db`SELECT 1 FROM language_curriculum_documents WHERE user_id=${a}`).length, 0);
-      assert.equal((await db`SELECT 1 FROM language_curriculum_documents WHERE user_id=${b}`).length, 4);
+      assert.equal((await db`SELECT 1 FROM language_curriculum_document_versions WHERE storage_key=${docA.key}`).length, 1);
+      assert.equal((await db`SELECT 1 FROM language_curriculum_documents WHERE uploaded_by_user_id=${a}`).length, 0);
+      assert.equal((await db`SELECT 1 FROM language_curriculum_documents WHERE uploaded_by_user_id IS NULL`).length >= 4, true);
+      assert.equal((await db`SELECT 1 FROM language_curriculum_documents WHERE uploaded_by_user_id=${b}`).length, 4);
       assert.equal((await db`SELECT 1 FROM projects WHERE id=${global!.id}`).length, 1);
       assert.equal((await db`SELECT 1 FROM discovery_sessions WHERE project_id=${global!.id}`).length, 1);
       for (const table of ["language_profile_v2_candidates", "language_profile_v2_decisions", "language_profile_v2_canonicals"]) {
@@ -316,7 +325,8 @@ test("GUI-17 migration, deletion, and PostgreSQL lock races", async (t) => {
       }
       for (const table of graphTables) {
         const [count] = await db.unsafe<{ count: number }[]>(`SELECT count(*)::integer AS count FROM ${table}`);
-        assert.equal(count!.count, baseline.get(table)! + 1, table);
+        const globalTable = ["language_curriculum_compilation_runs", "language_curriculum_units", "language_curriculum_unit_reviews"].includes(table);
+        assert.equal(count!.count, baseline.get(table)! + (globalTable ? 2 : 1), table);
       }
     });
 
@@ -354,18 +364,19 @@ test("GUI-17 migration, deletion, and PostgreSQL lock races", async (t) => {
           } else {
             const [row] = await db<{ id: string }[]>`
               INSERT INTO language_curriculum_unit_reviews
-                (user_id, source_unit_record_id, action, review_note)
+                (reviewed_by_user_id, source_unit_record_id, action, review_note)
               VALUES (${owner}, ${referencedUnit}, 'rejected', 'cross-owner') RETURNING id`;
             rowId = row!.id;
           }
           const { store, deleted } = storage();
-          assert.equal(await deleteUserAccount(a, { storage: store }), "ownership_violation");
-          assert.deepEqual(deleted, []);
-          assert.equal((await db`SELECT 1 FROM users WHERE id=${a}`).length, 1);
+          assert.equal(await deleteUserAccount(a, { storage: store }), "deleted");
+          assert.deepEqual(deleted, [[]]);
+          assert.equal((await db`SELECT 1 FROM users WHERE id=${a}`).length, 0);
           assert.equal((await db`SELECT 1 FROM users WHERE id=${b}`).length, 1);
           const table = edge === "planning_bundle"
             ? "language_curriculum_planning_bundles" : "language_curriculum_unit_reviews";
-          assert.equal((await db.unsafe(`SELECT 1 FROM ${table} WHERE id=$1`, [rowId])).length, 1);
+          assert.equal((await db.unsafe(`SELECT 1 FROM ${table} WHERE id=$1`, [rowId])).length,
+            edge === "unit_review" || owner === b ? 1 : 0);
         });
       }
     }
@@ -411,7 +422,6 @@ test("GUI-17 migration, deletion, and PostgreSQL lock races", async (t) => {
         ["language_decision_proposals", "profile_record_id", "proposalId", "profileId"],
         ["language_decision_proposals", "base_registry_record_id", "proposalId", "registryId"],
         ["language_decision_proposals", "promoted_registry_record_id", "proposalId", "registryId"],
-        ["language_adaptation_resolution_runs", "curriculum_unit_record_id", "resolutionId", "unitId"],
         ["language_adaptation_resolution_runs", "profile_record_id", "resolutionId", "profileId"],
         ["language_adaptation_resolution_runs", "registry_record_id", "resolutionId", "registryId"],
         ["language_adaptation_resolution_runs", "previous_run_id", "resolutionId", "resolutionId"],
@@ -488,7 +498,7 @@ test("GUI-17 migration, deletion, and PostgreSQL lock races", async (t) => {
       assert.equal(puts, 0);
     });
 
-    await t.test("audio and document barriers time out without PUT when deletion holds FOR UPDATE", async () => {
+    await t.test("account deletion blocks audio but not the global document version barrier", async () => {
       const id = await user();
       const asset = await audio(id);
       const version = await document(id);
@@ -503,19 +513,16 @@ test("GUI-17 migration, deletion, and PostgreSQL lock races", async (t) => {
           userId: id, assetId: asset.id, generationStartedAt: asset.startedAt,
           put: async () => { audioPuts += 1; },
         }),
-        curriculumDocumentStore.markStorageReadyUnderUserBarrier({
-          userId: id, versionId: version.id,
+        curriculumDocumentStore.markStorageReadyUnderVersionBarrier({
+          versionId: version.id,
           put: async () => { documentPuts += 1; },
         }),
       ]);
-      for (const attempt of attempts) {
-        assert.equal(attempt.status, "rejected");
-        if (attempt.status === "rejected") {
-          assert.equal(databaseErrorCode(attempt.reason), "55P03");
-        }
-      }
+      assert.equal(attempts[0]?.status, "rejected");
+      if (attempts[0]?.status === "rejected") assert.equal(databaseErrorCode(attempts[0].reason), "55P03");
+      assert.equal(attempts[1]?.status, "fulfilled");
       assert.equal(audioPuts, 0);
-      assert.equal(documentPuts, 0);
+      assert.equal(documentPuts, 1);
       release.release();
       assert.equal(await deletion, "deleted");
     });
@@ -562,12 +569,12 @@ test("GUI-17 migration, deletion, and PostgreSQL lock races", async (t) => {
       assert.deepEqual(deleted, [[asset.key]]);
     });
 
-    await t.test("document writer uses KEY SHARE and B does not block A deletion", async () => {
+    await t.test("global document writer does not block unrelated account deletion", async () => {
       const a = await user(), b = await user();
       const doc = await document(b);
       const entered = gate(), release = gate();
-      const writer = curriculumDocumentStore.markStorageReadyUnderUserBarrier({
-        userId: b, versionId: doc.id,
+      const writer = curriculumDocumentStore.markStorageReadyUnderVersionBarrier({
+        versionId: doc.id,
         put: async () => { entered.release(); await release.promise; },
       });
       await until(entered.promise, "document PUT entered");
@@ -578,7 +585,7 @@ test("GUI-17 migration, deletion, and PostgreSQL lock races", async (t) => {
       assert.equal((await db`SELECT 1 FROM users WHERE id=${b}`).length, 1);
     });
 
-    await t.test("document ingestion paused after reservation cannot PUT after deletion", async () => {
+    await t.test("global document ingestion survives deletion of the uploader", async () => {
       const id = await user();
       const reserved = gate(), resume = gate();
       let puts = 0;
@@ -598,8 +605,10 @@ test("GUI-17 migration, deletion, and PostgreSQL lock races", async (t) => {
       const ingest = service.ingest(id, {
         documentId: `DOC-${randomUUID()}`,
         documentVersion: "1.0.0",
-        curriculumId: "curriculum",
-        levelId: "A1",
+        curriculumId: "memoos-core-language",
+        levelId: "C1",
+        unitId: "C1-U01",
+        unitOrder: 1,
         sourceTitle: "Source",
         sourceFormat: "plain_text",
         originalFilename: "source.txt",
@@ -609,8 +618,8 @@ test("GUI-17 migration, deletion, and PostgreSQL lock races", async (t) => {
       await until(reserved.promise, "document reservation");
       assert.equal(await deleteUserAccount(id, { storage: storage().store }), "deleted");
       resume.release();
-      await assert.rejects(ingest, /storage_error/);
-      assert.equal(puts, 0);
+      assert.equal((await ingest).version.storageStatus, "ready");
+      assert.equal(puts, 1);
     });
 
     await t.test("slow audio generation after deletion cannot PUT", async () => {
@@ -639,13 +648,13 @@ test("GUI-17 migration, deletion, and PostgreSQL lock races", async (t) => {
       assert.equal(await deleteUserAccount(id, { storage: storage().store }), "deleted");
     });
 
-    await t.test("partial R2 deletion is retryable and does not silently delete SQL rows", async () => {
+    await t.test("partial audio R2 deletion is retryable and leaves global curriculum untouched", async () => {
       const id = await user();
       const first = await audio(id);
       const second = await document(id);
       let attempts = 0;
       const store: AccountObjectStorage = { async deleteKeys(keys) {
-        assert.deepEqual(new Set(keys), new Set([first.key, second.key]));
+        assert.deepEqual(new Set(keys), new Set([first.key]));
         attempts += 1;
         if (attempts === 1) throw new Error("partial R2 failure");
       } };
@@ -654,6 +663,7 @@ test("GUI-17 migration, deletion, and PostgreSQL lock races", async (t) => {
       assert.equal((await db`SELECT 1 FROM language_audio_assets WHERE id=${first.id}`).length, 1);
       assert.equal((await db`SELECT 1 FROM language_curriculum_document_versions WHERE id=${second.id}`).length, 1);
       assert.equal(await deleteUserAccount(id, { storage: store }), "deleted");
+      assert.equal((await db`SELECT 1 FROM language_curriculum_document_versions WHERE id=${second.id}`).length, 1);
       assert.equal(attempts, 2);
     });
 

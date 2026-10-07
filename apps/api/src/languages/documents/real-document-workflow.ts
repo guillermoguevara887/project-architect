@@ -61,12 +61,10 @@ export class RealCurriculumDocumentWorkflow {
   ) {}
 
   async process(
-    userId: string,
     documentId: string,
     documentVersion: string,
   ): Promise<RealCurriculumDocumentProcessingResult> {
     const owned = await this.documents.getVersion(
-      userId,
       documentId,
       documentVersion,
     );
@@ -103,6 +101,7 @@ export class RealCurriculumDocumentWorkflow {
           filename: version.originalFilename,
         });
       } catch (error) {
+        await this.documents.markExtractionFailed(version.id);
         if (error instanceof CurriculumSourceTextExtractionError) {
           throw extractionWorkflowError(error);
         }
@@ -113,7 +112,6 @@ export class RealCurriculumDocumentWorkflow {
       }
 
       version = await this.documents.attachExtractedText(
-        userId,
         documentId,
         documentVersion,
         {
@@ -125,7 +123,6 @@ export class RealCurriculumDocumentWorkflow {
     }
 
     const compilation = await this.documents.compile(
-      userId,
       documentId,
       documentVersion,
     );

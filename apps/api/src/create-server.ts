@@ -23,6 +23,7 @@ import {
 import { registerAccountRoutes } from "./account/routes.js";
 import { adminUserStore, type AdminUserStore } from "./admin/repository.js";
 import { registerAdminRoutes } from "./admin/routes.js";
+import { registerCurriculumMaterialAdminRoutes } from "./admin/curriculum-material-routes.js";
 import { authStore, type AuthStore } from "./auth/repository.js";
 import { registerAuthRoutes } from "./auth/routes.js";
 import { assertSessionConfiguration } from "./auth/session.js";
@@ -236,6 +237,12 @@ export function configureServer(
     configuredAuthStore,
     dependencies.adminUserStore ?? adminUserStore,
   );
+  registerCurriculumMaterialAdminRoutes(server, {
+    authStore: configuredAuthStore,
+    documents: dependencies.curriculumDocumentService ?? curriculumDocumentService,
+    workflow: dependencies.realCurriculumDocumentWorkflow ?? realCurriculumDocumentWorkflow,
+    reviews: dependencies.curriculumUnitReviewService ?? curriculumUnitReviewService,
+  });
   registerAccountRoutes(server, {
     accountStore: dependencies.accountStore ?? accountStore,
     mailer: dependencies.passwordResetMailer ?? resendPasswordResetMailer,

@@ -16,7 +16,7 @@ import {
   StructuredCandidateBoundaryError,
   type SafeProviderErrorMetadata,
 } from "../src/languages/ai/structured-candidate-boundary.js";
-import { CurriculumDocumentService } from "../src/languages/documents/service.js";
+import { CurriculumDocumentService, CurriculumDocumentServiceError } from "../src/languages/documents/service.js";
 import {
   RealCurriculumDocumentWorkflow,
   RealCurriculumDocumentWorkflowError,
@@ -85,8 +85,9 @@ function uploadWithoutText() {
     documentVersion: "1.0.0",
     curriculumId: "memoos-core-language",
     levelId: "A1",
+    unitId: "A1-U01",
+    unitOrder: 1,
     sourceTitle: "Marco maestro A1 parte 1",
-    sourceLanguageHint: "de",
     sourceFormat: "pdf_extracted_text" as const,
     originalFilename: "A1_master_1.pdf",
     mediaType: "application/pdf",
@@ -196,7 +197,7 @@ test("M12 source extractor rejects unsupported formats instead of guessing", asy
   );
 });
 
-test("M12 process extracts once, preserves source text and appends M6 compilations", async () => {
+test("M12 process extracts once and refuses to recompile a ready global version", async () => {
   const {
     store,
     sourceTextExtractor,
@@ -206,22 +207,19 @@ test("M12 process extracts once, preserves source text and appends M6 compilatio
   } = makeWorkflow();
   await service.ingest("user-1", uploadWithoutText());
 
-  const first = await workflow.process("user-1", "A1-MASTER-P01", "1.0.0");
-  const second = await workflow.process("user-1", "A1-MASTER-P01", "1.0.0");
+  const first = await workflow.process("A1-MASTER-P01", "1.0.0");
+  await assert.rejects(workflow.process("A1-MASTER-P01", "1.0.0"),
+    (error: unknown) => error instanceof CurriculumDocumentServiceError && error.code === "already_processed");
 
   assert.equal(first.extractionPerformed, true);
-  assert.equal(second.extractionPerformed, false);
   assert.equal(sourceTextExtractor.calls, 1);
   assert.equal(first.version.extractedText, sourceTextExtractor.text);
   assert.equal(first.version.extractionMethod, "openai_pdf_input");
-  assert.equal(curriculumExtractor.inputs.length, 2);
+  assert.equal(curriculumExtractor.inputs.length, 1);
   assert.equal(curriculumExtractor.inputs[0]?.sourceText, sourceTextExtractor.text);
-  assert.equal(curriculumExtractor.inputs[1]?.sourceText, sourceTextExtractor.text);
   assert.equal(first.compilation.units[0]?.status, "review");
-  assert.equal(second.compilation.units[0]?.status, "review");
-  assert.notEqual(first.compilation.run.id, second.compilation.run.id);
-  assert.equal(store.runs.length, 2);
-  assert.equal(store.units.length, 2);
+  assert.equal(store.runs.length, 1);
+  assert.equal(store.units.length, 1);
 });
 
 test("M12 stops before extraction when stored bytes fail source SHA-256 integrity", async () => {
@@ -234,7 +232,7 @@ test("M12 stops before extraction when stored bytes fail source SHA-256 integrit
   );
 
   await assert.rejects(
-    workflow.process("user-1", "A1-MASTER-P01", "1.0.0"),
+    workflow.process("A1-MASTER-P01", "1.0.0"),
     (error: unknown) =>
       error instanceof RealCurriculumDocumentWorkflowError &&
       error.code === "storage_integrity_error",
@@ -244,13 +242,13 @@ test("M12 stops before extraction when stored bytes fail source SHA-256 integrit
   assert.equal(curriculumExtractor.inputs.length, 0);
 });
 
-test("M12 authenticated process route performs the real workflow without exposing source text or storage key", async () => {
-  const { service, workflow } = makeWorkflow();
+test("M12 admin process route performs the real workflow without exposing source text or storage key", async () => {
+  const { store, service, workflow } = makeWorkflow();
   const user = {
     id: "11111111-1111-4111-8111-111111111111",
     username: "memo",
     passwordHash: "hash",
-    role: "user" as const,
+    role: "superadmin" as const,
     sessionVersion: 1,
     createdAt: new Date(),
   };
@@ -273,32 +271,32 @@ test("M12 authenticated process route performs the real workflow without exposin
 
   const unauthorized = await server.inject({
     method: "POST",
-    url: "/languages/curriculum-documents/A1-MASTER-P01/versions/1.0.0/process",
+    url: "/admin/curriculum-material/A1/units/1/process",
   });
   assert.equal(unauthorized.statusCode, 401);
 
   const cookie = createSessionCookie(user.id, user.sessionVersion).split(";", 1)[0];
   const uploaded = await server.inject({
     method: "POST",
-    url: "/languages/curriculum-documents",
+    url: "/admin/curriculum-material/A1/units/1",
     headers: { cookie: cookie ?? "" },
-    payload: uploadWithoutText(),
+    payload: { sourceTitle: uploadWithoutText().sourceTitle, originalFilename: uploadWithoutText().originalFilename, fileBase64: uploadWithoutText().fileBase64 },
   });
   assert.equal(uploaded.statusCode, 201);
-  assert.equal(uploaded.json().version.extractionStatus, "pending");
+  assert.equal(store.versions[0]?.extractionStatus, "pending");
 
   const processed = await server.inject({
     method: "POST",
-    url: "/languages/curriculum-documents/A1-MASTER-P01/versions/1.0.0/process",
+    url: "/admin/curriculum-material/A1/units/1/process",
     headers: { cookie: cookie ?? "" },
   });
   assert.equal(processed.statusCode, 201);
   const body = processed.json();
-  assert.equal(body.extractionPerformed, true);
-  assert.equal(body.version.extractionStatus, "ready");
-  assert.equal(body.units[0].status, "review");
-  assert.equal("storageKey" in body.version, false);
-  assert.equal("extractedText" in body.version, false);
+  assert.equal(body.extractionStatus, "ready");
+  assert.equal(body.units[0].unitId, "A1-U01");
+  assert.equal(store.units[0]?.status, "review");
+  assert.equal("storageKey" in body, false);
+  assert.equal("extractedText" in body, false);
 
   await server.close();
 });
@@ -338,7 +336,7 @@ test("M12 process exposes only safe provider metadata on compiler failure", asyn
     id: "11111111-1111-4111-8111-111111111111",
     username: "memo",
     passwordHash: "hash",
-    role: "user" as const,
+    role: "superadmin" as const,
     sessionVersion: 1,
     createdAt: new Date(),
   };
@@ -352,6 +350,7 @@ test("M12 process exposes only safe provider metadata on compiler failure", asyn
   };
   await service.ingest(user.id, {
     ...uploadWithoutText(),
+    documentId: "memoos-core-language-A1-U01",
     extractedText:
       "Texto curricular ya extraído que evita cualquier llamada de extracción.",
     extractionMethod: "fixture_extraction",
@@ -368,7 +367,7 @@ test("M12 process exposes only safe provider metadata on compiler failure", asyn
 
   const response = await server.inject({
     method: "POST",
-    url: "/languages/curriculum-documents/A1-MASTER-P01/versions/1.0.0/process",
+    url: "/admin/curriculum-material/A1/units/1/process",
     headers: { cookie: cookie ?? "" },
   });
 

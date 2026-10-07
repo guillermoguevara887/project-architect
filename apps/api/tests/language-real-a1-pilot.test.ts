@@ -69,25 +69,25 @@ class MemoryCurriculumReviewStore implements CurriculumUnitReviewStore {
   review: CurriculumUnitReviewRecord | null = null;
   constructor(readonly candidate = reviewCurriculumFromRealSource()) {}
 
-  async findOwnedCandidate(userId: string, unitRecordId: string) {
-    if (userId !== USER_ID || unitRecordId !== UNIT_RECORD_ID) return null;
+  async findCandidate(unitRecordId: string) {
+    if (unitRecordId !== UNIT_RECORD_ID) return null;
     return { sourceUnitRecordId: UNIT_RECORD_ID, spec: structuredClone(this.candidate) };
   }
 
   async createReview(input: {
-    userId: string;
+    reviewedByUserId: string;
     sourceUnitRecordId: string;
     action: CurriculumUnitReviewRecord["action"];
     reviewNote: string;
     promotedSpec: CurriculumUnitReviewRecord["promotedSpec"];
     promotedSpecSha256: string | null;
   }) {
-    if (input.userId !== USER_ID || input.sourceUnitRecordId !== UNIT_RECORD_ID || this.review) {
+    if (input.reviewedByUserId !== USER_ID || input.sourceUnitRecordId !== UNIT_RECORD_ID || this.review) {
       return null;
     }
     this.review = {
       id: randomUUID(),
-      userId: input.userId,
+      reviewedByUserId: input.reviewedByUserId,
       sourceUnitRecordId: input.sourceUnitRecordId,
       action: input.action,
       reviewNote: input.reviewNote,
@@ -98,8 +98,8 @@ class MemoryCurriculumReviewStore implements CurriculumUnitReviewStore {
     return structuredClone(this.review);
   }
 
-  async findReview(userId: string, unitRecordId: string) {
-    if (userId !== USER_ID || unitRecordId !== UNIT_RECORD_ID || !this.review) return null;
+  async findReview(unitRecordId: string) {
+    if (unitRecordId !== UNIT_RECORD_ID || !this.review) return null;
     return structuredClone(this.review);
   }
 }

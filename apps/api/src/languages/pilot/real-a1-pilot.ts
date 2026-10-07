@@ -103,7 +103,6 @@ export class RealA1PilotRunner {
 
   async run(input: RealA1PilotInput): Promise<RealA1PilotResult> {
     const processed = await this.documents.process(
-      input.userId,
       input.documentId,
       input.documentVersion,
     );
@@ -118,7 +117,7 @@ export class RealA1PilotRunner {
     }
     const unit = matchingUnits[0]!;
 
-    const review = await this.curriculumReview.getReview(input.userId, unit.id);
+    const review = await this.curriculumReview.getReview(unit.id);
     if (!review) {
       return {
         status: "awaiting_curriculum_review",

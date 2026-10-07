@@ -13,7 +13,7 @@ function sourceFiles(directory: string): string[] {
   });
 }
 
-test("all current R2 PUT call sites are guarded by a user row barrier", () => {
+test("audio PUT uses a user barrier and global curriculum PUT uses a version barrier", () => {
   const putCallers = sourceFiles(source).flatMap((path) => {
     const calls = [...readFileSync(path, "utf8").matchAll(/\b([\w$.]+)\.put\s*\(/gu)]
       .map((match) => match[1])
@@ -31,9 +31,9 @@ test("all current R2 PUT call sites are guarded by a user row barrier", () => {
   const audioRepository = readFileSync(join(source, "languages", "audio-repository.ts"), "utf8");
   const documentRepository = readFileSync(join(source, "languages", "documents", "repository.ts"), "utf8");
   assert.match(audio, /completeUnderUserBarrier\([\s\S]*?put: \(\) => dependencies\.storage\.put/u);
-  assert.match(documents, /markStorageReadyUnderUserBarrier\([\s\S]*?put: \(\) => this\.storage\.put/u);
+  assert.match(documents, /markStorageReadyUnderVersionBarrier\([\s\S]*?put: \(\) => this\.storage\.put/u);
   assert.match(audioRepository, /completeUnderUserBarrier\(input\)[\s\S]*?FOR KEY SHARE[\s\S]*?await input\.put\(\)/u);
-  assert.match(documentRepository, /markStorageReadyUnderUserBarrier\(input\)[\s\S]*?FOR KEY SHARE[\s\S]*?await input\.put\(\)/u);
+  assert.match(documentRepository, /markStorageReadyUnderVersionBarrier\(input\)[\s\S]*?FOR UPDATE[\s\S]*?await input\.put\(\)/u);
   const adapters = sourceFiles(source).flatMap((path) => {
     const count = [...readFileSync(path, "utf8").matchAll(/new PutObjectCommand\s*\(/gu)].length;
     return Array.from({ length: count }, () => path);

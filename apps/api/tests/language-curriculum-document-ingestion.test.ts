@@ -12,6 +12,7 @@ import type {
 import { StructuredCandidateBoundaryError } from "../src/languages/ai/structured-candidate-boundary.js";
 import { CurriculumDocumentService, CurriculumDocumentServiceError } from "../src/languages/documents/service.js";
 import { curriculumDocumentStorageKey, type CurriculumDocumentStorage } from "../src/languages/documents/storage.js";
+import { CURRICULUM_COMPILATION_STALE_TIMEOUT_MS, STALE_CURRICULUM_COMPILATION_ERROR_CODE } from "../src/languages/documents/repository.js";
 import { a1U01CurriculumFixture } from "./fixtures/language-curriculum/a1-u01.js";
 import { InMemoryCurriculumDocumentStore } from "./fixtures/curriculum-document-store.js";
 
@@ -64,8 +65,9 @@ function uploadInput(overrides: Record<string, unknown> = {}) {
     documentVersion: "1.0.0",
     curriculumId: "memoos-core-language",
     levelId: "A1",
+    unitId: "A1-U01",
+    unitOrder: 1,
     sourceTitle: "Marco maestro A1 parte 1",
-    sourceLanguageHint: "de",
     sourceFormat: "pdf_extracted_text" as const,
     originalFilename: "A1_master_1.pdf",
     mediaType: "application/pdf",
@@ -83,7 +85,7 @@ function makeService() {
   return { store, storage, extractor, service: new CurriculumDocumentService(store, storage, extractor) };
 }
 
-test("M7 ingestion stores one immutable source version and preserves exact extracted text", async () => {
+test("M7 ingestion stores one immutable global source and rejects duplicate normal upload", async () => {
   const { store, storage, service } = makeService();
   const first = await service.ingest("user-1", uploadInput());
 
@@ -96,8 +98,8 @@ test("M7 ingestion stores one immutable source version and preserves exact extra
   assert.equal(store.documents.length, 1);
   assert.equal(store.versions.length, 1);
 
-  const second = await service.ingest("user-1", uploadInput());
-  assert.equal(second.version.id, first.version.id);
+  await assert.rejects(service.ingest("user-1", uploadInput()),
+    (error: unknown) => error instanceof CurriculumDocumentServiceError && error.code === "identity_conflict");
   assert.equal(storage.puts, 1, "ready immutable versions must not be uploaded twice");
 });
 
@@ -110,28 +112,101 @@ test("M7 rejects different bytes under the same semantic document version", asyn
       "user-1",
       uploadInput({ fileBase64: Buffer.from("different PDF", "utf8").toString("base64") }),
     ),
-    (error: unknown) => error instanceof CurriculumDocumentServiceError && error.code === "version_conflict",
+    (error: unknown) => error instanceof CurriculumDocumentServiceError && error.code === "identity_conflict",
   );
   assert.equal(storage.puts, 1);
 });
 
-test("M7 compilation consumes persisted text and recompilation appends history", async () => {
+test("M7 compilation consumes persisted text and a ready version cannot compile twice", async () => {
   const { store, extractor, service } = makeService();
   const sourceText = "  Texto exacto para M6\nsegunda línea  \n";
   await service.ingest("user-1", uploadInput({ extractedText: sourceText }));
 
-  const first = await service.compile("user-1", "A1-MASTER-P01", "1.0.0");
-  const second = await service.compile("user-1", "A1-MASTER-P01", "1.0.0");
+  const first = await service.compile("A1-MASTER-P01", "1.0.0");
+  first.run.startedAt = new Date(first.run.startedAt.getTime() - CURRICULUM_COMPILATION_STALE_TIMEOUT_MS - 1);
+  await assert.rejects(service.compile("A1-MASTER-P01", "1.0.0"),
+    (error: unknown) => error instanceof CurriculumDocumentServiceError && error.code === "already_processed");
 
-  assert.equal(extractor.inputs.length, 2);
+  assert.equal(extractor.inputs.length, 1);
   assert.equal(extractor.inputs[0]?.sourceText, sourceText);
-  assert.notEqual(first.run.id, second.run.id);
-  assert.equal(store.runs.length, 2);
-  assert.equal(store.units.length, 2);
+  assert.equal(store.runs.length, 1);
+  assert.equal(store.units.length, 1);
   assert.equal(first.units[0]?.status, "review");
-  assert.equal(second.units[0]?.status, "review");
   assert.equal(first.run.status, "ready");
-  assert.equal(second.run.status, "ready");
+});
+
+test("M7 running compilation conflicts and a failed attempt permits retry", async () => {
+  const { store, extractor, service } = makeService();
+  await service.ingest("user-1", uploadInput());
+  const running = await store.beginCompilation({ documentId: "A1-MASTER-P01", documentVersion: "1.0.0", boundaryKey: "test" });
+  assert.equal(running.kind, "started");
+  await assert.rejects(service.compile("A1-MASTER-P01", "1.0.0"),
+    (error: unknown) => error instanceof CurriculumDocumentServiceError && error.code === "compilation_running");
+  assert.equal(extractor.inputs.length, 0);
+  assert.equal(store.units.length, 0);
+  if (running.kind !== "started") throw new Error("Expected a running attempt.");
+  await store.failCompilation({ runId: running.run.id, errorCode: "retryable_test_failure", validationHistory: [] });
+  const retried = await service.compile("A1-MASTER-P01", "1.0.0");
+  assert.equal(retried.run.status, "ready");
+  assert.equal(store.runs.length, 2);
+  assert.equal(store.runs[0]?.status, "failed");
+  assert.equal(store.units.length, 1);
+  assert.equal(extractor.inputs.length, 1);
+});
+
+test("M7 stale running compilation is recorded as failed and retries without another upload", async () => {
+  const { store, storage, extractor, service } = makeService();
+  assert.equal(CURRICULUM_COMPILATION_STALE_TIMEOUT_MS, 15 * 60 * 1_000);
+  await service.ingest("user-1", uploadInput());
+  const abandoned = await store.beginCompilation({ documentId: "A1-MASTER-P01", documentVersion: "1.0.0", boundaryKey: "test" });
+  if (abandoned.kind !== "started") throw new Error("Expected a running attempt.");
+  abandoned.run.startedAt = new Date(abandoned.run.startedAt.getTime() - CURRICULUM_COMPILATION_STALE_TIMEOUT_MS - 1);
+
+  const retried = await service.compile("A1-MASTER-P01", "1.0.0");
+  assert.equal(abandoned.run.status, "failed");
+  assert.equal(abandoned.run.errorCode, STALE_CURRICULUM_COMPILATION_ERROR_CODE);
+  assert.ok(abandoned.run.completedAt);
+  assert.equal(retried.run.status, "ready");
+  assert.notEqual(retried.run.id, abandoned.run.id);
+  assert.equal(store.runs.length, 2);
+  assert.equal(store.units.length, 1);
+  assert.equal(storage.puts, 1);
+  assert.equal(extractor.inputs.length, 1);
+});
+
+test("M7 concurrent stale retries let only one request reach the compiler", async () => {
+  const store = new InMemoryCurriculumDocumentStore();
+  const storage = new MemoryStorage();
+  const delegate = new CapturingExtractor();
+  let entered!: () => void;
+  let release!: () => void;
+  const compilerEntered = new Promise<void>((resolve) => { entered = resolve; });
+  const compilerRelease = new Promise<void>((resolve) => { release = resolve; });
+  const extractor: CurriculumDocumentExtractor = {
+    async extract(input) {
+      entered();
+      await compilerRelease;
+      return delegate.extract(input);
+    },
+  };
+  const service = new CurriculumDocumentService(store, storage, extractor);
+  await service.ingest("user-1", uploadInput());
+  const abandoned = await store.beginCompilation({ documentId: "A1-MASTER-P01", documentVersion: "1.0.0", boundaryKey: "test" });
+  if (abandoned.kind !== "started") throw new Error("Expected a running attempt.");
+  abandoned.run.startedAt = new Date(abandoned.run.startedAt.getTime() - CURRICULUM_COMPILATION_STALE_TIMEOUT_MS - 1);
+
+  const first = service.compile("A1-MASTER-P01", "1.0.0");
+  await compilerEntered;
+  try {
+    await assert.rejects(service.compile("A1-MASTER-P01", "1.0.0"),
+      (error: unknown) => error instanceof CurriculumDocumentServiceError && error.code === "compilation_running");
+  } finally {
+    release();
+  }
+  assert.equal((await first).run.status, "ready");
+  assert.equal(delegate.inputs.length, 1);
+  assert.equal(store.runs.length, 2);
+  assert.equal(store.units.length, 1);
 });
 
 test("M7 records a failed compilation boundary without inventing units", async () => {
@@ -147,7 +222,7 @@ test("M7 records a failed compilation boundary without inventing units", async (
   await service.ingest("user-1", uploadInput());
 
   await assert.rejects(
-    service.compile("user-1", "A1-MASTER-P01", "1.0.0"),
+    service.compile("A1-MASTER-P01", "1.0.0"),
     (error: unknown) =>
       error instanceof CurriculumDocumentServiceError &&
       error.code === "compiler_failed" &&
@@ -163,7 +238,9 @@ test("M7 records a failed compilation boundary without inventing units", async (
 
 test("curriculum storage keys are deterministic and do not expose semantic ids", () => {
   const input = {
-    userId: "secret-user-id",
+    curriculumId: "memoos-core-language",
+    levelId: "A1",
+    unitId: "A1-U01",
     documentId: "A1-MASTER-P01",
     documentVersion: "1.0.0",
     contentSha256: "a".repeat(64),
@@ -172,7 +249,7 @@ test("curriculum storage keys are deterministic and do not expose semantic ids",
   const second = curriculumDocumentStorageKey(input);
   assert.equal(first, second);
   assert.match(first, /^language-curriculum\/[0-9a-f]{64}\/[0-9a-f]{64}$/u);
-  assert.equal(first.includes(input.userId), false);
+  assert.equal(first.includes(input.unitId), false);
   assert.equal(first.includes(input.documentId), false);
   assert.equal(first.includes(input.documentVersion), false);
 });
@@ -199,7 +276,7 @@ test("M7 migration is additive and keeps source versions and compilation runs im
 
 test("M7 routes require auth and never return storage keys or extracted source text", async () => {
   const { service } = makeService();
-  const user = { id: "11111111-1111-4111-8111-111111111111", username: "memo", passwordHash: "hash", role: "user" as const, sessionVersion: 1, createdAt: new Date() };
+  const user = { id: "11111111-1111-4111-8111-111111111111", username: "memo", passwordHash: "hash", role: "superadmin" as const, sessionVersion: 1, createdAt: new Date() };
   const authStore: AuthStore = {
     async findById(userId) { return userId === user.id ? user : null; },
     async findByUsername(username) { return username === user.username ? user : null; },
@@ -210,30 +287,22 @@ test("M7 routes require auth and never return storage keys or extracted source t
   assert.equal(unauthorized.statusCode, 401);
 
   const cookie = createSessionCookie(user.id, user.sessionVersion).split(";", 1)[0];
-  const uploaded = await server.inject({
-    method: "POST",
-    url: "/languages/curriculum-documents",
-    headers: { cookie: cookie ?? "" },
-    payload: uploadInput(),
-  });
-  assert.equal(uploaded.statusCode, 201);
-  const body = uploaded.json();
-  assert.equal(body.version.storageStatus, "ready");
-  assert.equal("storageKey" in body.version, false);
-  assert.equal("extractedText" in body.version, false);
+  await service.ingest(user.id, uploadInput());
+  const version = await server.inject({ method: "GET", url: "/languages/curriculum-documents/A1-MASTER-P01/versions/1.0.0", headers: { cookie: cookie ?? "" } });
+  assert.equal(version.statusCode, 200);
+  assert.equal(version.json().version.storageStatus, "ready");
+  assert.equal("storageKey" in version.json().version, false);
+  assert.equal("extractedText" in version.json().version, false);
 
-  const compiled = await server.inject({
-    method: "POST",
-    url: "/languages/curriculum-documents/A1-MASTER-P01/versions/1.0.0/compile",
-    headers: { cookie: cookie ?? "" },
-  });
-  assert.equal(compiled.statusCode, 201);
-  assert.equal(compiled.json().units[0].status, "review");
+  const compiled = await service.compile("A1-MASTER-P01", "1.0.0");
+  const compilation = await server.inject({ method: "GET", url: `/languages/curriculum-documents/A1-MASTER-P01/versions/1.0.0/compilations/${compiled.run.id}`, headers: { cookie: cookie ?? "" } });
+  assert.equal(compilation.statusCode, 200);
+  assert.equal(compilation.json().units[0].status, "review");
 
   user.sessionVersion += 1;
   const stale = await server.inject({
-    method: "POST",
-    url: "/languages/curriculum-documents/A1-MASTER-P01/versions/1.0.0/compile",
+    method: "GET",
+    url: "/languages/curriculum-documents/A1-MASTER-P01/versions/1.0.0",
     headers: { cookie: cookie ?? "" },
   });
   assert.equal(stale.statusCode, 401);
@@ -253,16 +322,18 @@ test("M7 routes serialize repository timestamps normalized from SQL strings", as
     id: "11111111-1111-4111-8111-111111111111",
     username: "memo",
     passwordHash: "hash",
-    role: "user" as const,
+    role: "superadmin" as const,
     sessionVersion: 1,
     createdAt: new Date(),
   };
   store.documents.push({
     id: "22222222-2222-4222-8222-222222222222",
-    userId: user.id,
+    uploadedByUserId: user.id,
     documentId: "A1-MASTER-P01",
     curriculumId: "memoos-core-language",
     levelId: "A1",
+    unitId: "A1-U01",
+    unitOrder: 1,
     createdAt: dbTimestamp("2026-09-05 00:43:56.837552+00"),
     updatedAt: dbTimestamp("2026-09-05 00:44:56.837552+00"),
   });
@@ -292,6 +363,8 @@ test("M7 routes serialize repository timestamps normalized from SQL strings", as
     documentId: "A1-MASTER-P01",
     curriculumId: "memoos-core-language",
     levelId: "A1",
+    unitId: "A1-U01",
+    unitOrder: 1,
     createdAt: "2026-09-05T00:43:56.837Z",
     updatedAt: "2026-09-05T00:44:56.837Z",
   });

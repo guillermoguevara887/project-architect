@@ -39,6 +39,9 @@ export type CurriculumDocumentServiceErrorCode =
   | "storage_not_ready"
   | "text_conflict"
   | "not_extractable"
+  | "compilation_running"
+  | "already_processed"
+  | "unit_identity_mismatch"
   | "compiler_failed";
 
 export class CurriculumDocumentServiceError extends Error {
@@ -98,20 +101,24 @@ export class CurriculumDocumentService {
 
     const contentSha256 = sha256Bytes(bytes);
     const storageKey = curriculumDocumentStorageKey({
-      userId,
+      curriculumId: input.curriculumId,
+      levelId: input.levelId,
+      unitId: input.unitId,
       documentId: input.documentId,
       documentVersion: input.documentVersion,
       contentSha256,
     });
 
     const reservation = await this.store.reserveVersion({
-      userId,
+      uploadedByUserId: userId,
       documentId: input.documentId,
       documentVersion: input.documentVersion,
       curriculumId: input.curriculumId,
       levelId: input.levelId,
+      unitId: input.unitId,
+      unitOrder: input.unitOrder,
       sourceTitle: input.sourceTitle,
-      sourceLanguageHint: input.sourceLanguageHint ?? null,
+      sourceLanguageHint: null,
       sourceFormat: input.sourceFormat,
       originalFilename: input.originalFilename,
       mediaType: input.mediaType,
@@ -133,8 +140,7 @@ export class CurriculumDocumentService {
     let version = reservation.version;
     if (version.storageStatus !== "ready") {
       try {
-        const ready = await this.store.markStorageReadyUnderUserBarrier({
-          userId,
+        const ready = await this.store.markStorageReadyUnderVersionBarrier({
           versionId: version.id,
           put: () => this.storage.put({
             key: storageKey,
@@ -152,7 +158,6 @@ export class CurriculumDocumentService {
 
     if (input.extractedText !== undefined) {
       const extraction = await this.store.attachExtractedText({
-        userId,
         documentId: input.documentId,
         documentVersion: input.documentVersion,
         extractedText: input.extractedText,
@@ -178,14 +183,12 @@ export class CurriculumDocumentService {
   }
 
   async attachExtractedText(
-    userId: string,
     documentId: string,
     documentVersion: string,
     rawInput: AttachCurriculumExtractedTextInput,
   ) {
     const input = attachCurriculumExtractedTextSchema.parse(rawInput);
     const result = await this.store.attachExtractedText({
-      userId,
       documentId,
       documentVersion,
       extractedText: input.extractedText,
@@ -208,29 +211,39 @@ export class CurriculumDocumentService {
     return result.version;
   }
 
-  listDocuments(userId: string) {
-    return this.store.listDocuments(userId);
+  listDocuments() {
+    return this.store.listDocuments();
   }
 
-  listVersions(userId: string, documentId: string) {
-    return this.store.listVersions(userId, documentId);
+  async listMaterial() {
+    const documents = await this.store.listDocuments();
+    return Promise.all(documents.map(async (document) => {
+      const [version] = await this.store.listVersions(document.documentId) ?? [];
+      const compilation = version ? await this.store.latestCompilation(version.id) : null;
+      return { document, version: version ?? null, compilation };
+    }));
+  }
+
+  listVersions(documentId: string) {
+    return this.store.listVersions(documentId);
   }
 
   async getVersion(
-    userId: string,
     documentId: string,
     documentVersion: string,
   ) {
-    return this.store.findVersionForUser(userId, documentId, documentVersion);
+    return this.store.findVersion(documentId, documentVersion);
+  }
+
+  async markExtractionFailed(versionId: string) {
+    return this.store.markExtractionFailed(versionId);
   }
 
   async compile(
-    userId: string,
     documentId: string,
     documentVersion: string,
   ): Promise<CurriculumCompilationResult> {
-    const owned = await this.store.findVersionForUser(
-      userId,
+    const owned = await this.store.findVersion(
       documentId,
       documentVersion,
     );
@@ -244,7 +257,6 @@ export class CurriculumDocumentService {
     }
 
     const started = await this.store.beginCompilation({
-      userId,
       documentId,
       documentVersion,
       boundaryKey: CURRICULUM_COMPILER_BOUNDARY_KEY,
@@ -254,6 +266,12 @@ export class CurriculumDocumentService {
     }
     if (started.kind === "not_extractable") {
       throw new CurriculumDocumentServiceError("not_extractable");
+    }
+    if (started.kind === "already_running") {
+      throw new CurriculumDocumentServiceError("compilation_running");
+    }
+    if (started.kind === "already_ready") {
+      throw new CurriculumDocumentServiceError("already_processed");
     }
     if (!("run" in started)) {
       throw new CurriculumDocumentServiceError("not_extractable");
@@ -269,17 +287,28 @@ export class CurriculumDocumentService {
         curriculumId: owned.document.curriculumId,
         levelId: owned.document.levelId,
         sourceText: owned.version.extractedText,
+        unitCountHint: { min: 1, max: 1 },
       });
 
+      const expected = owned.document;
+      const units = candidate.value.units;
+      if (candidate.value.curriculumId !== expected.curriculumId || candidate.value.levelId !== expected.levelId ||
+          candidate.value.documentRef.id !== documentId || candidate.value.documentRef.version !== documentVersion ||
+          units.length !== 1 || units[0]?.identity.curriculumId !== expected.curriculumId ||
+          units[0]?.identity.levelId !== expected.levelId ||
+          units[0]?.identity.unitId !== expected.unitId ||
+          units[0]?.identity.unitOrder !== expected.unitOrder) {
+        throw new CurriculumDocumentServiceError("unit_identity_mismatch");
+      }
+
       const run = await this.store.completeCompilation({
-        userId,
         runId: started.run.id,
         candidate,
       });
       if (!run) throw new CurriculumDocumentServiceError("compiler_failed");
-      const units = await this.store.listUnitsForCompilation(userId, run.id);
-      if (!units) throw new CurriculumDocumentServiceError("compiler_failed");
-      return { run, units };
+      const compiledUnits = await this.store.listUnitsForCompilation(run.id);
+      if (!compiledUnits) throw new CurriculumDocumentServiceError("compiler_failed");
+      return { run, units: compiledUnits };
     } catch (error) {
       const code =
         error instanceof StructuredCandidateBoundaryError
@@ -299,7 +328,6 @@ export class CurriculumDocumentService {
           : undefined;
 
       await this.store.failCompilation({
-        userId,
         runId: started.run.id,
         errorCode: code,
         validationHistory,
@@ -317,10 +345,10 @@ export class CurriculumDocumentService {
     }
   }
 
-  async getCompilation(userId: string, runId: string) {
-    const run = await this.store.findCompilationForUser(userId, runId);
+  async getCompilation(runId: string) {
+    const run = await this.store.findCompilation(runId);
     if (!run) return null;
-    const units = await this.store.listUnitsForCompilation(userId, runId);
+    const units = await this.store.listUnitsForCompilation(runId);
     return { run, units: units ?? [] };
   }
 }

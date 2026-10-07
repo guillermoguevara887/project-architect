@@ -57,8 +57,9 @@ before(async () => {
     const r = germanDecisionRegistryFixture;
     await connection`INSERT INTO language_decision_registry_versions (id,user_id,profile_record_id,registry_id,language_id,variety_id,curriculum_id,version,status,registry,content_sha256)
       VALUES (${legacyRegistryId},${userId},${legacyProfileId},${r.identity.registryId},${r.identity.languageId},${r.identity.varietyId},${r.identity.curriculumId},${r.version},${r.status},${JSON.stringify(r)}::jsonb,${sha(r)})`;
-    assert.deepEqual(await migratePending(migrationDb, migrations), [migrationId]);
-    assert.deepEqual(await migratePending(migrationDb, migrations), []);
+    const throughGrounding = migrations.filter((m) => m.id <= migrationId);
+    assert.deepEqual(await migratePending(migrationDb, throughGrounding), [migrationId]);
+    assert.deepEqual(await migratePending(migrationDb, throughGrounding), []);
   } finally { await migrationDb.close(); }
 });
 after(async () => { await closeDbConnection(); await connection.end({ timeout: 5 }); await admin.end({ timeout: 5 }); });

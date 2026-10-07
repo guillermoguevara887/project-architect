@@ -17,13 +17,19 @@ export interface CurriculumDocumentStorage {
 }
 
 export function curriculumDocumentStorageKey(input: {
-  userId: string;
+  curriculumId: string;
+  levelId: string;
+  unitId: string;
   documentId: string;
   documentVersion: string;
   contentSha256: string;
 }) {
   const identity = createHash("sha256")
-    .update(input.userId)
+    .update(input.curriculumId)
+    .update("\0")
+    .update(input.levelId)
+    .update("\0")
+    .update(input.unitId)
     .update("\0")
     .update(input.documentId)
     .update("\0")

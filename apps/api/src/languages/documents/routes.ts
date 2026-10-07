@@ -1,13 +1,11 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { AuthStore } from "../../auth/repository.js";
+import { requireSuperadmin } from "../../auth/authorization.js";
 import { readSession } from "../../auth/session.js";
 import {
-  CURRICULUM_DOCUMENT_ROUTE_BODY_LIMIT,
-  attachCurriculumExtractedTextSchema,
   curriculumCompilationPathSchema,
   curriculumDocumentPathSchema,
   curriculumDocumentVersionPathSchema,
-  ingestCurriculumDocumentSchema,
 } from "./contracts.js";
 import type {
   CurriculumCompilationRunRecord,
@@ -15,10 +13,7 @@ import type {
   CurriculumDocumentVersionRecord,
   CurriculumUnitRecord,
 } from "./repository.js";
-import {
-  CurriculumDocumentServiceError,
-  type CurriculumDocumentService,
-} from "./service.js";
+import type { CurriculumDocumentService } from "./service.js";
 
 async function authenticatedUserId(
   request: FastifyRequest,
@@ -36,6 +31,8 @@ function publicDocument(document: CurriculumDocumentRecord) {
     documentId: document.documentId,
     curriculumId: document.curriculumId,
     levelId: document.levelId,
+    unitId: document.unitId,
+    unitOrder: document.unitOrder,
     createdAt: document.createdAt.toISOString(),
     updatedAt: document.updatedAt.toISOString(),
   };
@@ -87,32 +84,6 @@ function publicUnit(unit: CurriculumUnitRecord) {
   };
 }
 
-function serviceErrorReply(error: CurriculumDocumentServiceError, reply: { code(statusCode: number): { send(payload: unknown): unknown } }) {
-  if (error.code === "file_too_large") {
-    return reply.code(413).send({ error: error.code });
-  }
-  if (error.code === "not_found") {
-    return reply.code(404).send({ error: error.code });
-  }
-  if (
-    error.code === "identity_conflict" ||
-    error.code === "version_conflict" ||
-    error.code === "text_conflict" ||
-    error.code === "storage_not_ready" ||
-    error.code === "not_extractable"
-  ) {
-    return reply.code(409).send({ error: error.code });
-  }
-  if (error.code === "storage_error") {
-    return reply.code(503).send({ error: error.code });
-  }
-  return reply.code(error.detail === "not_configured" ? 503 : 422).send({
-    error: error.code,
-    reason: error.detail ?? null,
-    validationHistory: error.validationHistory,
-  });
-}
-
 export function registerCurriculumDocumentRoutes(
   server: FastifyInstance,
   dependencies: {
@@ -122,43 +93,28 @@ export function registerCurriculumDocumentRoutes(
 ) {
   const { authStore, service } = dependencies;
 
-  server.get("/languages/curriculum-documents", async (request, reply) => {
+  server.get("/languages/curriculum-documents", { preHandler: requireSuperadmin(authStore) }, async (request, reply) => {
     const userId = await authenticatedUserId(request, authStore);
     if (!userId) return reply.code(401).send({ error: "Authentication required." });
-    const documents = await service.listDocuments(userId);
+    const documents = await service.listDocuments();
     return { documents: documents.map(publicDocument) };
   });
 
   server.post(
     "/languages/curriculum-documents",
-    { bodyLimit: CURRICULUM_DOCUMENT_ROUTE_BODY_LIMIT },
-    async (request, reply) => {
-      const userId = await authenticatedUserId(request, authStore);
-      if (!userId) return reply.code(401).send({ error: "Authentication required." });
-      const parsed = ingestCurriculumDocumentSchema.safeParse(request.body);
-      if (!parsed.success) return reply.code(400).send({ error: "Invalid curriculum document payload." });
-
-      try {
-        const result = await service.ingest(userId, parsed.data);
-        return reply.code(201).send({
-          document: publicDocument(result.document),
-          version: publicVersion(result.version),
-        });
-      } catch (error) {
-        if (error instanceof CurriculumDocumentServiceError) return serviceErrorReply(error, reply);
-        throw error;
-      }
-    },
+    { preHandler: requireSuperadmin(authStore) },
+    async (_request, reply) => reply.code(410).send({ error: "LEGACY_CURRICULUM_MUTATION_RETIRED" }),
   );
 
   server.get(
     "/languages/curriculum-documents/:documentId/versions",
+    { preHandler: requireSuperadmin(authStore) },
     async (request, reply) => {
       const userId = await authenticatedUserId(request, authStore);
       if (!userId) return reply.code(401).send({ error: "Authentication required." });
       const parsed = curriculumDocumentPathSchema.safeParse(request.params);
       if (!parsed.success) return reply.code(400).send({ error: "Invalid document id." });
-      const versions = await service.listVersions(userId, parsed.data.documentId);
+      const versions = await service.listVersions(parsed.data.documentId);
       if (!versions) return reply.code(404).send({ error: "not_found" });
       return { versions: versions.map(publicVersion) };
     },
@@ -166,12 +122,13 @@ export function registerCurriculumDocumentRoutes(
 
   server.get(
     "/languages/curriculum-documents/:documentId/versions/:documentVersion",
+    { preHandler: requireSuperadmin(authStore) },
     async (request, reply) => {
       const userId = await authenticatedUserId(request, authStore);
       if (!userId) return reply.code(401).send({ error: "Authentication required." });
       const parsed = curriculumDocumentVersionPathSchema.safeParse(request.params);
       if (!parsed.success) return reply.code(400).send({ error: "Invalid document version path." });
-      const result = await service.getVersion(userId, parsed.data.documentId, parsed.data.documentVersion);
+      const result = await service.getVersion(parsed.data.documentId, parsed.data.documentVersion);
       if (!result) return reply.code(404).send({ error: "not_found" });
       return { document: publicDocument(result.document), version: publicVersion(result.version) };
     },
@@ -179,49 +136,27 @@ export function registerCurriculumDocumentRoutes(
 
   server.put(
     "/languages/curriculum-documents/:documentId/versions/:documentVersion/extracted-text",
-    async (request, reply) => {
-      const userId = await authenticatedUserId(request, authStore);
-      if (!userId) return reply.code(401).send({ error: "Authentication required." });
-      const path = curriculumDocumentVersionPathSchema.safeParse(request.params);
-      const body = attachCurriculumExtractedTextSchema.safeParse(request.body);
-      if (!path.success || !body.success) return reply.code(400).send({ error: "Invalid extracted text request." });
-      try {
-        const version = await service.attachExtractedText(userId, path.data.documentId, path.data.documentVersion, body.data);
-        return { version: publicVersion(version) };
-      } catch (error) {
-        if (error instanceof CurriculumDocumentServiceError) return serviceErrorReply(error, reply);
-        throw error;
-      }
-    },
+    { preHandler: requireSuperadmin(authStore) },
+    async (_request, reply) => reply.code(410).send({ error: "LEGACY_CURRICULUM_MUTATION_RETIRED" }),
   );
 
   server.post(
     "/languages/curriculum-documents/:documentId/versions/:documentVersion/compile",
-    async (request, reply) => {
-      const userId = await authenticatedUserId(request, authStore);
-      if (!userId) return reply.code(401).send({ error: "Authentication required." });
-      const path = curriculumDocumentVersionPathSchema.safeParse(request.params);
-      if (!path.success) return reply.code(400).send({ error: "Invalid compile path." });
-      try {
-        const result = await service.compile(userId, path.data.documentId, path.data.documentVersion);
-        return reply.code(201).send({ run: publicCompilation(result.run), units: result.units.map(publicUnit) });
-      } catch (error) {
-        if (error instanceof CurriculumDocumentServiceError) return serviceErrorReply(error, reply);
-        throw error;
-      }
-    },
+    { preHandler: requireSuperadmin(authStore) },
+    async (_request, reply) => reply.code(410).send({ error: "LEGACY_CURRICULUM_MUTATION_RETIRED" }),
   );
 
   server.get(
     "/languages/curriculum-documents/:documentId/versions/:documentVersion/compilations/:compilationRunId",
+    { preHandler: requireSuperadmin(authStore) },
     async (request, reply) => {
       const userId = await authenticatedUserId(request, authStore);
       if (!userId) return reply.code(401).send({ error: "Authentication required." });
       const path = curriculumCompilationPathSchema.safeParse(request.params);
       if (!path.success) return reply.code(400).send({ error: "Invalid compilation path." });
-      const version = await service.getVersion(userId, path.data.documentId, path.data.documentVersion);
+      const version = await service.getVersion(path.data.documentId, path.data.documentVersion);
       if (!version) return reply.code(404).send({ error: "not_found" });
-      const compilation = await service.getCompilation(userId, path.data.compilationRunId);
+      const compilation = await service.getCompilation(path.data.compilationRunId);
       if (!compilation || compilation.run.documentVersionId !== version.version.id) return reply.code(404).send({ error: "not_found" });
       return { run: publicCompilation(compilation.run), units: compilation.units.map(publicUnit) };
     },

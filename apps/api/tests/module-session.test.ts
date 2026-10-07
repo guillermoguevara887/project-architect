@@ -67,7 +67,9 @@ test("every module resolver allows current sessions and rejects stale and tamper
         assert.deepEqual(businessCalls, [], `${method} ${url} must stop before business operations`);
       }
       await server.inject({ method, url, payload, headers: { cookie: current } });
-      assert.deepEqual(businessCalls, [expectedOperation], `${method} ${url} must allow the current session`);
+      const curriculumAdminOnly = url.startsWith("/languages/curriculum-documents") || url.includes("/curriculum-units/");
+      assert.deepEqual(businessCalls, curriculumAdminOnly ? [] : [expectedOperation],
+        `${method} ${url} must enforce its role boundary before business operations`);
     }
   } finally {
     await server.close();

@@ -199,7 +199,6 @@ export const curriculumOrchestrationStore: CurriculumOrchestrationStore = {
         JOIN language_curriculum_documents document
           ON document.id=version.document_record_id
         WHERE unit.id=${input.curriculumUnitRecordId}
-          AND document.user_id=${input.userId}
         ON CONFLICT (
           user_id,
           curriculum_unit_record_id,

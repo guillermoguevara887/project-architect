@@ -19,6 +19,8 @@ import {
   languageStore,
 } from "../../src/languages/repository.js";
 import { curriculumDocumentStore } from "../../src/languages/documents/repository.js";
+import { adaptationResolutionStore } from "../../src/languages/resolution/repository.js";
+import { a1U01CurriculumFixture } from "../fixtures/language-curriculum/a1-u01.js";
 
 const databaseUrl = process.env.MIGRATION_TEST_DATABASE_URL;
 
@@ -2736,10 +2738,12 @@ test("direct SQL curriculum repository normalizes real PostgreSQL timestamptz va
       await sql`
         INSERT INTO language_curriculum_documents (
           id,
-          user_id,
+          uploaded_by_user_id,
           document_id,
           curriculum_id,
           level_id,
+          unit_id,
+          unit_order,
           created_at,
           updated_at
         ) VALUES (
@@ -2748,6 +2752,8 @@ test("direct SQL curriculum repository normalizes real PostgreSQL timestamptz va
           'A1-TIMESTAMP-REGRESSION',
           'memoos-core-language',
           'A1',
+          'A1-U01',
+          1,
           ${expectedTimestamp}::timestamptz,
           ${expectedTimestamp}::timestamptz
         )
@@ -2755,7 +2761,7 @@ test("direct SQL curriculum repository normalizes real PostgreSQL timestamptz va
     });
 
     process.env.DATABASE_URL = isolatedUrl;
-    const documents = await curriculumDocumentStore.listDocuments(userId);
+    const documents = await curriculumDocumentStore.listDocuments();
 
     assert.equal(documents.length, 1);
     assert.ok(documents[0]?.createdAt instanceof Date);
@@ -2768,4 +2774,230 @@ test("direct SQL curriculum repository normalizes real PostgreSQL timestamptz va
     else process.env.DATABASE_URL = previousDatabaseUrl;
     await migrationDatabase.close();
   }
+});
+
+test("0030 creates global slots, rejects invalid identity, and keeps review after actor deletion", async () => {
+  const isolatedUrl = await createIsolatedDatabase("global_curriculum");
+  const database = createPostgresMigrationDatabase(isolatedUrl);
+  const migrations = await loadMigrationFiles(migrationDirectory);
+  const previousDatabaseUrl = process.env.DATABASE_URL;
+  try {
+    assert.equal(migrations.filter((item) => item.id.startsWith("0030_")).length, 1);
+    await migratePending(database, migrations);
+    await withSql(isolatedUrl, async (sql) => {
+      const [actor] = await sql<{ id: string }[]>`INSERT INTO users (username, password_hash, role) VALUES ('global-curriculum-actor', 'hash', 'superadmin') RETURNING id`;
+      const [document] = await sql<{ id: string }[]>`
+        INSERT INTO language_curriculum_documents (uploaded_by_user_id, document_id, curriculum_id, level_id, unit_id, unit_order)
+        VALUES (${actor!.id}, 'memoos-core-language-A1-U01', 'memoos-core-language', 'A1', 'A1-U01', 1) RETURNING id`;
+      const [version] = await sql<{ id: string }[]>`
+        INSERT INTO language_curriculum_document_versions (document_record_id, document_version, source_title, source_format, original_filename, media_type, storage_key, content_sha256, byte_size)
+        VALUES (${document!.id}, '1.0.0', 'A1 Unidad 1', 'pdf_extracted_text', 'a1.pdf', 'application/pdf', 'language-curriculum/global/a1', ${"a".repeat(64)}, 1) RETURNING id`;
+      const [run] = await sql<{ id: string }[]>`INSERT INTO language_curriculum_compilation_runs (document_version_id, boundary_key) VALUES (${version!.id}, 'test') RETURNING id`;
+      const [unit] = await sql<{ id: string }[]>`INSERT INTO language_curriculum_units (compilation_run_id, unit_id, spec_version, unit_order, status, spec) VALUES (${run!.id}, 'A1-U01', '1.0.0', 1, 'review', ${{}}) RETURNING id`;
+      await sql`INSERT INTO language_curriculum_unit_reviews (reviewed_by_user_id, source_unit_record_id, action, review_note, promoted_spec, promoted_spec_sha256) VALUES (${actor!.id}, ${unit!.id}, 'accepted', 'test', ${a1U01CurriculumFixture}, ${"b".repeat(64)})`;
+      await assert.rejects(sql`INSERT INTO language_curriculum_documents (document_id, curriculum_id, level_id, unit_id, unit_order) VALUES ('duplicate', 'memoos-core-language', 'A1', 'A1-U01', 1)`, { code: "23514", constraint_name: "language_curriculum_documents_sequential_check" });
+      await assert.rejects(sql`INSERT INTO language_curriculum_documents (document_id, curriculum_id, level_id, unit_id, unit_order) VALUES ('skipped', 'memoos-core-language', 'A1', 'A1-U03', 3)`, { code: "23514", constraint_name: "language_curriculum_documents_sequential_check" });
+      await assert.rejects(sql`UPDATE language_curriculum_documents SET unit_order=2, unit_id='A1-U02' WHERE id=${document!.id}`, { code: "23514", constraint_name: "language_curriculum_documents_identity_immutable" });
+      await assert.rejects(sql`INSERT INTO language_curriculum_documents (document_id, curriculum_id, level_id, unit_id, unit_order) VALUES ('wrong-unit', 'memoos-core-language', 'A1', 'A1-U03', 2)`, { code: "23514", constraint_name: "language_curriculum_documents_unit_identity_check" });
+      await assert.rejects(sql`INSERT INTO language_curriculum_documents (document_id, curriculum_id, level_id, unit_id, unit_order) VALUES ('c2', 'memoos-core-language', 'C2', 'C2-U01', 1)`, { code: "23514", constraint_name: "language_curriculum_documents_level_check" });
+      await assert.rejects(sql`INSERT INTO language_curriculum_document_versions (document_record_id, document_version, source_title, source_language_hint, source_format, original_filename, media_type, storage_key, content_sha256, byte_size) VALUES (${document!.id}, '2.0.0', 'language-bound', 'de', 'pdf_extracted_text', 'a1.pdf', 'application/pdf', 'language-curriculum/global/a1-v2', ${"a".repeat(64)}, 1)`, { code: "23514", constraint_name: "language_curriculum_document_versions_neutral_check" });
+      await sql`DELETE FROM users WHERE id=${actor!.id}`;
+      const [surviving] = await sql<{ uploaded_by_user_id: string | null }[]>`SELECT uploaded_by_user_id FROM language_curriculum_documents WHERE id=${document!.id}`;
+      const [review] = await sql<{ reviewed_by_user_id: string | null }[]>`SELECT reviewed_by_user_id FROM language_curriculum_unit_reviews WHERE source_unit_record_id=${unit!.id}`;
+      assert.equal(surviving?.uploaded_by_user_id, null);
+      assert.equal(review?.reviewed_by_user_id, null);
+      assert.equal((await sql`SELECT 1 FROM language_curriculum_document_versions WHERE id=${version!.id}`).length, 1);
+      assert.equal((await sql`SELECT 1 FROM language_curriculum_units WHERE id=${unit!.id}`).length, 1);
+      const users = [] as Array<{ id: string; profileId: string; registryId: string }>;
+      for (const index of [1, 2]) {
+        const [user] = await sql<{ id: string }[]>`INSERT INTO users (username, password_hash) VALUES (${`global-consumer-${index}`}, 'hash') RETURNING id`;
+        const [profile] = await sql<{ id: string }[]>`INSERT INTO language_knowledge_profiles (user_id, profile_id, language_id, variety_id, version, status, profile, content_sha256) VALUES (${user!.id}, ${`profile-${index}`}, 'de', 'de.standard', '1.0.0', 'draft', ${{}}::jsonb, ${"c".repeat(64)}) RETURNING id`;
+        const [registry] = await sql<{ id: string }[]>`INSERT INTO language_decision_registry_versions (user_id, profile_record_id, registry_id, language_id, variety_id, curriculum_id, version, status, registry, content_sha256) VALUES (${user!.id}, ${profile!.id}, ${`registry-${index}`}, 'de', 'de.standard', 'memoos-core-language', '1.0.0', 'draft', ${{}}::jsonb, ${"d".repeat(64)}) RETURNING id`;
+        users.push({ id: user!.id, profileId: profile!.id, registryId: registry!.id });
+      }
+      process.env.DATABASE_URL = isolatedUrl;
+      const [first, second] = users;
+      assert.ok(await adaptationResolutionStore.loadContext({ userId: first!.id, curriculumUnitRecordId: unit!.id, profileRecordId: first!.profileId, registryRecordId: first!.registryId }));
+      assert.ok(await adaptationResolutionStore.loadContext({ userId: second!.id, curriculumUnitRecordId: unit!.id, profileRecordId: second!.profileId, registryRecordId: second!.registryId }));
+      assert.equal(await adaptationResolutionStore.loadContext({ userId: second!.id, curriculumUnitRecordId: unit!.id, profileRecordId: first!.profileId, registryRecordId: first!.registryId }), null);
+    });
+  } finally {
+    await closeDbConnection();
+    if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = previousDatabaseUrl;
+    await database.close();
+  }
+});
+
+test("0030 serializes concurrent compilation attempts and maps slot constraints", async () => {
+  const isolatedUrl = await createIsolatedDatabase("global_compilation_race");
+  const database = createPostgresMigrationDatabase(isolatedUrl);
+  const migrations = await loadMigrationFiles(migrationDirectory);
+  const previousDatabaseUrl = process.env.DATABASE_URL;
+  try {
+    await migratePending(database, migrations);
+    await withSql(isolatedUrl, async (sql) => {
+      await sql`INSERT INTO users (id, username, password_hash, role) VALUES ('00000000-0000-4000-8000-000000000001', 'compilation-race-admin', 'hash', 'superadmin')`;
+      const [document] = await sql<{ id: string }[]>`
+        INSERT INTO language_curriculum_documents (document_id, curriculum_id, level_id, unit_id, unit_order)
+        VALUES ('memoos-core-language-A1-U01', 'memoos-core-language', 'A1', 'A1-U01', 1) RETURNING id`;
+      await sql`
+        INSERT INTO language_curriculum_document_versions
+          (document_record_id, document_version, source_title, source_format, original_filename, media_type,
+           storage_key, content_sha256, byte_size, storage_status, extracted_text, extracted_text_sha256,
+           extraction_status, extraction_method)
+        VALUES (${document!.id}, '1.0.0', 'A1 Unidad 1', 'pdf_extracted_text', 'a1.pdf', 'application/pdf',
+          'language-curriculum/test/compilation-race', ${"a".repeat(64)}, 8, 'ready', 'Texto curricular',
+          ${"b".repeat(64)}, 'ready', 'test')`;
+    });
+    process.env.DATABASE_URL = isolatedUrl;
+    const input = { documentId: "memoos-core-language-A1-U01", documentVersion: "1.0.0", boundaryKey: "race-test" };
+    const attempts = await Promise.all([curriculumDocumentStore.beginCompilation(input), curriculumDocumentStore.beginCompilation(input)]);
+    assert.deepEqual(attempts.map((result) => result.kind).sort(), ["already_running", "started"]);
+    const winner = attempts.find((result) => result.kind === "started");
+    if (!winner || winner.kind !== "started") throw new Error("Expected one running compilation.");
+    await withSql(isolatedUrl, async (sql) => {
+      const [count] = await sql<{ total: number }[]>`SELECT count(*)::int AS total FROM language_curriculum_compilation_runs WHERE status IN ('running', 'ready')`;
+      assert.equal(count?.total, 1);
+      await assert.rejects(sql`INSERT INTO language_curriculum_compilation_runs (document_version_id, boundary_key) VALUES (${winner.run.documentVersionId}, 'bypass')`,
+        { code: "23505", constraint_name: "language_curriculum_compilation_runs_active_version_unique" });
+      await sql`INSERT INTO language_curriculum_units (compilation_run_id, unit_id, spec_version, unit_order, status, spec) VALUES (${winner.run.id}, 'A1-U01', '1.0.0', 1, 'review', ${{}})`;
+      await assert.rejects(sql`INSERT INTO language_curriculum_units (compilation_run_id, unit_id, spec_version, unit_order, status, spec) VALUES (${winner.run.id}, 'A1-U02', '1.0.0', 2, 'review', ${{}})`,
+        { code: "23505", constraint_name: "language_curriculum_units_run_single_unit_unique" });
+      await sql`UPDATE language_curriculum_compilation_runs SET status='ready', attempts=1, completed_at=now() WHERE id=${winner.run.id}`;
+    });
+    assert.equal((await curriculumDocumentStore.beginCompilation(input)).kind, "already_ready");
+    await withSql(isolatedUrl, async (sql) => {
+      const [count] = await sql<{ total: number }[]>`SELECT count(*)::int AS total FROM language_curriculum_units`;
+      assert.equal(count?.total, 1);
+    });
+    const constraintResult = await curriculumDocumentStore.reserveVersion({
+      uploadedByUserId: "00000000-0000-4000-8000-000000000001",
+      documentId: "memoos-core-language-A1-U02", documentVersion: "1.0.0",
+      curriculumId: "memoos-core-language", levelId: "A1", unitId: "A1-U99", unitOrder: 2,
+      sourceTitle: "invalid", sourceLanguageHint: null, sourceFormat: "pdf_extracted_text",
+      originalFilename: "a1.pdf", mediaType: "application/pdf", storageKey: "language-curriculum/test/invalid-slot",
+      contentSha256: "c".repeat(64), byteSize: 8,
+    });
+    assert.equal(constraintResult.kind, "identity_conflict");
+  } finally {
+    await closeDbConnection();
+    if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = previousDatabaseUrl;
+    await database.close();
+  }
+});
+
+test("0030 atomically recovers one stale compilation while preserving fresh and ready runs", async () => {
+  const isolatedUrl = await createIsolatedDatabase("stale_global_compilation");
+  const database = createPostgresMigrationDatabase(isolatedUrl);
+  const migrations = await loadMigrationFiles(migrationDirectory);
+  const previousDatabaseUrl = process.env.DATABASE_URL;
+  const documentId = "memoos-core-language-A1-U01";
+  const versionIds = new Map<string, string>();
+  let abandonedRunId = "";
+  let rollbackRunId = "";
+  try {
+    await migratePending(database, migrations);
+    await withSql(isolatedUrl, async (sql) => {
+      const [document] = await sql<{ id: string }[]>`
+        INSERT INTO language_curriculum_documents (document_id, curriculum_id, level_id, unit_id, unit_order)
+        VALUES (${documentId}, 'memoos-core-language', 'A1', 'A1-U01', 1) RETURNING id`;
+      for (const label of ["1.0.0", "2.0.0", "3.0.0", "4.0.0"]) {
+        const [version] = await sql<{ id: string }[]>`
+          INSERT INTO language_curriculum_document_versions
+            (document_record_id, document_version, source_title, source_format, original_filename, media_type,
+             storage_key, content_sha256, byte_size, storage_status, extracted_text, extracted_text_sha256,
+             extraction_status, extraction_method)
+          VALUES (${document!.id}, ${label}, 'A1 Unidad 1', 'pdf_extracted_text', 'a1.pdf', 'application/pdf',
+            ${`language-curriculum/test/stale-${label}`}, ${"a".repeat(64)}, 8, 'ready', 'Texto curricular',
+            ${"b".repeat(64)}, 'ready', 'test') RETURNING id`;
+        versionIds.set(label, version!.id);
+      }
+      const [abandoned] = await sql<{ id: string }[]>`
+        INSERT INTO language_curriculum_compilation_runs (document_version_id, boundary_key, started_at)
+        VALUES (${versionIds.get("1.0.0")!}, 'abandoned', now() - interval '1 day') RETURNING id`;
+      abandonedRunId = abandoned!.id;
+      await sql`INSERT INTO language_curriculum_compilation_runs (document_version_id, boundary_key) VALUES (${versionIds.get("2.0.0")!}, 'fresh')`;
+      await sql`
+        INSERT INTO language_curriculum_compilation_runs
+          (document_version_id, boundary_key, status, attempts, started_at, completed_at)
+        VALUES (${versionIds.get("3.0.0")!}, 'completed', 'ready', 1, now() - interval '1 day', now() - interval '23 hours')`;
+      const [rollback] = await sql<{ id: string }[]>`
+        INSERT INTO language_curriculum_compilation_runs (document_version_id, boundary_key, started_at)
+        VALUES (${versionIds.get("4.0.0")!}, 'abandoned-rollback', now() - interval '1 day') RETURNING id`;
+      rollbackRunId = rollback!.id;
+    });
+    process.env.DATABASE_URL = isolatedUrl;
+    const input = (documentVersion: string, boundaryKey = "retry") => ({ documentId, documentVersion, boundaryKey });
+    const attempts = await Promise.all([
+      curriculumDocumentStore.beginCompilation(input("1.0.0")),
+      curriculumDocumentStore.beginCompilation(input("1.0.0")),
+    ]);
+    assert.deepEqual(attempts.map((result) => result.kind).sort(), ["already_running", "started"]);
+    const replacement = attempts.find((result) => result.kind === "started");
+    if (!replacement || replacement.kind !== "started") throw new Error("Expected one replacement run.");
+    assert.notEqual(replacement.run.id, abandonedRunId);
+    await withSql(isolatedUrl, async (sql) => {
+      const [old] = await sql<{ status: string; error_code: string | null; completed_at: Date | null }[]>`
+        SELECT status, error_code, completed_at FROM language_curriculum_compilation_runs WHERE id=${abandonedRunId}`;
+      assert.equal(old?.status, "failed");
+      assert.equal(old?.error_code, "stale_compilation_timeout");
+      assert.ok(old?.completed_at);
+      const [counts] = await sql<{ total: number; active: number }[]>`
+        SELECT count(*)::int AS total, count(*) FILTER (WHERE status IN ('running', 'ready'))::int AS active
+        FROM language_curriculum_compilation_runs WHERE document_version_id=${versionIds.get("1.0.0")!}`;
+      assert.deepEqual(counts, { total: 2, active: 1 });
+      await assert.rejects(sql`INSERT INTO language_curriculum_compilation_runs (document_version_id, boundary_key) VALUES (${versionIds.get("1.0.0")!}, 'bypass')`,
+        { code: "23505", constraint_name: "language_curriculum_compilation_runs_active_version_unique" });
+    });
+    const candidate: Parameters<typeof curriculumDocumentStore.completeCompilation>[0]["candidate"] = {
+      value: {
+        documentRef: { id: documentId, version: "1.0.0" },
+        curriculumId: "memoos-core-language", levelId: "A1", units: [a1U01CurriculumFixture],
+      },
+      attempts: 1, validationHistory: [],
+    };
+    assert.equal(await curriculumDocumentStore.completeCompilation({ runId: abandonedRunId, candidate }), null);
+    await withSql(isolatedUrl, async (sql) => {
+      const [count] = await sql<{ total: number }[]>`SELECT count(*)::int AS total FROM language_curriculum_units WHERE compilation_run_id=${abandonedRunId}`;
+      assert.equal(count?.total, 0);
+    });
+    assert.equal((await curriculumDocumentStore.beginCompilation(input("2.0.0"))).kind, "already_running");
+    assert.equal((await curriculumDocumentStore.beginCompilation(input("3.0.0"))).kind, "already_ready");
+    await withSql(isolatedUrl, async (sql) => {
+      await sql.unsafe(`CREATE FUNCTION reject_stale_replacement() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN IF NEW.boundary_key = 'forced-failure' THEN RAISE EXCEPTION 'forced replacement failure'; END IF;
+        RETURN NEW; END $$`);
+      await sql.unsafe("CREATE TRIGGER reject_stale_replacement BEFORE INSERT ON language_curriculum_compilation_runs FOR EACH ROW EXECUTE FUNCTION reject_stale_replacement()");
+    });
+    await assert.rejects(curriculumDocumentStore.beginCompilation(input("4.0.0", "forced-failure")));
+    await withSql(isolatedUrl, async (sql) => {
+      const [old] = await sql<{ status: string; error_code: string | null; completed_at: Date | null }[]>`
+        SELECT status, error_code, completed_at FROM language_curriculum_compilation_runs WHERE id=${rollbackRunId}`;
+      assert.deepEqual(old, { status: "running", error_code: null, completed_at: null });
+      const [count] = await sql<{ total: number }[]>`SELECT count(*)::int AS total FROM language_curriculum_compilation_runs WHERE document_version_id=${versionIds.get("4.0.0")!}`;
+      assert.equal(count?.total, 1);
+    });
+    assert.equal((await curriculumDocumentStore.beginCompilation(input("4.0.0"))).kind, "started");
+  } finally {
+    await closeDbConnection();
+    if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = previousDatabaseUrl;
+    await database.close();
+  }
+});
+
+test("0030 refuses ambiguous user-owned historical curriculum rows", async () => {
+  const isolatedUrl = await createIsolatedDatabase("global_curriculum_legacy");
+  const database = createPostgresMigrationDatabase(isolatedUrl);
+  const migrations = await loadMigrationFiles(migrationDirectory);
+  try {
+    await migratePending(database, migrations.filter((item) => !item.id.startsWith("0030_")));
+    await withSql(isolatedUrl, async (sql) => {
+      const [actor] = await sql<{ id: string }[]>`INSERT INTO users (username, password_hash) VALUES ('legacy-curriculum-actor', 'hash') RETURNING id`;
+      await sql`INSERT INTO language_curriculum_documents (user_id, document_id, curriculum_id, level_id) VALUES (${actor!.id}, 'ambiguous', 'memoos-core-language', 'A1')`;
+    });
+    await assert.rejects(migratePending(database, migrations), /reconcile explicitly before migration/u);
+  } finally { await database.close(); }
 });

@@ -143,7 +143,6 @@ export const adaptationResolutionStore: AdaptationResolutionStore = {
       FROM language_curriculum_units unit
       JOIN language_curriculum_unit_reviews review
         ON review.source_unit_record_id = unit.id
-        AND review.user_id = ${input.userId}
         AND review.action = 'accepted'
         AND review.promoted_spec IS NOT NULL
       JOIN language_curriculum_compilation_runs compilation
@@ -160,7 +159,6 @@ export const adaptationResolutionStore: AdaptationResolutionStore = {
         AND registry.user_id = ${input.userId}
         AND registry.profile_record_id = profile.id
       WHERE unit.id = ${input.curriculumUnitRecordId}
-        AND document.user_id = ${input.userId}
       LIMIT 1
     `));
     return result[0] ? mapContext(result[0]) : null;
@@ -198,7 +196,6 @@ export const adaptationResolutionStore: AdaptationResolutionStore = {
       FROM language_curriculum_units unit
       JOIN language_curriculum_unit_reviews review
         ON review.source_unit_record_id = unit.id
-        AND review.user_id = ${input.userId}
         AND review.action = 'accepted'
         AND review.promoted_spec IS NOT NULL
         AND review.promoted_spec = ${JSON.stringify(
@@ -218,7 +215,6 @@ export const adaptationResolutionStore: AdaptationResolutionStore = {
         AND registry.user_id = ${input.userId}
         AND registry.profile_record_id = profile.id
       WHERE unit.id = ${input.context.curriculumUnitRecordId}
-        AND document.user_id = ${input.userId}
         AND (
           ${input.previousRunId ?? null}::uuid IS NULL
           OR EXISTS (

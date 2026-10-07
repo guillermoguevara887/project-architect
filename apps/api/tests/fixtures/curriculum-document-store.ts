@@ -1,138 +1,91 @@
 import { randomUUID } from "node:crypto";
-import type {
-  AttachExtractedTextResult,
-  BeginCompilationResult,
-  CurriculumCompilationRunRecord,
-  CurriculumDocumentRecord,
-  CurriculumDocumentStore,
-  CurriculumDocumentVersionRecord,
-  CurriculumDocumentWithVersion,
-  CurriculumUnitRecord,
-  ReserveCurriculumDocumentVersionInput,
-  ReserveCurriculumDocumentVersionResult,
-} from "../../src/languages/documents/repository.js";
-import type { CandidateValidationAttempt } from "../../src/languages/ai/structured-candidate-boundary.js";
-import type { CurriculumDocumentCandidate } from "../../src/languages/ai/document-curriculum-extractor.js";
-import type { ValidatedCandidate } from "../../src/languages/ai/structured-candidate-boundary.js";
+import { CURRICULUM_COMPILATION_STALE_TIMEOUT_MS, STALE_CURRICULUM_COMPILATION_ERROR_CODE, type CurriculumCompilationRunRecord, type CurriculumDocumentRecord, type CurriculumDocumentStore, type CurriculumDocumentVersionRecord, type CurriculumDocumentWithVersion, type CurriculumUnitRecord, type ReserveCurriculumDocumentVersionInput, type ReserveCurriculumDocumentVersionResult } from "../../src/languages/documents/repository.js";
 
-function now() { return new Date("2026-09-03T05:00:00.000Z"); }
-
+const now = () => new Date("2026-09-03T05:00:00.000Z");
 export class InMemoryCurriculumDocumentStore implements CurriculumDocumentStore {
   documents: CurriculumDocumentRecord[] = [];
   versions: CurriculumDocumentVersionRecord[] = [];
   runs: CurriculumCompilationRunRecord[] = [];
   units: CurriculumUnitRecord[] = [];
 
-  async listDocuments(userId: string) {
-    return this.documents.filter((document) => document.userId === userId);
+  async listDocuments() { return [...this.documents].sort((a, b) => a.levelId.localeCompare(b.levelId) || a.unitOrder - b.unitOrder); }
+  async listVersions(documentId: string) {
+    const doc = this.documents.find((d) => d.documentId === documentId);
+    return doc ? this.versions.filter((v) => v.documentRecordId === doc.id) : null;
   }
-
-  async listVersions(userId: string, documentId: string) {
-    const document = this.documents.find((item) => item.userId === userId && item.documentId === documentId);
-    if (!document) return null;
-    return this.versions.filter((version) => version.documentRecordId === document.id);
+  async findVersion(documentId: string, documentVersion: string): Promise<CurriculumDocumentWithVersion | null> {
+    const document = this.documents.find((d) => d.documentId === documentId);
+    const version = document && this.versions.find((v) => v.documentRecordId === document.id && v.documentVersion === documentVersion);
+    return document && version ? { document, version } : null;
   }
-
-  async findVersionForUser(userId: string, documentId: string, documentVersion: string): Promise<CurriculumDocumentWithVersion | null> {
-    const document = this.documents.find((item) => item.userId === userId && item.documentId === documentId);
-    if (!document) return null;
-    const version = this.versions.find((item) => item.documentRecordId === document.id && item.documentVersion === documentVersion);
-    return version ? { document, version } : null;
-  }
-
   async reserveVersion(input: ReserveCurriculumDocumentVersionInput): Promise<ReserveCurriculumDocumentVersionResult> {
-    let document = this.documents.find((item) => item.userId === input.userId && item.documentId === input.documentId);
-    if (document && (document.curriculumId !== input.curriculumId || document.levelId !== input.levelId)) return { kind: "identity_conflict" };
-    if (!document) {
-      document = { id: randomUUID(), userId: input.userId, documentId: input.documentId, curriculumId: input.curriculumId, levelId: input.levelId, createdAt: now(), updatedAt: now() };
-      this.documents.push(document);
+    const occupied = this.documents.find((d) => d.curriculumId === input.curriculumId && d.levelId === input.levelId && d.unitOrder === input.unitOrder);
+    if (occupied) {
+      const version = this.versions.find((v) => v.documentRecordId === occupied.id && v.documentVersion === input.documentVersion);
+      if (occupied.documentId !== input.documentId || occupied.unitId !== input.unitId || !version || version.storageStatus === "ready") return { kind: "identity_conflict" };
+      const same = version.contentSha256 === input.contentSha256 && version.sourceTitle === input.sourceTitle && version.sourceLanguageHint === input.sourceLanguageHint && version.sourceFormat === input.sourceFormat && version.originalFilename === input.originalFilename && version.mediaType === input.mediaType && version.storageKey === input.storageKey && version.byteSize === input.byteSize;
+      return same ? { kind: "existing", document: occupied, version } : { kind: "version_conflict" };
     }
-    const existing = this.versions.find((item) => item.documentRecordId === document.id && item.documentVersion === input.documentVersion);
-    if (existing) {
-      const same = existing.contentSha256 === input.contentSha256 && existing.sourceTitle === input.sourceTitle && existing.sourceLanguageHint === input.sourceLanguageHint && existing.sourceFormat === input.sourceFormat && existing.originalFilename === input.originalFilename && existing.mediaType === input.mediaType && existing.storageKey === input.storageKey && existing.byteSize === input.byteSize;
-      return same ? { kind: "existing", document, version: existing } : { kind: "version_conflict" };
-    }
-    const version: CurriculumDocumentVersionRecord = {
-      id: randomUUID(), documentRecordId: document.id, documentVersion: input.documentVersion,
-      sourceTitle: input.sourceTitle, sourceLanguageHint: input.sourceLanguageHint, sourceFormat: input.sourceFormat,
-      originalFilename: input.originalFilename, mediaType: input.mediaType, storageKey: input.storageKey,
-      contentSha256: input.contentSha256, byteSize: input.byteSize, storageStatus: "pending",
-      extractedText: null, extractedTextSha256: null, extractionStatus: "pending", extractionMethod: null,
-      createdAt: now(), updatedAt: now(),
-    };
+    const next = Math.max(0, ...this.documents.filter((d) => d.curriculumId === input.curriculumId && d.levelId === input.levelId).map((d) => d.unitOrder)) + 1;
+    if (input.unitOrder !== next || this.documents.some((d) => d.documentId === input.documentId)) return { kind: "identity_conflict" };
+    const document: CurriculumDocumentRecord = { id: randomUUID(), uploadedByUserId: input.uploadedByUserId, documentId: input.documentId, curriculumId: input.curriculumId, levelId: input.levelId, unitId: input.unitId, unitOrder: input.unitOrder, createdAt: now(), updatedAt: now() };
+    this.documents.push(document);
+    const version: CurriculumDocumentVersionRecord = { id: randomUUID(), documentRecordId: document.id, documentVersion: input.documentVersion, sourceTitle: input.sourceTitle, sourceLanguageHint: input.sourceLanguageHint, sourceFormat: input.sourceFormat, originalFilename: input.originalFilename, mediaType: input.mediaType, storageKey: input.storageKey, contentSha256: input.contentSha256, byteSize: input.byteSize, storageStatus: "pending", extractedText: null, extractedTextSha256: null, extractionStatus: "pending", extractionMethod: null, createdAt: now(), updatedAt: now() };
     this.versions.push(version);
     return { kind: "reserved", document, version };
   }
-
-  async markStorageReadyUnderUserBarrier(input: { userId: string; versionId: string; put: () => Promise<void> }) {
-    const version = this.versions.find((item) => item.id === input.versionId);
-    if (!version || !this.documents.some((item) => item.id === version.documentRecordId && item.userId === input.userId)) return null;
-    await input.put();
-    version.storageStatus = "ready";
-    return version;
-  }
-
-  async markStorageFailed(versionId: string) {
-    const version = this.versions.find((item) => item.id === versionId);
+  async markStorageReadyUnderVersionBarrier(input: { versionId: string; put: () => Promise<void> }) {
+    const version = this.versions.find((v) => v.id === input.versionId);
     if (!version) return null;
-    version.storageStatus = "failed";
+    if (version.storageStatus !== "ready") { await input.put(); version.storageStatus = "ready"; }
     return version;
   }
-
-  async attachExtractedText(input: { userId: string; documentId: string; documentVersion: string; extractedText: string; extractedTextSha256: string; extractionMethod: string }): Promise<AttachExtractedTextResult> {
-    const owned = await this.findVersionForUser(input.userId, input.documentId, input.documentVersion);
-    if (!owned) return { kind: "not_found" };
-    if (owned.version.storageStatus !== "ready") return { kind: "storage_not_ready" };
-    if (owned.version.extractionStatus === "ready") return owned.version.extractedTextSha256 === input.extractedTextSha256 ? { kind: "existing", version: owned.version } : { kind: "text_conflict" };
-    owned.version.extractedText = input.extractedText;
-    owned.version.extractedTextSha256 = input.extractedTextSha256;
-    owned.version.extractionStatus = "ready";
-    owned.version.extractionMethod = input.extractionMethod;
-    return { kind: "updated", version: owned.version };
+  async markStorageFailed(versionId: string) {
+    const version = this.versions.find((v) => v.id === versionId);
+    if (!version || version.storageStatus === "ready") return null;
+    version.storageStatus = "failed"; return version;
   }
-
-  async beginCompilation(input: { userId: string; documentId: string; documentVersion: string; boundaryKey: string }): Promise<BeginCompilationResult> {
-    const owned = await this.findVersionForUser(input.userId, input.documentId, input.documentVersion);
-    if (!owned) return { kind: "not_found" };
-    if (owned.version.storageStatus !== "ready" || owned.version.extractionStatus !== "ready" || !owned.version.extractedText) return { kind: "not_extractable" };
-    const run: CurriculumCompilationRunRecord = { id: randomUUID(), documentVersionId: owned.version.id, boundaryKey: input.boundaryKey, status: "running", attempts: null, validationHistory: null, errorCode: null, startedAt: now(), completedAt: null };
-    this.runs.push(run);
-    return { kind: "started", run };
+  async markExtractionFailed(versionId: string) {
+    const version = this.versions.find((v) => v.id === versionId);
+    if (!version || version.extractionStatus === "ready") return null;
+    version.extractionStatus = "failed"; return version;
   }
-
-  async completeCompilation(input: { userId: string; runId: string; candidate: ValidatedCandidate<CurriculumDocumentCandidate> }) {
-    const run = await this.findCompilationForUser(input.userId, input.runId);
-    if (!run || run.status !== "running") return null;
-    for (const spec of input.candidate.value.units) {
-      this.units.push({ id: randomUUID(), compilationRunId: run.id, unitId: spec.identity.unitId, specVersion: spec.specVersion, unitOrder: spec.identity.unitOrder, status: spec.status, spec, createdAt: now() });
+  async attachExtractedText(input: { documentId: string; documentVersion: string; extractedText: string; extractedTextSha256: string; extractionMethod: string }) {
+    const found = await this.findVersion(input.documentId, input.documentVersion);
+    if (!found) return { kind: "not_found" } as const;
+    const version = found.version;
+    if (version.storageStatus !== "ready") return { kind: "storage_not_ready" } as const;
+    if (version.extractionStatus === "ready") return version.extractedTextSha256 === input.extractedTextSha256 ? { kind: "existing", version } as const : { kind: "text_conflict" } as const;
+    version.extractedText = input.extractedText; version.extractedTextSha256 = input.extractedTextSha256; version.extractionStatus = "ready"; version.extractionMethod = input.extractionMethod;
+    return { kind: "updated", version } as const;
+  }
+  async beginCompilation(input: { documentId: string; documentVersion: string; boundaryKey: string }) {
+    const found = await this.findVersion(input.documentId, input.documentVersion);
+    if (!found) return { kind: "not_found" } as const;
+    if (found.version.storageStatus !== "ready" || found.version.extractionStatus !== "ready" || !found.version.extractedText) return { kind: "not_extractable" } as const;
+    const active = this.runs.find((run) => run.documentVersionId === found.version.id && (run.status === "running" || run.status === "ready"));
+    if (active?.status === "ready") return { kind: "already_ready" } as const;
+    if (active?.status === "running") {
+      if (now().getTime() - active.startedAt.getTime() < CURRICULUM_COMPILATION_STALE_TIMEOUT_MS) return { kind: "already_running" } as const;
+      active.status = "failed";
+      active.completedAt = now();
+      active.errorCode = STALE_CURRICULUM_COMPILATION_ERROR_CODE;
     }
-    run.status = "ready";
-    run.attempts = input.candidate.attempts;
-    run.validationHistory = input.candidate.validationHistory;
-    run.completedAt = now();
-    return run;
+    const run: CurriculumCompilationRunRecord = { id: randomUUID(), documentVersionId: found.version.id, boundaryKey: input.boundaryKey, status: "running", attempts: null, validationHistory: null, errorCode: null, startedAt: now(), completedAt: null };
+    this.runs.push(run); return { kind: "started", run } as const;
   }
-
-  async failCompilation(input: { userId: string; runId: string; errorCode: string; validationHistory: CandidateValidationAttempt[] }) {
-    const run = await this.findCompilationForUser(input.userId, input.runId);
+  async completeCompilation(input: Parameters<CurriculumDocumentStore["completeCompilation"]>[0]) {
+    const run = await this.findCompilation(input.runId);
     if (!run || run.status !== "running") return null;
-    run.status = "failed";
-    run.errorCode = input.errorCode;
-    run.validationHistory = input.validationHistory;
-    run.completedAt = now();
-    return run;
+    for (const spec of input.candidate.value.units) this.units.push({ id: randomUUID(), compilationRunId: run.id, unitId: spec.identity.unitId, specVersion: spec.specVersion, unitOrder: spec.identity.unitOrder, status: spec.status, spec, createdAt: now() });
+    run.status = "ready"; run.attempts = input.candidate.attempts; run.validationHistory = input.candidate.validationHistory; run.completedAt = now(); return run;
   }
-
-  async findCompilationForUser(userId: string, runId: string) {
-    const run = this.runs.find((item) => item.id === runId);
-    if (!run) return null;
-    const version = this.versions.find((item) => item.id === run.documentVersionId);
-    const document = version && this.documents.find((item) => item.id === version.documentRecordId);
-    return document?.userId === userId ? run : null;
+  async failCompilation(input: Parameters<CurriculumDocumentStore["failCompilation"]>[0]) {
+    const run = await this.findCompilation(input.runId);
+    if (!run || run.status !== "running") return null;
+    run.status = "failed"; run.errorCode = input.errorCode; run.validationHistory = input.validationHistory; run.completedAt = now(); return run;
   }
-
-  async listUnitsForCompilation(userId: string, runId: string) {
-    if (!(await this.findCompilationForUser(userId, runId))) return null;
-    return this.units.filter((unit) => unit.compilationRunId === runId).sort((a, b) => a.unitOrder - b.unitOrder);
-  }
+  async findCompilation(runId: string) { return this.runs.find((r) => r.id === runId) ?? null; }
+  async latestCompilation(versionId: string) { return [...this.runs].reverse().find((r) => r.documentVersionId === versionId) ?? null; }
+  async listUnitsForCompilation(runId: string) { return (await this.findCompilation(runId)) ? this.units.filter((u) => u.compilationRunId === runId).sort((a, b) => a.unitOrder - b.unitOrder) : null; }
 }
