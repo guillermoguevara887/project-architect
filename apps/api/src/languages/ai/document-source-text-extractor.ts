@@ -151,7 +151,7 @@ export class OpenAICurriculumSourceTextExtractor
           content: [
             {
               type: "input_file",
-              file_data: Buffer.from(input.bytes).toString("base64"),
+              file_data: `data:application/pdf;base64,${Buffer.from(input.bytes).toString("base64")}`,
               filename: input.filename,
             },
             {

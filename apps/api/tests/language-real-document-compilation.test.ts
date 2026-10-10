@@ -148,13 +148,27 @@ test("M12 PDF boundary sends the original PDF as input_file and preserves return
   const request = requests[0] as {
     store: boolean;
     input: Array<{
-      content: Array<{ type: string; file_data?: string; filename?: string }>;
+      content: Array<{
+        type: string;
+        file_data?: string;
+        filename?: string;
+        text?: string;
+      }>;
     }>;
   };
   assert.equal(request.store, false);
-  const file = request.input[0]?.content.find((item) => item.type === "input_file");
+  const content = request.input[0]?.content;
+  assert.deepEqual(content?.map((item) => item.type), ["input_file", "input_text"]);
+  const file = content?.[0];
+  assert.equal(file?.type, "input_file");
   assert.equal(file?.filename, "A1.pdf");
-  assert.equal(file?.file_data, bytes.toString("base64"));
+  const prefix = "data:application/pdf;base64,";
+  assert.ok(file.file_data?.startsWith(prefix));
+  assert.deepEqual(Buffer.from(file.file_data.slice(prefix.length), "base64"), bytes);
+  assert.equal(
+    content?.[1]?.text,
+    "Transcribe el texto de este documento siguiendo exactamente las instrucciones del sistema.",
+  );
 });
 
 test("M12 plain text extraction is deterministic and never calls a provider", async () => {
