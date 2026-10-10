@@ -55,6 +55,8 @@ ${CURRICULUM_REQUIREMENT_DOMAIN_PROMPT_GUIDANCE}
   coherente. No cortes mecánicamente por páginas, capítulos o número de lecciones.
 - Cada unidad debe tener evidencia terminal y conservar trazabilidad a la fuente.
 - Usa exactamente curriculumId, levelId, documentId y documentVersion indicados.
+- Si expectedUnitIdentity aparece en la METADATA AUTORITATIVA, genera una sola
+  unidad con exactamente ese unitId y unitOrder; no los inventes ni los derives.
 - En provenance.sources incluye el documento recibido como fuente primary usando
   sourceId=documentId y reference=documentId@documentVersion.
 - Toda unidad generada debe tener status="review". La IA nunca puede declarar una
@@ -97,6 +99,13 @@ export const masterDocumentCurriculumInputSchema = z
     levelId: domainIdSchema,
     sourceText: requiredTextSchema,
     unitCountHint: unitCountHintSchema.optional(),
+    expectedUnitIdentity: z
+      .object({
+        unitId: domainIdSchema,
+        unitOrder: z.number().int().positive(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -183,6 +192,37 @@ export function validateCurriculumDocumentCandidate(
           "UNIT_COUNT_OUTSIDE_HINT",
           "units",
           `Candidate produced ${candidate.units.length} units outside the hinted range ${input.unitCountHint.min}-${input.unitCountHint.max}.`,
+        ),
+      );
+    }
+  }
+
+  if (input.expectedUnitIdentity) {
+    if (candidate.units.length !== 1) {
+      issues.push(
+        validationIssue(
+          "EXPECTED_UNIT_COUNT_MISMATCH",
+          "units",
+          "Authoritative expectedUnitIdentity requires exactly one unit.",
+        ),
+      );
+    }
+    const unit = candidate.units[0];
+    if (unit && unit.identity.unitId !== input.expectedUnitIdentity.unitId) {
+      issues.push(
+        validationIssue(
+          "UNIT_ID_MISMATCH",
+          "units.0.identity.unitId",
+          `Unit ID must equal the authoritative unitId ${input.expectedUnitIdentity.unitId}.`,
+        ),
+      );
+    }
+    if (unit && unit.identity.unitOrder !== input.expectedUnitIdentity.unitOrder) {
+      issues.push(
+        validationIssue(
+          "UNIT_ORDER_MISMATCH",
+          "units.0.identity.unitOrder",
+          `Unit order must equal the authoritative unitOrder ${input.expectedUnitIdentity.unitOrder}.`,
         ),
       );
     }
@@ -418,6 +458,9 @@ function buildDocumentInput(
     curriculumId: input.curriculumId,
     levelId: input.levelId,
     unitCountHint: input.unitCountHint ?? null,
+    ...(input.expectedUnitIdentity
+      ? { expectedUnitIdentity: input.expectedUnitIdentity }
+      : {}),
   };
 
   const feedback = compactValidationFeedback(previousIssues);

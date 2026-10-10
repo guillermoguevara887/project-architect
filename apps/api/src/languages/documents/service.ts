@@ -288,6 +288,10 @@ export class CurriculumDocumentService {
         levelId: owned.document.levelId,
         sourceText: owned.version.extractedText,
         unitCountHint: { min: 1, max: 1 },
+        expectedUnitIdentity: {
+          unitId: owned.document.unitId,
+          unitOrder: owned.document.unitOrder,
+        },
       });
 
       const expected = owned.document;

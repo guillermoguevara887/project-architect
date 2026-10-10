@@ -38,8 +38,10 @@ test("GUI-28 admin boundary, sequential global upload, retry and exact unit comp
   const storage = new MemoryStorage();
   let wrongIdentity = false;
   let compilerCalls = 0;
+  const compilerInputs: MasterDocumentCurriculumInput[] = [];
   const extractor: CurriculumDocumentExtractor = { async extract(input: MasterDocumentCurriculumInput) {
     compilerCalls++;
+    compilerInputs.push(structuredClone(input));
     const unit = structuredClone(a1U01CurriculumFixture);
     unit.status = "review";
     unit.identity.unitOrder = wrongIdentity ? 2 : 1;
@@ -137,12 +139,14 @@ test("GUI-28 admin boundary, sequential global upload, retry and exact unit comp
     const mismatch = await server.inject({ method: "POST", url: `${url}/process`, headers: { cookie: cookie(admin) } });
     assert.equal(mismatch.statusCode, 422);
     assert.equal(mismatch.json().error, "unit_identity_mismatch");
+    assert.deepEqual(compilerInputs.at(-1)?.expectedUnitIdentity, { unitId: "A1-U01", unitOrder: 1 });
     assert.equal(store.runs.at(-1)?.status, "failed");
     assert.equal(storage.puts, 2);
     wrongIdentity = false;
     const processed = await server.inject({ method: "POST", url: `${url}/process`, headers: { cookie: cookie(admin2) } });
     assert.equal(processed.statusCode, 201);
     assert.equal(processed.json().units[0].unitId, "A1-U01");
+    assert.deepEqual(compilerInputs.at(-1)?.expectedUnitIdentity, { unitId: "A1-U01", unitOrder: 1 });
     assert.equal(store.runs.at(-1)?.status, "ready");
     assert.equal(storage.puts, 2);
     assert.equal(storage.gets, 2);

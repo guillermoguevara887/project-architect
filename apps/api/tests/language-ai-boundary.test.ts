@@ -6,6 +6,7 @@ import { z } from "zod";
 import {
   OpenAICurriculumDocumentExtractor,
   curriculumDocumentCandidateSchema,
+  masterDocumentCurriculumInputSchema,
   validateCurriculumDocumentCandidate,
   type CurriculumDocumentCandidate,
   type MasterDocumentCurriculumInput,
@@ -35,6 +36,12 @@ const ingestionInput: MasterDocumentCurriculumInput = {
   sourceText:
     "Documento maestro de prueba con objetivos de primer contacto, identidad, numeración, referencia y reparación comunicativa.",
   unitCountHint: { min: 1, max: 2 },
+};
+
+const exactUnitInput: MasterDocumentCurriculumInput = {
+  ...ingestionInput,
+  unitCountHint: { min: 1, max: 1 },
+  expectedUnitIdentity: { unitId: "A1-U01", unitOrder: 1 },
 };
 
 function validDocumentCandidate(): CurriculumDocumentCandidate {
@@ -429,6 +436,64 @@ test("OpenAI curriculum boundary sends private structured requests and repairs s
   assert.equal(result.value.units[0]?.status, "review");
 });
 
+test("GUI-28 structured boundary retries incorrect unit identity with precise feedback", async () => {
+  const requests: string[] = [];
+  const extractor = new OpenAICurriculumDocumentExtractor(
+    async (request) => {
+      requests.push(request.input);
+      const candidate = providerDocumentCandidate();
+      if (requests.length === 1) {
+        candidate.units[0]!.identity.unitId = "A1-U02";
+        candidate.units[0]!.identity.unitOrder = 2;
+      }
+      return { status: "completed", output_parsed: candidate };
+    },
+    "curriculum-test-model",
+    2,
+  );
+
+  const result = await extractor.extract(exactUnitInput);
+  assert.equal(requests.length, 2);
+  assert.equal(result.attempts, 2);
+  assert.equal(result.validationHistory[0]?.outcome, "invalid_candidate");
+  assert.equal(result.validationHistory[1]?.outcome, "accepted");
+  assert.match(requests[1]!, /UNIT_ID_MISMATCH at units\.0\.identity\.unitId/u);
+  assert.match(requests[1]!, /UNIT_ORDER_MISMATCH at units\.0\.identity\.unitOrder/u);
+  assert.equal(result.value.units[0]?.identity.unitId, "A1-U01");
+  assert.equal(result.value.units[0]?.identity.unitOrder, 1);
+});
+
+test("GUI-28 model request carries exact unit identity in authoritative metadata", async () => {
+  const requests: Array<{ input: string; instructions: string }> = [];
+  const extractor = new OpenAICurriculumDocumentExtractor(
+    async (request) => {
+      requests.push({ input: request.input, instructions: request.instructions });
+      return { status: "completed", output_parsed: providerDocumentCandidate() };
+    },
+    "curriculum-test-model",
+  );
+
+  await extractor.extract(exactUnitInput);
+  assert.equal(requests.length, 1);
+  const request = requests[0]!;
+  const [heading, metadataJson] = request.input.split("\n", 2);
+  assert.equal(heading, "METADATA AUTORITATIVA:");
+  assert.deepEqual(JSON.parse(metadataJson!), {
+    documentId: exactUnitInput.documentId,
+    documentVersion: exactUnitInput.documentVersion,
+    sourceTitle: exactUnitInput.sourceTitle,
+    sourceFormat: exactUnitInput.sourceFormat,
+    sourceLanguageHint: exactUnitInput.sourceLanguageHint,
+    curriculumId: exactUnitInput.curriculumId,
+    levelId: exactUnitInput.levelId,
+    unitCountHint: { min: 1, max: 1 },
+    expectedUnitIdentity: { unitId: "A1-U01", unitOrder: 1 },
+  });
+  assert.ok(request.input.indexOf(metadataJson!) < request.input.indexOf("DOCUMENTO FUENTE"));
+  assert.match(request.instructions, /expectedUnitIdentity aparece en la METADATA AUTORITATIVA/u);
+  assert.match(request.instructions, /exactamente ese unitId y unitOrder/u);
+});
+
 test("OpenAI curriculum input keeps its JSON instruction before untrusted source data", async () => {
   const input = {
     ...ingestionInput,
@@ -498,6 +563,51 @@ test("OpenAI curriculum input keeps its JSON instruction before untrusted source
   for (const domain of CURRICULUM_REQUIREMENT_DOMAINS) {
     assert.equal(request.instructions.includes(`- ${domain}:`), true);
   }
+});
+
+test("GUI-28 expected unit identity is Zod validated and remains optional for historical inputs", () => {
+  assert.equal(masterDocumentCurriculumInputSchema.safeParse(ingestionInput).success, true);
+  assert.equal(masterDocumentCurriculumInputSchema.safeParse(exactUnitInput).success, true);
+  assert.equal(masterDocumentCurriculumInputSchema.safeParse({
+    ...exactUnitInput,
+    expectedUnitIdentity: { unitId: "invalid unit id", unitOrder: 1 },
+  }).success, false);
+  assert.equal(masterDocumentCurriculumInputSchema.safeParse({
+    ...exactUnitInput,
+    expectedUnitIdentity: { unitId: "A1-U01", unitOrder: 0 },
+  }).success, false);
+});
+
+test("GUI-28 semantic validation accepts the exact authoritative unit identity", () => {
+  const result = validateCurriculumDocumentCandidate(validDocumentCandidate(), exactUnitInput);
+  assert.equal(result.valid, true, JSON.stringify(result.issues, null, 2));
+});
+
+test("GUI-28 semantic validation rejects a different unitId at its exact path", () => {
+  const candidate = validDocumentCandidate();
+  candidate.units[0]!.identity.unitId = "A1-U02";
+  const result = validateCurriculumDocumentCandidate(candidate, exactUnitInput);
+  assert.equal(result.valid, false);
+  assert.equal(result.issues.find((issue) => issue.code === "UNIT_ID_MISMATCH")?.path, "units.0.identity.unitId");
+});
+
+test("GUI-28 semantic validation rejects a different unitOrder at its exact path", () => {
+  const candidate = validDocumentCandidate();
+  candidate.units[0]!.identity.unitOrder = 2;
+  const result = validateCurriculumDocumentCandidate(candidate, exactUnitInput);
+  assert.equal(result.valid, false);
+  assert.equal(result.issues.find((issue) => issue.code === "UNIT_ORDER_MISMATCH")?.path, "units.0.identity.unitOrder");
+});
+
+test("GUI-28 authoritative unit identity requires exactly one candidate unit", () => {
+  const candidate = validDocumentCandidate();
+  const secondUnit = structuredClone(candidate.units[0]!);
+  secondUnit.identity.unitId = "A1-U02";
+  secondUnit.identity.unitOrder = 2;
+  candidate.units.push(secondUnit);
+  const result = validateCurriculumDocumentCandidate(candidate, exactUnitInput);
+  assert.equal(result.valid, false);
+  assert.equal(result.issues.find((issue) => issue.code === "EXPECTED_UNIT_COUNT_MISMATCH")?.path, "units");
 });
 
 test("OpenAI curriculum boundary treats refusal as a terminal provider outcome", async () => {
